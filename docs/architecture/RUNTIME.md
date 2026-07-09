@@ -81,18 +81,19 @@ So the queryable half is core and the push half is gateway. There is nothing lef
 
 ---
 
-## Scope — Informational, Not Restrictive
+## Scope — Context by Default, Capability by Opt-In
 
 A turn runs under a **scope**: `user` or `heartbeat`. Scope is carried in `JarvisState["scope"]`, set once when the thread is first created.
 
-**Scope decides context, not capability.** It is explicitly *not* a permission boundary — a heartbeat task such as "review memory files and delete stale ones" legitimately needs `delete_memory` and a confirmation conversation.
+**Scope decides context; capability only where a tool opts in.** Scope is not a general permission boundary — a heartbeat task such as "review memory files and delete stale ones" legitimately needs `delete_memory` and a confirmation conversation. But a tool may declare `scopes=(...)` at registration to bind only in the named scopes; tools registered without it (the default, and the overwhelming majority) bind in every scope.
 
 | Scope affects | Scope does **not** affect |
 |---|---|
-| **Which prompt is built.** `user` and `heartbeat` get different framing and scope-specific context; the exact per-scope file composition is owned by [MEMORY.md](MEMORY.md). | **Tool reachability.** Both scopes can call any tool of any activated skill, including `destructive` ones. |
+| **Which prompt is built.** `user` and `heartbeat` get different framing and scope-specific context; the exact per-scope file composition is owned by [MEMORY.md](MEMORY.md). | **Tool reachability for the default (`scopes=None`) registration.** Both scopes can call any tool of any activated skill, including `destructive` ones. |
 | **Default `active_skills` on a new thread.** Both `user` and `heartbeat` threads start **blank** (`active_skills = set()`). The heartbeat agent reads HEARTBEAT.md and calls `activate_skill` per-task as needed — the registry does not pre-activate from task definitions. | **Confirmation.** `destructive` tools always route through the gateway `Confirmation` store regardless of scope. Heartbeat-triggered deletes prompt the owner exactly like user-triggered ones. |
+| **Binding of scope-declared tools.** `heartbeat_respond` registers `scopes=("heartbeat",)` — a user turn has no tick to acknowledge, so it never sees the tool. `scopes` can only narrow visibility, never widen it past activation. | |
 
-If true restriction is ever needed ("never let heartbeat trigger media downloads"), it is added later as an explicit per-scope deny-list at the registry level — not as a default field on every tool.
+Restriction is **opt-in per tool** (`scopes` tuple), used when a tool is meaningless outside a scope — not a blanket deny-list, and not a default field every tool must think about. A tool may also branch on the *running* scope internally where one action of it is scope-sensitive: `manage_heartbeat_task` rejects `create` on heartbeat turns (a tick must not schedule new work for itself) while allowing update/delete/list — see [HEARTBEAT.md](HEARTBEAT.md).
 
 ### Awareness is shared; behavior is scoped
 
@@ -103,7 +104,7 @@ The two scopes run on **separate threads** with separate checkpoints (`heartbeat
 | **Awareness** — what the agent knows happened | **Shared, both directions.** The chat (`user`) agent sees heartbeat actions; the heartbeat (`heartbeat`) agent sees chat activity. | Three layered mechanisms: (1) **live log slices** injected per turn by `build_system_prompt` — today's `event="heartbeat"` notifications into the user prompt, today's `telegram_*` chat into the heartbeat prompt (see [MEMORY.md](MEMORY.md) "Per-scope content"). (2) The **daily log** (`daily/daily_<today>.md`) — heartbeat-written, auto-loaded into the `user` prompt, richer per-day narrative but lagging. (3) The **history tools** (`get_chat_history`, `get_notification_history`) — Tier-1 core, callable every turn for deeper recall. For a rich handoff (heartbeat *starts a conversation*), heartbeat injects an `AIMessage` into the `user` thread's checkpoint so the next user reply threads naturally — see [ARCHITECTURE_PLAN.md](../plans/ARCHITECTURE_PLAN.md) "Concurrency Model", Flow 2. |
 | **Behavior** — how the agent acts | **Scoped.** | The *only* per-scope difference is the behavioral framing in the assembled prompt. `heartbeat`: terse scheduled tick — act only if a task is due, emit exactly `[NO_ACTION]` if nothing is. `user`: conversational, proactive, in Jarvis's voice. The framing files and how the builder selects them per scope are owned by [MEMORY.md](MEMORY.md). |
 
-So scope **never** gates which tools or which knowledge the agent has — it only swaps the behavioral preamble. A heartbeat tick and a chat turn that both "check the gym schedule" run identical tools against identical memory; they differ only in how chatty the result is and whether silence (`[NO_ACTION]`) is an acceptable answer. This is why scope is informational, not a fork in the code path.
+So for everything but the few scope-declared tools, scope gates neither tools nor knowledge — it swaps the behavioral preamble. A heartbeat tick and a chat turn that both "check the gym schedule" run identical tools against identical memory; they differ only in how chatty the result is and whether silence (`[NO_ACTION]`) is an acceptable answer. Scope stays one shared code path, never a fork.
 
 ---
 
@@ -116,6 +117,7 @@ class JarvisState(AgentState):
     messages: Required[Annotated[list, _add_and_trim]]   # unchanged (sliding window + blob strip)
     scope: str                                            # "user" | "heartbeat"; set on first turn, then stable
     active_skills: Annotated[set[str], _merge_skills]     # namespaces activated in this thread
+    heartbeat_due_tasks: list[str] | None                 # heartbeat scope: which HEARTBEAT.md blocks to inject
 ```
 
 | Field | Reducer | Lifetime |
@@ -123,6 +125,7 @@ class JarvisState(AgentState):
 | `messages` | `_add_and_trim` (existing) | Sliding window of 50, pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
 | `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
+| `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |
 
 `active_skills` decay (auto-clear after N hours of thread inactivity) is a recognized future enhancement and is **out of scope for this layer** — activations persist until explicitly deactivated or the thread is reset. See "Deferred" below.
 
@@ -217,8 +220,8 @@ def delete_sonarr_series_with_files(title: str) -> str: ...
 
 | Registry API | Returns / does |
 |---|---|
-| `get_tools(scope, active_skills) -> list[BaseTool]` | All `core` tools + all tools whose namespace ∈ `active_skills`. This is what `llm.bind_tools` receives. |
-| `find(name, scope, active_skills) -> BaseTool \| None` | Resolve a tool call; `None` if its skill isn't active (drives the "activate the skill first" `ToolMessage`). |
+| `get_tools(scope, active_skills) -> list[BaseTool]` | All `core` tools + all tools whose namespace ∈ `active_skills`, minus tools whose registered `scopes` excludes this turn's scope. This is what `llm.bind_tools` receives. |
+| `find(name, scope, active_skills) -> BaseTool \| None` | Resolve a tool call, honoring activation and `scopes`; `None` if its skill isn't active (drives the "activate the skill first" `ToolMessage`). |
 | `compact_skill_list(scope, active_skills) -> str` | The prompt block: one line per top-level skill, sub-skills indented under an *active* parent, + the "currently active" line. |
 | `import_all()` | Imported once at startup; importing each `tools/<ns>/*.py` runs the `@tool_register` side-effects. Replaces the hand-maintained imports in `tools/__init__.py`. |
 

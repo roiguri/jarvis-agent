@@ -16,7 +16,7 @@
 
 **Problem.** Jarvis's heartbeat runs a full LLM turn every hour, 24/7, whether or not anything is due. Measured over the 14 days to 2026-07-09 (observability telemetry): the heartbeat accounts for **84% of total LLM spend**; **88% of its ticks end in `[NO_ACTION]`**, and each of those no-op ticks still burns ~66k input tokens across ~3.7 LLM calls (it reads task state files via tools before concluding there is nothing to do). Separately, Roi wants Jarvis to author its own recurring tasks from chat ("check in after my gym sessions") without silently producing broken task definitions.
 
-**What ships.** Two deliverables across 8 small phases:
+**What ships.** Two deliverables across 9 small phases (7 and 9 are evidence-gated on a production parallel-run window):
 
 1. **A deterministic gate** (code, not LLM) that decides *before* any model call whether a task is due — first by cadence, then by machine-enforced time/day windows — and, when the model does run, injects only the due tasks into its prompt instead of all 8.
 2. **A validated task-authoring tool** (`manage_heartbeat_task`) so Jarvis can create/update/delete its own heartbeat tasks from conversation — every change validated before write and confirmed by Roi with a tap.
@@ -31,6 +31,7 @@
 | 6 | Time/day windows | Most hours have genuinely nothing due → **LLM call skipped entirely** |
 | 7 | Retire duplicated state from markdown | Hygiene |
 | 8 | Self-authoring tool + prompts | Capability (Roi's priority); compounds 6 — Jarvis tightens its own wake windows |
+| 9 | Ack-primary delivery, reply-text fallback | Correctness — removes the ack/reply disagreement windows |
 
 **Risk posture.** Each phase is independently shippable and revertable; Phases 1–3 change no behavior. The gate **fails open** everywhere — a parsing bug or crash runs the LLM rather than silently killing the heartbeat. Machine state moves to a code-owned file the agent never touches; the agent's narrative notes files are unchanged. Every agent-authored task change requires a confirmation tap.
 
@@ -435,6 +436,25 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert; remove tool + AGENTS.md rules. Existing tasks untouched.
 
+### Phase 9 — Ack-primary delivery, reply-text fallback (added 2026-07-10; evidence-gated like Phase 7)
+
+**Why.** Phases 2–8 leave the tick with two authoritative outputs: the reply text drives delivery (`[NO_ACTION]` contract), the ack drives stamping. They can disagree — the bad window is `notify=true` in the ack + `[NO_ACTION]` in the reply, a silently lost briefing; the reverse sends noise. The channels aren't redundant (`acted_tasks=[x]` + no message is a legal silent-maintenance tick), so the fix is a clear hierarchy, not deduplication. **OpenClaw analog:** its `heartbeat_respond` payload drives everything; the text token survives as fallback only.
+
+**Gate to start:** the parallel-run window (same as Phase 7) shows ack omission ≲1 in 20 ticks. If the model drops the ack more often, strengthen the mechanism first (prompt wording, or a corrective follow-up turn when the runner detects a missing ack) — migrating delivery onto an unreliable channel converts "no stamp" failures into "lost briefing" failures.
+
+**Implementation:**
+1. `heartbeat.py` delivery branch:
+   - ack present → deliver iff `notify`, using `notification_text`; reply text ignored for delivery.
+   - ack missing → fall back to today's behavior (send reply unless `[NO_ACTION]`), warn, no stamp.
+2. `prompts/heartbeat.md`: `notification_text` is the message Roi sees; the reply shrinks to a terse tick log (keep `[NO_ACTION]` only while the fallback still fires in practice, then drop the contract).
+3. Telemetry `no_action` flag: derive from the ack (`notify=False and not acted_tasks`) with reply-text fallback, so usage rollups stay comparable.
+
+**Verification:** ack `notify=true` tick → exactly one message, body = `notification_text`; `notify=false` + chatty reply → nothing sent; ack-missing tick → fallback delivery + warning. Watch a week of `notifications.jsonl` for volume/shape regressions.
+
+**Rollback:** revert the delivery branch; the ack keeps driving stamping as in Phase 3.
+
+**Deliberately unlocked later (not in scope):** typed extensions on the payload — `priority` (silent vs push), dedup keys, multi-part messages. Possible only once delivery is payload-driven; add on demand.
+
 ---
 
 ## 4. Savings summary (honest)
@@ -449,6 +469,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 | 6 | time/day windows | **large** (closes 1h tasks off-window → LLM skipped) | further | low |
 | 7 | retire markdown `last_run` | 0 | tiny | very low |
 | 8 | `manage_heartbeat_task` + prompts | — (capability) | indirectly enables tighter windows → more skips | low |
+| 9 | ack-primary delivery (reply-text fallback) | 0 | 0 (correctness: kills ack/reply disagreement windows) | low-medium (evidence-gated on ack reliability) |
 
 **The cost needle moves at 5 (tokens) and 6 (calls).** Phases 1–4 are the infrastructure that makes them safe. **Phase 8 is the capability Roi prioritized** — and it *compounds* the cost win, because a Jarvis that maintains precise `due:` windows lets the Phase 4 gate skip more ticks.
 
@@ -457,7 +478,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 ## 5. Open questions to settle before coding
 
 1. **Reading the `heartbeat_respond` result** — walk the final LangGraph state for the last `ToolMessage` named `heartbeat_respond` (clean) vs. a module-level slot the tool writes (simpler, global state). **Recommend: walk the state.**
-2. **Agent acts but omits `heartbeat_respond`** — v1: warn, don't stamp, let the task re-fire. (Later: `[NO_ACTION]` text fallback like OpenClaw.) **Recommend: warn + no stamp.**
+2. **Agent acts but omits `heartbeat_respond`** — v1: warn, don't stamp, let the task re-fire. The full OpenClaw-style hierarchy (ack primary, reply-text fallback) is Phase 9. **Recommend: warn + no stamp.**
 3. **Partial success** — stamp only the tasks the agent listed in `acted_tasks`. The agent lists only what it finished.
 4. **`manage_heartbeat_task` re-serialization fidelity** — does round-tripping the task section preserve arbitrary human prose safely? If markdown round-tripping proves fragile, reconsider a structured store (deferred — §1.6 rationale prefers markdown).
 
@@ -475,6 +496,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 | 6 | — | `heartbeat_state.py` (window parser), `HEARTBEAT.md` (`due:` on tasks), `prompts/heartbeat.md` |
 | 7 | — | `prompts/heartbeat.md`, `HEARTBEAT.md` (`state:`→`notes:`), `heartbeat/*.md` (clear `last_run:`) |
 | 8 | — | `tools/core/heartbeat.py` (add `manage_heartbeat_task`), `tools/core/__init__.py`, `prompts/AGENTS.md` (authoring + reminder-vs-task rules) |
+| 9 | — | `heartbeat.py` (delivery branch), `prompts/heartbeat.md`, `agent.py` (`no_action` from ack) |
 
 *(Only files under `/app/jarvis_code/` are git-tracked. `HEARTBEAT.md`, `heartbeat/*.md`, and `state.json` are runtime data and never committed.)*
 
