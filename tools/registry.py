@@ -30,13 +30,18 @@ class RegisteredTool:
     tool: BaseTool
     namespace: str
     destructive: bool
+    scopes: tuple[str, ...] | None = None  # None = any scope
 
 
 # name -> RegisteredTool. Populated by @tool_register side-effects at import.
 _REGISTRY: dict[str, RegisteredTool] = {}
 
 
-def tool_register(namespace: str, destructive: bool = False):
+def tool_register(
+    namespace: str,
+    destructive: bool = False,
+    scopes: tuple[str, ...] | None = None,
+):
     """Record a ``@tool``-decorated BaseTool in the registry.
 
     Apply *above* ``@tool`` so this receives the constructed BaseTool and
@@ -46,6 +51,10 @@ def tool_register(namespace: str, destructive: bool = False):
     ``destructive`` is metadata only: confirmation is still the inline
     ``get_confirmation()`` call inside each tool body. Registering does not wrap
     or alter the tool's behavior.
+
+    ``scopes`` restricts which turn scopes may bind the tool: ``None`` (the
+    default) means any scope; ``("heartbeat",)`` binds the tool only on
+    heartbeat turns. Namespace activation still applies on top.
     """
 
     def _wrap(t: BaseTool) -> BaseTool:
@@ -57,14 +66,18 @@ def tool_register(namespace: str, destructive: bool = False):
         existing = _REGISTRY.get(t.name)
         if existing is not None:
             # Module re-import (idempotent). Guard against conflicting metadata.
-            if (existing.namespace, existing.destructive) != (namespace, destructive):
+            if (existing.namespace, existing.destructive, existing.scopes) != (
+                namespace,
+                destructive,
+                scopes,
+            ):
                 raise ValueError(
                     f"Tool {t.name!r} re-registered with different metadata: "
-                    f"{(existing.namespace, existing.destructive)} != "
-                    f"{(namespace, destructive)}"
+                    f"{(existing.namespace, existing.destructive, existing.scopes)} != "
+                    f"{(namespace, destructive, scopes)}"
                 )
             return t
-        _REGISTRY[t.name] = RegisteredTool(t, namespace, destructive)
+        _REGISTRY[t.name] = RegisteredTool(t, namespace, destructive, scopes)
         return t
 
     return _wrap
@@ -76,9 +89,14 @@ def _parent_of(ns: str) -> str | None:
     return ns.split("/", 1)[0] if "/" in ns else None
 
 
-def _visible(entry: RegisteredTool, active_skills: set[str] | None) -> bool:
+def _visible(
+    entry: RegisteredTool, scope: str | None, active_skills: set[str] | None
+) -> bool:
     """Core tools are always bound; a skill tool is bound only when its
-    namespace is in active_skills."""
+    namespace is in active_skills. A tool registered with ``scopes`` is
+    additionally bound only when the turn's scope is in that tuple."""
+    if entry.scopes is not None and scope not in entry.scopes:
+        return False
     if entry.namespace == CORE_NAMESPACE:
         return True
     return entry.namespace in (active_skills or set())
@@ -86,19 +104,20 @@ def _visible(entry: RegisteredTool, active_skills: set[str] | None) -> bool:
 
 def get_tools(scope: str | None = None, active_skills: set[str] | None = None) -> list[BaseTool]:
     """Tools to bind for this turn: all core tools plus the tools of every
-    currently-active skill. Scope is accepted for forward compatibility but
-    does not restrict (scope is informational, not a permission boundary)."""
-    return [e.tool for e in _REGISTRY.values() if _visible(e, active_skills)]
+    currently-active skill, minus tools whose ``scopes`` excludes this turn's
+    scope (tools registered without ``scopes`` — all of them today — bind in
+    any scope)."""
+    return [e.tool for e in _REGISTRY.values() if _visible(e, scope, active_skills)]
 
 
 def find(
     name: str, scope: str | None = None, active_skills: set[str] | None = None
 ) -> BaseTool | None:
-    """Resolve a tool call by name, honoring activation. Returns None if the
-    tool's skill is not active — the caller turns that into a ToolMessage
-    telling the model to activate the skill first."""
+    """Resolve a tool call by name, honoring activation and scope. Returns
+    None if the tool's skill is not active — the caller turns that into a
+    ToolMessage telling the model to activate the skill first."""
     e = _REGISTRY.get(name)
-    if e is None or not _visible(e, active_skills):
+    if e is None or not _visible(e, scope, active_skills):
         return None
     return e.tool
 

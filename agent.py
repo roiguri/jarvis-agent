@@ -105,8 +105,8 @@ class JarvisState(AgentState):
     # Added defensively: pre-existing checkpoints predate these fields, so
     # they are NotRequired and every reader uses state.get(..., default).
     # scope: last-write-wins (set once per thread at the call site).
-    # active_skills: persisted across turns via _merge_skills. NOT yet used to
-    # filter the tool surface — get_tools() still returns the full set.
+    # active_skills: persisted across turns via _merge_skills; filters the
+    # bound tool surface via registry.get_tools(scope, active_skills).
     scope: NotRequired[str]
     active_skills: NotRequired[Annotated[set[str], _merge_skills]]
 
@@ -423,9 +423,8 @@ def _tool_node(state: JarvisState) -> dict:
     ToolMessage per call, exceptions captured as an error ToolMessage so the
     model can recover rather than crashing the graph).
 
-    NOTE: activation does not change the bound tool set yet —
-    registry.get_tools() still returns the full set. This step only proves
-    the state-mutation path.
+    Activation takes effect the same turn: _llm_node re-binds
+    registry.get_tools(scope, active_skills) on its next invocation.
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
