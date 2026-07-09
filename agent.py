@@ -20,6 +20,7 @@ from langgraph.prebuilt import tools_condition
 
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
+import heartbeat_state
 
 # Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
 from observability import telemetry
@@ -107,8 +108,11 @@ class JarvisState(AgentState):
     # scope: last-write-wins (set once per thread at the call site).
     # active_skills: persisted across turns via _merge_skills; filters the
     # bound tool surface via registry.get_tools(scope, active_skills).
+    # heartbeat_due_tasks: which HEARTBEAT.md task blocks to inject this turn
+    # (heartbeat scope only). None = all. Overwritten every turn.
     scope: NotRequired[str]
     active_skills: NotRequired[Annotated[set[str], _merge_skills]]
+    heartbeat_due_tasks: NotRequired[list[str] | None]
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +320,11 @@ def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
     return "--- Heartbeat activity today (Israel time) ---\n" + "\n".join(lines)
 
 
-def build_system_prompt(scope: str, active_skills: set[str]) -> str:
+def build_system_prompt(
+    scope: str,
+    active_skills: set[str],
+    due_tasks: list[str] | None = None,
+) -> str:
     """Assemble the system prompt for one model call, read fresh each call.
 
     Always: a [Current time]/[Active scope] envelope + SOUL.md (identity,
@@ -328,7 +336,9 @@ def build_system_prompt(scope: str, active_skills: set[str]) -> str:
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
       addressed) + yesterday's daily log (older days are reachable via
-      read_memory on demand).
+      read_memory on demand). When ``due_tasks`` is a list, only those task
+      blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
+      one-line note); None injects the full file.
     All files are read per turn (edits take effect next turn, no restart).
     """
     now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
@@ -347,6 +357,8 @@ def build_system_prompt(scope: str, active_skills: set[str]) -> str:
         parts.append(_HEARTBEAT_FRAMING)
         parts.append(load_or_blank(_HEARTBEAT_PROMPT_PATH))
         hb = load_or_blank(_HEARTBEAT_MD_PATH)
+        if hb and due_tasks is not None:
+            hb = heartbeat_state.filter_heartbeat_md(hb, due_tasks)
         if hb:
             parts.append(f"--- HEARTBEAT.md ---\n{hb}")
         chat = _load_recent_user_chat()
@@ -396,10 +408,11 @@ def _llm_node(state: JarvisState) -> dict:
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
+    due_tasks = state.get("heartbeat_due_tasks")
     bound_llm = llm.bind_tools(registry.get_tools(scope, active))
     try:
         response = bound_llm.invoke(
-            [SystemMessage(content=build_system_prompt(scope, active))]
+            [SystemMessage(content=build_system_prompt(scope, active, due_tasks))]
             + state["messages"]
         )
     except Exception as e:
@@ -528,6 +541,7 @@ def ask_jarvis(
     media_attachments: list[dict] | None = None,
     scope: str = "user",
     turn_id: str | None = None,
+    heartbeat_due_tasks: list[str] | None = None,
 ) -> str:
     """
     Encapsulates the agent execution and parses complex LangChain message blocks into a clean string.
@@ -542,6 +556,9 @@ def ask_jarvis(
         turn_id: optional pre-minted turn identifier (uuid4 hex). If omitted,
             one is generated here. Propagated via TURN_ID ContextVar so the
             nodes and tool calls can stamp it on telemetry records.
+        heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
+            blocks injected into the system prompt to these task names.
+            None injects the full file. Overwritten in state every turn.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -630,14 +647,16 @@ def ask_jarvis(
             # Use HumanMessage to pass structured content to the LLM
             message = HumanMessage(content=content)
             events = agent_executor.stream(
-                {"messages": [message], "scope": scope},
+                {"messages": [message], "scope": scope,
+                 "heartbeat_due_tasks": heartbeat_due_tasks},
                 config,
                 stream_mode="values"
             )
         else:
             # Standard text-only message
             events = agent_executor.stream(
-                {"messages": [("user", user_input)], "scope": scope},
+                {"messages": [("user", user_input)], "scope": scope,
+                 "heartbeat_due_tasks": heartbeat_due_tasks},
                 config,
                 stream_mode="values"
             )

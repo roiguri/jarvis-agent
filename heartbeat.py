@@ -83,7 +83,10 @@ async def run_heartbeat() -> None:
     logger.info("Heartbeat: running agent turn")
     try:
         response = await asyncio.wait_for(
-            asyncio.to_thread(ask_jarvis, prompt, HEARTBEAT_THREAD_ID, scope="heartbeat"),
+            asyncio.to_thread(
+                ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
+                scope="heartbeat", heartbeat_due_tasks=due_names,
+            ),
             timeout=90,
         )
     except asyncio.TimeoutError:

@@ -96,6 +96,46 @@ def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
     return tasks
 
 
+def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
+    """HEARTBEAT.md content with only the named task blocks kept.
+
+    The preamble (everything before the first task header) is preserved.
+    Task blocks not in ``due_names`` are collapsed into one terse note naming
+    them, so the model knows they exist and are simply not due — without
+    paying for their full bodies. Unknown names in ``due_names`` are ignored.
+    """
+    lines = text.splitlines()
+    preamble: list[str] = []
+    blocks: list[tuple[str, list[str]]] = []  # (task name, block lines)
+    current: list[str] | None = None
+    for line in lines:
+        m = _HEADER_RE.match(line.strip())
+        if m:
+            current = [line]
+            blocks.append((m.group("name").strip(), current))
+        elif current is not None:
+            current.append(line)
+        else:
+            preamble.append(line)
+
+    keep = set(due_names)
+    kept = [b for name, b in blocks if name in keep]
+    omitted = [name for name, _ in blocks if name not in keep]
+
+    out: list[str] = []
+    if preamble:
+        out.append("\n".join(preamble).rstrip())
+    for block in kept:
+        out.append("\n".join(block).rstrip())
+    if omitted:
+        out.append(
+            f"({len(omitted)} other task(s) are not due this tick and are "
+            f"omitted here: {', '.join(omitted)}. Do not act on them; the "
+            f"full list lives in HEARTBEAT.md.)"
+        )
+    return "\n\n".join(p for p in out if p)
+
+
 def load_state(path: str = STATE_PATH) -> dict:
     """The last-run map: ``{"last_run": {"<task>": "<iso8601>", ...}}``.
 
