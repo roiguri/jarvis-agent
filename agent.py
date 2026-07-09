@@ -21,6 +21,7 @@ from langgraph.prebuilt import tools_condition
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
+import turn_context
 
 # Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
 from observability import telemetry
@@ -571,6 +572,7 @@ def ask_jarvis(
         active_start = []
     turn_id = turn_id or uuid4().hex
     _tid_token = telemetry.TURN_ID.set(turn_id)
+    _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -692,6 +694,7 @@ def ask_jarvis(
         no_action = scope == "heartbeat" and final_response.strip().startswith("[NO_ACTION]")
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
+        turn_context.CURRENT_SCOPE.reset(_scope_token)
 
 
 def get_heartbeat_ack(thread_id: str) -> dict | None:

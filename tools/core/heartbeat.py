@@ -22,20 +22,13 @@ import re
 from langchain_core.tools import tool
 
 import heartbeat_state
-from observability import telemetry
+import turn_context
 from tools.registry import tool_register
 
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _CADENCE_INPUT_RE = re.compile(
     r"^(?:every\s+)?(?P<n>\d+)\s*(?P<unit>hours?|days?|h|d)$", re.IGNORECASE
 )
-
-
-def _current_scope() -> str:
-    """The running turn's scope, best-effort. Unknown → 'user' (the
-    confirmation tap is the backstop either way)."""
-    acc = telemetry.TURN_ACC.get()
-    return (acc or {}).get("scope") or "user"
 
 
 def _normalize_cadence(cadence: str) -> str | None:
@@ -158,7 +151,7 @@ def manage_heartbeat_task(
             "(lowercase letters/digits and single hyphens), e.g. 'post-class-checkin'."
         )
     name = name.strip()
-    if action == "create" and _current_scope() == "heartbeat":
+    if action == "create" and turn_context.current_scope() == "heartbeat":
         return (
             "Error: heartbeat ticks may not create new tasks (update/delete/list "
             "only). Propose the new task to Roi in chat instead."
