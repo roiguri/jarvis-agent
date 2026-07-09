@@ -1,17 +1,46 @@
 # Heartbeat Gating, Structured Tasks & Self-Authoring
 
-**Issue:** #33 (umbrella) / Lever #1.
+**Issue:** #33 (archive) = #18 (origin mirror) umbrella / Lever #1.
 **Branch:** `feat/heartbeat-gating`.
+**Companion:** [CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md) — the full context-handling roadmap this plan is Workstream 1 of.
 **Goal:** make Jarvis manage its own heartbeat state well, and stop paying for an LLM turn every hour to do nothing. Two outcomes:
 
 1. **Cost:** the heartbeat should only run the model when something is actually due, and when it runs it should only carry the tasks that are due — not all 8 every time.
 2. **Capability (Roi's priority):** Jarvis should author and maintain its own task plan from chat — *"talk to me after my gym session"* should become a real, well-formed heartbeat task — without silently producing broken tasks.
 
-**Non-goals (deferred elsewhere):** Gemini context caching (#33 Lever 4), thread compaction (#54), on-demand/event-driven heartbeat (#20), exact-time self-scheduling (OpenClaw's *cron* model — see §2; we chose the windowed-poll model instead), heartbeat-scope prompt slimming (`lightContext` analog — §7).
+**Non-goals (deferred elsewhere):** Gemini context caching (#33 Lever 4 → companion plan WS2), thread compaction (#54 → companion plan WS7), on-demand/event-driven heartbeat (#20), exact-time self-scheduling (OpenClaw's *cron* model — see §2; we chose the windowed-poll model instead), heartbeat-scope prompt slimming (`lightContext` analog — §7 → companion plan WS3).
+
+---
+
+## Manager summary
+
+**Problem.** Jarvis's heartbeat runs a full LLM turn every hour, 24/7, whether or not anything is due. Measured over the 14 days to 2026-07-09 (observability telemetry): the heartbeat accounts for **84% of total LLM spend**; **88% of its ticks end in `[NO_ACTION]`**, and each of those no-op ticks still burns ~66k input tokens across ~3.7 LLM calls (it reads task state files via tools before concluding there is nothing to do). Separately, Roi wants Jarvis to author its own recurring tasks from chat ("check in after my gym sessions") without silently producing broken task definitions.
+
+**What ships.** Two deliverables across 8 small phases:
+
+1. **A deterministic gate** (code, not LLM) that decides *before* any model call whether a task is due — first by cadence, then by machine-enforced time/day windows — and, when the model does run, injects only the due tasks into its prompt instead of all 8.
+2. **A validated task-authoring tool** (`manage_heartbeat_task`) so Jarvis can create/update/delete its own heartbeat tasks from conversation — every change validated before write and confirmed by Roi with a tap.
+
+**Expected impact** (phases build on each other; needle moves at 5, 6 and 8):
+
+| Phases | What lands | Impact |
+|---|---|---|
+| 1–3 | Infrastructure (tool scoping, structured tick-ack, code-owned state file) | No behavior change — de-risks everything after |
+| 4 | Cadence gate | Enables 5–6; skips little by itself (two tasks are hourly) |
+| 5 | Only-due-task prompt injection | Input tokens cut on **every** remaining tick (8 task blocks → 1–2) |
+| 6 | Time/day windows | Most hours have genuinely nothing due → **LLM call skipped entirely** |
+| 7 | Retire duplicated state from markdown | Hygiene |
+| 8 | Self-authoring tool + prompts | Capability (Roi's priority); compounds 6 — Jarvis tightens its own wake windows |
+
+**Risk posture.** Each phase is independently shippable and revertable; Phases 1–3 change no behavior. The gate **fails open** everywhere — a parsing bug or crash runs the LLM rather than silently killing the heartbeat. Machine state moves to a code-owned file the agent never touches; the agent's narrative notes files are unchanged. Every agent-authored task change requires a confirmation tap.
+
+**Validation.** The design was verified against OpenClaw's source (its heartbeat gating works this way in production) and cross-checked against Nous Research's `hermes-agent` (§2b); we deliberately add the write-validation both of them lack, because in Jarvis the *agent* authors the task file and the cost gate depends on it parsing.
 
 ---
 
 ## 0. Honest framing: where the savings actually come from
+
+**Measured baseline (observability telemetry, 14 days to 2026-07-09):** 27.1M input tokens / $1.72 total across both scopes. Heartbeat scope: 335 turns, 22.8M input ($1.44 — **84% of all spend**), 296 of 335 ticks (88%) ended `[NO_ACTION]`. A no-op tick averages **66.3k input tokens and 3.7 LLM calls**; an acting tick 79.5k and 4.3. Reproduce with `observability.usage.summarize_usage(group_by="scope")`. This is the spend this plan attacks.
 
 Current tasks (`/app/jarvis_memory/HEARTBEAT.md`):
 
@@ -229,6 +258,13 @@ Checked against `openclaw/openclaw` source — parser, runner, tests, and the do
 
 **Bottom line from the source dive:** OpenClaw has *no* structured/validated task writer and *no* task validation anywhere — the model is its safety net. Jarvis can't rely on that (agent authors, gate depends on parseability), so our divergence — a validated tool + fail-open parser — is adding the guardrails OpenClaw deliberately omits, not reimplementing them.
 
+### 2b. Cross-check: Nous Research `hermes-agent` (added 2026-07-09)
+
+A second reference reviewed after this plan was drafted — [github.com/nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent), a personal-assistant framework with the same shape as Jarvis (SOUL.md, messaging gateway, cron scheduler, skills). It independently validates the design and contributes one guard we adopt:
+
+- **Isolated scheduled sessions** — Hermes runs every cron job in an isolated agent session, never the main chat thread ([cron docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron)). Consistent with our separate `heartbeat` thread and OpenClaw's `isolatedSession`.
+- **Scheduling tools disabled inside scheduled runs** — Hermes hard-disables its cron-management tools during cron executions, specifically to prevent runaway self-scheduling loops. Phase 8 exposes `manage_heartbeat_task` in both scopes so a tick can retire a one-off task it just completed — keep that, but **reject `action="create"` when the active scope is `heartbeat`**: a tick may update/delete/list, never spawn new tasks. The failure mode this closes is a tick that keeps scheduling more work for itself with no human in the loop (heartbeat-scope confirmations have no one to tap them). Folded into Phase 8.
+
 ---
 
 ## 3. Implementation phases
@@ -385,6 +421,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
    - `create`/`update`/`delete`: parse → mutate → **re-serialize the task section deterministically** (preserve surrounding prose), validate (cadence, `due:`, duplicate name) before writing; reject with a clear error on failure, leaving the file untouched. Never a blind whole-file overwrite.
    - Reuse `heartbeat_state.parse_tasks` for read/validate.
    - `create`/`update`/`delete` → `get_confirmation().request_confirmation_sync(...)` (protected file). `list` is read-only.
+   - **Loop guard (§2b, from Hermes):** reject `action="create"` when the active scope is `heartbeat` — a tick may `update`/`delete`/`list` its existing tasks but never create new ones. Return a clear error telling the agent to propose the task to Roi in chat instead.
 2. `prompts/AGENTS.md`: authoring rules (§1.6) — recognize recurring/conditional wishes as heartbeat tasks; disambiguate from one-shot `manage_reminder`; author via the tool, let confirmation surface it.
 3. `tools/core/__init__.py`: import.
 
@@ -446,7 +483,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 ## 7. Out-of-scope follow-ups
 
 - **#20 on-demand heartbeat** — `min-spacing` (Phase 4) and a future `flood` guard prepare for it.
-- **#33 Lever 4 (Gemini caching)** — compounds: every skipped tick is a saved cache miss; every remaining tick benefits more from a cached prefix because the variable tail (only due tasks) is smaller after Phase 5.
-- **Heartbeat-scope `lightContext` analog** — OpenClaw's `lightContext`/`isolatedSession` cut a run from ~100k to ~2–5k tokens by trimming bootstrap context to just `HEARTBEAT.md`. A trimmed heartbeat-scope `build_system_prompt` (drop most identity/chat slices, keep due-task blocks) is a cheap future win compounding with Phases 4–6.
+- **#33 Lever 4 (Gemini caching)** — now designed as [CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md) WS2 (cache-stable prompt layout). Compounds: every skipped tick is a saved cache miss; every remaining tick benefits more from a cached prefix because the variable tail (only due tasks) is smaller after Phase 5.
+- **Heartbeat-scope `lightContext` analog** — now designed as [CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md) WS3. OpenClaw's `lightContext`/`isolatedSession` cut a run from ~100k to ~2–5k tokens by trimming bootstrap context to just `HEARTBEAT.md`; the measured Jarvis no-op tick is 66k input, so the headroom is real.
 - **Exact-time self-scheduling (OpenClaw *cron* analog)** — Roi chose windowed-poll; if hourly polling for the 1h tasks ever proves too expensive even after Phase 6, revisit scheduling exact wakes via the existing reminder substrate.
 - **Deterministic Arbox poll** — move `crossfit-sync`'s hourly Arbox check to a deterministic tool that escalates to the LLM only on a schedule change (§0).
