@@ -23,7 +23,8 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,85 @@ HEARTBEAT_PATH = "/app/jarvis_memory/HEARTBEAT.md"
 STATE_DIR = "/app/jarvis_data/heartbeat"
 STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
-# Task header: "- **task-name** | every 24h | state: `heartbeat/x.md`"
+_ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
+
+# Task header: "- **task-name** | every 24h | due: 06:00-22:00 | state: `heartbeat/x.md`"
 _HEADER_RE = re.compile(r"^-\s*\*\*(?P<name>[^*]+?)\*\*(?P<rest>.*)$")
 # Cadence: "every 1h" / "every 24h" / "every 7 days" / "every 2 hours"
 _CADENCE_RE = re.compile(r"every\s+(?P<n>\d+)\s*(?P<unit>hours?|days?|h|d)\b", re.IGNORECASE)
+# Optional due window field inside the header's "|"-separated segments.
+_DUE_FIELD_RE = re.compile(r"due:\s*(?P<spec>[^|`]+)", re.IGNORECASE)
+# Window spec: "[Day[,Day...] ]HH:MM-HH:MM" or "[Day[,Day...] ]HH:MM±Nh"
+# (± also accepted as "+-" or "+/-" for ASCII-only editing).
+_WINDOW_RE = re.compile(
+    r"^(?:(?P<days>(?:mon|tue|wed|thu|fri|sat|sun)"
+    r"(?:\s*,\s*(?:mon|tue|wed|thu|fri|sat|sun))*)\s+)?"
+    r"(?P<h1>\d{1,2}):(?P<m1>\d{2})"
+    r"(?:\s*-\s*(?P<h2>\d{1,2}):(?P<m2>\d{2})"
+    r"|\s*(?:±|\+/-|\+-)\s*(?P<rad>\d+(?:\.\d+)?)\s*h)\s*$",
+    re.IGNORECASE,
+)
+_DAY_NUM = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+@dataclass(frozen=True)
+class DueWindow:
+    """A time-of-day window (Israel time), optionally limited to weekdays.
+
+    Exactly one of (``start``+``end``) or (``center``+``radius``) is set.
+    An end at or before the start wraps past midnight.
+    """
+
+    days: frozenset[int] | None  # weekday numbers, None = every day
+    start: dt_time | None = None
+    end: dt_time | None = None
+    center: dt_time | None = None
+    radius: timedelta | None = None
+
+    def is_open(self, now: datetime) -> bool:
+        now = now.astimezone(_ISRAEL_TZ)
+        # A window anchored to yesterday/today/tomorrow can contain `now`
+        # (ranges that wrap midnight, ± radii that cross a day boundary).
+        for day_offset in (-1, 0, 1):
+            day = (now + timedelta(days=day_offset)).date()
+            if self.days is not None and day.weekday() not in self.days:
+                continue
+            if self.center is not None:
+                center = datetime.combine(day, self.center, tzinfo=_ISRAEL_TZ)
+                if abs(now - center) <= self.radius:
+                    return True
+            else:
+                start = datetime.combine(day, self.start, tzinfo=_ISRAEL_TZ)
+                duration = (
+                    datetime.combine(day, self.end, tzinfo=_ISRAEL_TZ) - start
+                ) % timedelta(days=1)
+                if not duration:
+                    duration = timedelta(days=1)  # end == start: full day
+                if start <= now < start + duration:
+                    return True
+        return False
+
+
+def parse_window(spec: str) -> DueWindow | None:
+    """A ``DueWindow`` from a ``due:`` spec string, or None if unparseable."""
+    m = _WINDOW_RE.match(spec.strip())
+    if not m:
+        return None
+    try:
+        days = None
+        if m.group("days"):
+            days = frozenset(
+                _DAY_NUM[d.strip().lower()] for d in m.group("days").split(",")
+            )
+        t1 = dt_time(int(m.group("h1")), int(m.group("m1")))
+        if m.group("h2") is not None:
+            t2 = dt_time(int(m.group("h2")), int(m.group("m2")))
+            return DueWindow(days=days, start=t1, end=t2)
+        return DueWindow(
+            days=days, center=t1, radius=timedelta(hours=float(m.group("rad")))
+        )
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -42,6 +118,8 @@ class HeartbeatTask:
     name: str
     cadence: timedelta | None  # None = unparseable → treat as always due
     raw: str  # the header line as written
+    due: str | None = None  # raw due: spec, if present
+    window: DueWindow | None = None  # None = no (or unparseable) window → open
 
 
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
@@ -79,7 +157,8 @@ def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
         if not name or name in seen:
             continue
         seen.add(name)
-        cm = _CADENCE_RE.search(m.group("rest"))
+        rest = m.group("rest")
+        cm = _CADENCE_RE.search(rest)
         cadence: timedelta | None = None
         if cm:
             n = int(cm.group("n"))
@@ -90,7 +169,24 @@ def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
                 "heartbeat_state: no parseable cadence for task %r — treating as always due",
                 name,
             )
-        tasks.append(HeartbeatTask(name=name, cadence=cadence, raw=line.strip()))
+        due_raw: str | None = None
+        window: DueWindow | None = None
+        dm = _DUE_FIELD_RE.search(rest)
+        if dm:
+            due_raw = dm.group("spec").strip()
+            window = parse_window(due_raw)
+            if window is None:
+                logger.warning(
+                    "heartbeat_state: unparseable due window %r for task %r — "
+                    "treating as always open",
+                    due_raw,
+                    name,
+                )
+        tasks.append(
+            HeartbeatTask(
+                name=name, cadence=cadence, raw=line.strip(), due=due_raw, window=window
+            )
+        )
 
     _parse_cache = (path, mtime, tasks)
     return tasks
@@ -169,8 +265,9 @@ def any_due(
     must degrade to running the model with the full task list, never to
     silently skipping the tick.
 
-    A task is due when it has never been stamped, its stamp is unreadable,
-    its cadence is unparseable, or ``now - last_run >= cadence``.
+    A task is due when its cadence has elapsed (never stamped, stamp
+    unreadable, cadence unparseable, or ``now - last_run >= cadence``) AND
+    its ``due:`` window — if it has a parseable one — is open at ``now``.
     """
     now = now or datetime.now(timezone.utc)
     tasks = parse_tasks(heartbeat_path)
@@ -184,24 +281,28 @@ def any_due(
 
     due: list[str] = []
     for t in tasks:
+        if t.window is not None and not t.window.is_open(now):
+            continue
+        cadence_due = False
         if t.cadence is None:
-            due.append(t.name)
-            continue
-        raw = last_run.get(t.name)
-        if not raw:
-            due.append(t.name)
-            continue
-        try:
-            prev = datetime.fromisoformat(raw)
-        except ValueError:
-            logger.warning(
-                "heartbeat_state: unreadable last_run for %r — treating as due", t.name
-            )
-            due.append(t.name)
-            continue
-        if prev.tzinfo is None:
-            prev = prev.replace(tzinfo=timezone.utc)
-        if now - prev >= t.cadence:
+            cadence_due = True
+        else:
+            raw = last_run.get(t.name)
+            if not raw:
+                cadence_due = True
+            else:
+                try:
+                    prev = datetime.fromisoformat(raw)
+                    if prev.tzinfo is None:
+                        prev = prev.replace(tzinfo=timezone.utc)
+                    cadence_due = now - prev >= t.cadence
+                except ValueError:
+                    logger.warning(
+                        "heartbeat_state: unreadable last_run for %r — treating as due",
+                        t.name,
+                    )
+                    cadence_due = True
+        if cadence_due:
             due.append(t.name)
     return bool(due), due
 

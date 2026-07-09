@@ -2,6 +2,8 @@ This turn is a scheduled background tick (see `[Active scope: heartbeat]` above)
 
 Heartbeat task management:
 - Your recurring task list is in HEARTBEAT.md (provided below). Each task stores its state in `heartbeat/<task_name>.md` — a `last_run:` ISO timestamp + notes.
+- Only tasks currently due may be shown; a note names any omitted ones — never act on omitted tasks.
+- A task header may carry a `due: <window>` field (time-of-day/days, Israel time). That window is enforced in code before you run — if the task is in front of you, its window is open. Still honor any remaining conditions in the task body (e.g. a `target_date` check).
 
 For each task in HEARTBEAT.md, in order:
 
