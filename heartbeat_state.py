@@ -125,6 +125,28 @@ class HeartbeatTask:
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
 
 
+def split_blocks(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Split HEARTBEAT.md content into (preamble lines, task blocks).
+
+    A block is a ``- **name**`` header line plus every following line up to
+    the next header (or EOF). The preamble is everything before the first
+    header. Pure text operation — no validation.
+    """
+    preamble: list[str] = []
+    blocks: list[tuple[str, list[str]]] = []
+    current: list[str] | None = None
+    for line in text.splitlines():
+        m = _HEADER_RE.match(line.strip())
+        if m:
+            current = [line]
+            blocks.append((m.group("name").strip(), current))
+        elif current is not None:
+            current.append(line)
+        else:
+            preamble.append(line)
+    return preamble, blocks
+
+
 def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
     """Task definitions from HEARTBEAT.md, cached by file mtime.
 
@@ -142,14 +164,25 @@ def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
 
     try:
         with open(path, encoding="utf-8") as f:
-            lines = f.read().splitlines()
+            text = f.read()
     except OSError:
         logger.warning("heartbeat_state: cannot read %s", path)
         return []
 
+    tasks = parse_tasks_text(text)
+    _parse_cache = (path, mtime, tasks)
+    return tasks
+
+
+def parse_tasks_text(text: str) -> list[HeartbeatTask]:
+    """Task definitions from HEARTBEAT.md-format text (uncached).
+
+    Same leniency as ``parse_tasks``; used to validate candidate content
+    before it is written.
+    """
     tasks: list[HeartbeatTask] = []
     seen: set[str] = set()
-    for line in lines:
+    for line in text.splitlines():
         m = _HEADER_RE.match(line.strip())
         if not m:
             continue
@@ -187,8 +220,6 @@ def parse_tasks(path: str = HEARTBEAT_PATH) -> list[HeartbeatTask]:
                 name=name, cadence=cadence, raw=line.strip(), due=due_raw, window=window
             )
         )
-
-    _parse_cache = (path, mtime, tasks)
     return tasks
 
 
@@ -200,20 +231,7 @@ def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
     them, so the model knows they exist and are simply not due — without
     paying for their full bodies. Unknown names in ``due_names`` are ignored.
     """
-    lines = text.splitlines()
-    preamble: list[str] = []
-    blocks: list[tuple[str, list[str]]] = []  # (task name, block lines)
-    current: list[str] | None = None
-    for line in lines:
-        m = _HEADER_RE.match(line.strip())
-        if m:
-            current = [line]
-            blocks.append((m.group("name").strip(), current))
-        elif current is not None:
-            current.append(line)
-        else:
-            preamble.append(line)
-
+    preamble, blocks = split_blocks(text)
     keep = set(due_names)
     kept = [b for name, b in blocks if name in keep]
     omitted = [name for name, _ in blocks if name not in keep]
