@@ -116,6 +116,56 @@ def load_state(path: str = STATE_PATH) -> dict:
     return data
 
 
+def any_due(
+    now: datetime | None = None,
+    *,
+    heartbeat_path: str = HEARTBEAT_PATH,
+    state_path: str = STATE_PATH,
+) -> tuple[bool, list[str] | None]:
+    """Which tasks are cadence-due at ``now`` (default: now, UTC).
+
+    Returns ``(anything_due, due_names)``. ``due_names`` is ``None`` when the
+    answer is "unknown — run everything": an empty or unreadable HEARTBEAT.md
+    must degrade to running the model with the full task list, never to
+    silently skipping the tick.
+
+    A task is due when it has never been stamped, its stamp is unreadable,
+    its cadence is unparseable, or ``now - last_run >= cadence``.
+    """
+    now = now or datetime.now(timezone.utc)
+    tasks = parse_tasks(heartbeat_path)
+    if not tasks:
+        logger.warning(
+            "heartbeat_state: no parseable tasks in %s — treating all as due",
+            heartbeat_path,
+        )
+        return True, None
+    last_run = load_state(state_path)["last_run"]
+
+    due: list[str] = []
+    for t in tasks:
+        if t.cadence is None:
+            due.append(t.name)
+            continue
+        raw = last_run.get(t.name)
+        if not raw:
+            due.append(t.name)
+            continue
+        try:
+            prev = datetime.fromisoformat(raw)
+        except ValueError:
+            logger.warning(
+                "heartbeat_state: unreadable last_run for %r — treating as due", t.name
+            )
+            due.append(t.name)
+            continue
+        if prev.tzinfo is None:
+            prev = prev.replace(tzinfo=timezone.utc)
+        if now - prev >= t.cadence:
+            due.append(t.name)
+    return bool(due), due
+
+
 def stamp(
     task_names: list[str],
     when: datetime | None = None,
