@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import heartbeat_state
+
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 logger = logging.getLogger(__name__)
@@ -71,12 +73,22 @@ async def run_heartbeat() -> None:
         logger.exception("Heartbeat: failed to read heartbeat_respond ack")
         ack = None
     if ack is None:
-        logger.warning("Heartbeat: no heartbeat_respond call this tick")
+        logger.warning("Heartbeat: no heartbeat_respond call this tick — not stamping")
     else:
         logger.info(
             "Heartbeat: ack acted_tasks=%s notify=%s summary=%r",
             ack.get("acted_tasks"), ack.get("notify"), str(ack.get("summary", ""))[:200],
         )
+        acted = ack.get("acted_tasks") or []
+        if acted:
+            # Code-owned last_run stamps, advanced only for tasks the agent
+            # reported acting on. The agent's own last_run: line in the notes
+            # files keeps being written in parallel for cross-checking.
+            try:
+                stamped = await asyncio.to_thread(heartbeat_state.stamp, acted)
+                logger.info("Heartbeat: stamped last_run for %s", stamped)
+            except Exception:
+                logger.exception("Heartbeat: failed to stamp last_run state")
 
     if response and not response.strip().startswith("[NO_ACTION]"):
         logger.info("Heartbeat: sending message to user")
