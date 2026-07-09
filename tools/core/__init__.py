@@ -29,6 +29,7 @@ from tools.core.scheduling import (
     _remove_event,
 )
 from tools.core.activate_skill import activate_skill, deactivate_skill
+from tools.core.heartbeat import heartbeat_respond
 
 __all__ = [
     "MEMORY_DIR",
@@ -51,4 +52,5 @@ __all__ = [
     "_remove_event",
     "activate_skill",
     "deactivate_skill",
+    "heartbeat_respond",
 ]

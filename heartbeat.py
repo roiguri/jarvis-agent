@@ -30,7 +30,7 @@ async def run_heartbeat() -> None:
     """Periodic agent turn. HEARTBEAT.md + recent daily logs + tick rules are
     injected by the agent's build_system_prompt (scope='heartbeat'); this just
     issues the imperative and sends the reply if it isn't [NO_ACTION]."""
-    from agent import ask_jarvis
+    from agent import ask_jarvis, get_heartbeat_ack
     from gateway.factory import default_user_channel
     from tools.core import append_notification_log
 
@@ -62,6 +62,21 @@ async def run_heartbeat() -> None:
     except Exception as e:
         logger.error("Heartbeat: agent turn failed: %s", e)
         return
+
+    # Structured tick-ack: log what the model reports acting on. Message
+    # delivery below still keys off the reply text.
+    try:
+        ack = await asyncio.to_thread(get_heartbeat_ack, HEARTBEAT_THREAD_ID)
+    except Exception:
+        logger.exception("Heartbeat: failed to read heartbeat_respond ack")
+        ack = None
+    if ack is None:
+        logger.warning("Heartbeat: no heartbeat_respond call this tick")
+    else:
+        logger.info(
+            "Heartbeat: ack acted_tasks=%s notify=%s summary=%r",
+            ack.get("acted_tasks"), ack.get("notify"), str(ack.get("summary", ""))[:200],
+        )
 
     if response and not response.strip().startswith("[NO_ACTION]"):
         logger.info("Heartbeat: sending message to user")

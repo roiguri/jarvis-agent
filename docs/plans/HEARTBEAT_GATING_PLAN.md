@@ -294,7 +294,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 **Why now:** with scoping proven safe, introduce the agent's structured ack — the signal every later phase keys off. **OpenClaw analog:** `heartbeat-response-tool.ts`.
 
 **Implementation:**
-1. `tools/core/heartbeat_respond.py`, `@tool_register(namespace="core", scopes=("heartbeat",))`:
+1. `tools/core/heartbeat.py` (heartbeat-management module — Phase 8's `manage_heartbeat_task` lands here too), `@tool_register(namespace="core", scopes=("heartbeat",))`:
    ```python
    def heartbeat_respond(
        acted_tasks: list[str],      # task names (from HEARTBEAT.md) acted on this tick
@@ -417,7 +417,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 **OpenClaw analog:** *"Yes — if you ask it to"* — but via a validated tool, not raw rewrite, because OpenClaw has no validation and our agent authors the tasks (§2).
 
 **Implementation:**
-1. New `tools/core/heartbeat_task.py` — `manage_heartbeat_task(action, name, cadence, due, instruction)` (§1.6). `namespace="core"`, no scope restriction, `destructive=True`.
+1. `manage_heartbeat_task(action, name, cadence, due, instruction)` (§1.6) in `tools/core/heartbeat.py` (shared heartbeat-management module from Phase 2). `namespace="core"`, no scope restriction, `destructive=True`.
    - `create`/`update`/`delete`: parse → mutate → **re-serialize the task section deterministically** (preserve surrounding prose), validate (cadence, `due:`, duplicate name) before writing; reject with a clear error on failure, leaving the file untouched. Never a blind whole-file overwrite.
    - Reuse `heartbeat_state.parse_tasks` for read/validate.
    - `create`/`update`/`delete` → `get_confirmation().request_confirmation_sync(...)` (protected file). `list` is read-only.
@@ -468,13 +468,13 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 | Phase | New | Modified |
 |---|---|---|
 | 1 | — | `tools/registry.py` |
-| 2 | `tools/core/heartbeat_respond.py` | `tools/core/__init__.py`, `prompts/heartbeat.md`, `heartbeat.py` (log only) |
+| 2 | `tools/core/heartbeat.py` | `tools/core/__init__.py`, `prompts/heartbeat.md`, `heartbeat.py` (log only) |
 | 3 | `heartbeat_state.py` | `heartbeat.py` (stamp after tick) |
 | 4 | — | `heartbeat.py` (gate before LLM) |
 | 5 | — | `agent.py` (`build_system_prompt` `due_tasks`, `ask_jarvis` threading), `heartbeat.py` (pass due list) |
 | 6 | — | `heartbeat_state.py` (window parser), `HEARTBEAT.md` (`due:` on tasks), `prompts/heartbeat.md` |
 | 7 | — | `prompts/heartbeat.md`, `HEARTBEAT.md` (`state:`→`notes:`), `heartbeat/*.md` (clear `last_run:`) |
-| 8 | `tools/core/heartbeat_task.py` | `tools/core/__init__.py`, `prompts/AGENTS.md` (authoring + reminder-vs-task rules) |
+| 8 | — | `tools/core/heartbeat.py` (add `manage_heartbeat_task`), `tools/core/__init__.py`, `prompts/AGENTS.md` (authoring + reminder-vs-task rules) |
 
 *(Only files under `/app/jarvis_code/` are git-tracked. `HEARTBEAT.md`, `heartbeat/*.md`, and `state.json` are runtime data and never committed.)*
 

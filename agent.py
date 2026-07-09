@@ -146,8 +146,7 @@ load_dotenv("/app/secrets/.env")
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY not found. Please check /app/secrets/.env")
 
-# Define the paths
-# DB_PATH was added to .gitignore in Phase 2 to prevent committing the database
+# LangGraph owns this path (see CLAUDE.md placement principle); gitignored.
 DB_PATH = "/app/jarvis_memory/threads.sqlite"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -674,6 +673,36 @@ def ask_jarvis(
         no_action = scope == "heartbeat" and final_response.strip().startswith("[NO_ACTION]")
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
+
+
+def get_heartbeat_ack(thread_id: str) -> dict | None:
+    """The ``heartbeat_respond`` payload from a thread's LAST turn, or None.
+
+    Walks the checkpointed messages after the final HumanMessage (the turn
+    boundary) and returns the args of the last heartbeat_respond tool call in
+    that slice — a stale ack from an earlier tick is never picked up. Any
+    failure degrades to None, never raises.
+    """
+    try:
+        snap = agent_executor.get_state({"configurable": {"thread_id": thread_id}})
+        messages = (snap.values or {}).get("messages", [])
+    except Exception:
+        logger.exception("get_heartbeat_ack: failed to read state for %s", thread_id)
+        return None
+
+    last_human = None
+    for i, m in enumerate(messages):
+        if isinstance(m, HumanMessage):
+            last_human = i
+    if last_human is None:
+        return None
+
+    ack = None
+    for m in messages[last_human + 1:]:
+        for tc in getattr(m, "tool_calls", None) or []:
+            if tc.get("name") == "heartbeat_respond":
+                ack = tc.get("args") or {}
+    return ack
 
 
 def ask_jarvis_once(user_input: str) -> str:
