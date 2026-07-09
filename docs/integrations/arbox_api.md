@@ -92,7 +92,7 @@ Returns the workout program (WOD) for a given date. This is what shows in the ap
   - `name` — the date string `"YYYY-MM-DD"`
 - **Notes**: Returns WOD programming, NOT attendance history. Empty `{"data": []}` means no WOD posted for that date yet (coaches post WODs ~5 days ahead).
 
-**Flatten the nested arrays**: `data` is `[sections][groups][exercises]`. Collect all `comment` fields.
+**Flatten the nested arrays**: `data` is `[sections][groups][exercises]`, one section per track (WOD, Endurance, PUMP, W.LIFTING, …). `_parse_wod_tracks` collects every `(category, comment)`; `_get_session_programming` then selects the single track Roi follows (WOD / Saturday Endurance at his branch) via `_score_track`.
 
 ---
 

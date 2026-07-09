@@ -159,23 +159,70 @@ def _fmt_pace(avg_pace_sec: int) -> str:
 _init_db()
 
 
-def _get_wod_for_date(date_str: str) -> str:
-    """Fetch WOD programming text for a date (YYYY-MM-DD). Returns empty string if none posted."""
+# Tracks Roi follows: the WOD (and Endurance on Saturday) at his branch. PUMP /
+# W.LIFTING / other-branch tracks are dropped from briefings (reachable via
+# get_daily_programming). Branch keyword is env-overridable.
+ARBOX_WOD_BRANCH = os.environ.get("ARBOX_WOD_BRANCH", "neve tzedek").strip().lower()
+_FOLLOWED_TRACKS = ("wod", "endurance")
+
+
+def _norm_category(name: str) -> str:
+    """Case-fold and collapse whitespace for tolerant matching."""
+    return " ".join((name or "").split()).lower()
+
+
+def _score_track(category: str, prefer_category: str | None = None) -> int:
+    """Rank a track for Roi's program (0 = not followed, skip). prefer_category
+    is the class he booked — an exact-match tie-breaker, not a requirement."""
+    cat = _norm_category(category)
+    if not cat:
+        return 0
+    if prefer_category and cat == _norm_category(prefer_category):
+        return 100
+    followed = any(k in cat for k in _FOLLOWED_TRACKS)
+    branch = bool(ARBOX_WOD_BRANCH) and ARBOX_WOD_BRANCH in cat
+    if followed and branch:
+        return 40  # e.g. WOD/ENDURANCE NEVE TZEDEK
+    if branch:
+        return 30
+    if followed:
+        return 20  # WOD at another branch — last resort
+    return 0  # PUMP / W.LIFTING / OPEN GYM
+
+
+def _parse_wod_tracks(date_str: str) -> list[tuple[str, str]]:
+    """All posted (category, comment) tracks for a date. [] if none/on error."""
     try:
         data = _arbox_post("/api/v2/logbook/workouts", {"date": date_str})
-        sections = data.get("data", [])
-        comments = []
-        for group_list in sections:
-            for group in group_list:
-                for exercise in group:
-                    comment = exercise.get("comment", "")
-                    category = (exercise.get("box_categories") or {}).get("name", "")
-                    if comment:
-                        prefix = f"[{category}] " if category else ""
-                        comments.append(f"{prefix}{comment}")
-        return "\n\n".join(comments)
     except Exception:
+        return []
+    tracks: list[tuple[str, str]] = []
+    for group_list in data.get("data", []):
+        for group in group_list:
+            for exercise in group:
+                comment = (exercise.get("comment") or "").strip()
+                if not comment:
+                    continue
+                category = (exercise.get("box_categories") or {}).get("name", "")
+                tracks.append((category, comment))
+    return tracks
+
+
+def _get_session_programming(date_str: str, prefer_category: str | None = None) -> str:
+    """Full text of the single track Roi follows for a date. "" if none posted.
+
+    Picks the best-scoring track (see _score_track) instead of concatenating all
+    of them; prefer_category is the registered class's category.
+    """
+    best: tuple[int, str, str] | None = None  # (score, category, comment)
+    for category, comment in _parse_wod_tracks(date_str):
+        score = _score_track(category, prefer_category)
+        if score > 0 and (best is None or score > best[0]):
+            best = (score, category, comment)
+    if best is None:
         return ""
+    _, category, comment = best
+    return f"[{category}] {comment}" if category else comment
 
 
 def _valid_date(s: str) -> bool:
@@ -364,7 +411,7 @@ def fetch_upcoming_arbox_classes() -> str:
                 category = (cls.get("box_categories") or {}).get("name", "WOD")
                 scheduled_dt = f"{date_str} {time_str}:00"
 
-                wod = _get_wod_for_date(date_str)
+                wod = _get_session_programming(date_str, prefer_category=category)
 
                 conn.execute(
                     """INSERT OR IGNORE INTO workouts
@@ -373,8 +420,8 @@ def fetch_upcoming_arbox_classes() -> str:
                     (schedule_id, plan_id, scheduled_dt, wod or None),
                 )
 
-                wod_preview = (wod[:200] + "...") if wod and len(wod) > 200 else (wod or "WOD not yet posted")
-                results.append(f"• {date_str} at {time_str} ({category})\n  WOD: {wod_preview}")
+                wod_text = wod or "WOD not yet posted"
+                results.append(f"• {date_str} at {time_str} ({category})\n  WOD: {wod_text}")
 
             # Always reconcile — an empty registered set is the legitimate
             # "dropped everything" case and must still purge ghosts.
@@ -440,7 +487,7 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
         finally:
             conn.close()
 
-        wod_cache: dict[str, str] = {}
+        wod_cache: dict[tuple[str, str], str] = {}
 
         lines = [f"Gym schedule for the next {days_ahead} day(s):"]
         for cls in classes:
@@ -452,9 +499,10 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
             is_registered = cls.get("user_booked") is not None
             spots_left = cls.get("free", 0)
 
-            if date_str not in wod_cache:
-                wod_cache[date_str] = _get_wod_for_date(date_str)
-            wod = wod_cache[date_str]
+            cache_key = (date_str, category)
+            if cache_key not in wod_cache:
+                wod_cache[cache_key] = _get_session_programming(date_str, prefer_category=category)
+            wod = wod_cache[cache_key]
 
             reg_marker = " ✓ REGISTERED" if is_registered else f" ({spots_left} spots left)"
             friend_marker = ""
@@ -466,7 +514,7 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
                 ]
                 if present:
                     friend_marker = f" + {', '.join(present)}"
-            wod_line = (wod[:300] + "...") if wod and len(wod) > 300 else (wod or "WOD not yet posted")
+            wod_line = wod or "WOD not yet posted"
             lines.append(f"\n{date_str} {time_str} | {category}{reg_marker}{friend_marker}\n  {wod_line}")
 
         return "\n".join(lines)
@@ -475,6 +523,36 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
         return f"Error: {e}"
     except Exception as e:
         return f"Error fetching schedule: {e}"
+
+
+@tool_register(namespace="fitness")
+@tool
+def get_daily_programming(date: str | None = None) -> str:
+    """Show ALL Arbox tracks for a date in full — WOD, Endurance, PUMP, W.LIFTING, etc.
+
+    Briefings/scouting already surface the track Roi follows (WOD, or Saturday
+    Endurance) via fetch_upcoming_arbox_classes / fetch_weekly_gym_schedule. Use
+    this only when he explicitly asks about another track (e.g. "what's the PUMP
+    today?") or wants to compare them.
+
+    Args:
+        date: 'YYYY-MM-DD'. Defaults to today (Israel time).
+    """
+    try:
+        date_str = date or datetime.now(ISRAEL_TZ).strftime("%Y-%m-%d")
+        if not _valid_date(date_str):
+            return "Error: date must be 'YYYY-MM-DD'."
+        tracks = _parse_wod_tracks(date_str)
+        if not tracks:
+            return f"No programming posted for {date_str} yet."
+        lines = [f"All tracks for {date_str}:"]
+        for category, comment in tracks:
+            lines.append(f"\n[{category or 'UNLABELED'}]\n{comment}")
+        return "\n".join(lines)
+    except RuntimeError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error fetching programming: {e}"
 
 
 @tool_register(namespace="fitness")
