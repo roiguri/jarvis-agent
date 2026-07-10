@@ -69,15 +69,11 @@ async def run_heartbeat() -> None:
     today_start = now_israel.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
     prompt = (
-        "Run the scheduled heartbeat check now. Work through the tasks in "
-        "HEARTBEAT.md (provided in your context); for each, read its state "
-        "file and act only if it is due. If nothing is due, reply with "
-        "exactly [NO_ACTION].\n\n"
-        f"Then update today's daily log: write_memory('daily/daily_{today}.md', "
-        f"<content>). Use get_chat_history(50, since='{today_start}') to fold "
-        "today's user conversations in alongside heartbeat activity; if the "
-        "file already exists, read it first and update rather than overwrite. "
-        "Format: '## Conversations (today)' / '## Heartbeat Activity' / '## Notes'."
+        "Run the scheduled heartbeat check now. Work the due tasks shown in "
+        "the HEARTBEAT.md section of your context, following the heartbeat "
+        "rules above it.\n\n"
+        f"Today's daily log file: daily/daily_{today}.md. For today's chat "
+        f"use get_chat_history(50, since='{today_start}')."
     )
 
     logger.info("Heartbeat: running agent turn")

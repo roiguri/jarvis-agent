@@ -1,22 +1,24 @@
-This turn is a scheduled background tick (see `[Active scope: heartbeat]` above), not a live conversation. Be terse. If no task is due after the check below, reply with exactly `[NO_ACTION]` and send no message.
+This turn is a scheduled background tick (see `[Active scope: heartbeat]` above), not a live conversation. Be terse. If nothing this tick warrants a message to Roi, reply with exactly `[NO_ACTION]` and send no message.
 
 Heartbeat task management:
-- Your recurring task list is in HEARTBEAT.md (provided below). Each task stores its state in `heartbeat/<task_name>.md` — a `last_run:` ISO timestamp + notes.
-- Only tasks currently due may be shown; a note names any omitted ones — never act on omitted tasks.
-- A task header may carry a `due: <window>` field (time-of-day/days, Israel time). That window is enforced in code before you run — if the task is in front of you, its window is open. Still honor any remaining conditions in the task body (e.g. a `target_date` check).
+- Your recurring task list lives in HEARTBEAT.md. The copy below shows only the tasks that are DUE this tick: code has already checked every task's interval (`every Xh`/`Xd`) and its optional `due:` window (Israel time) against a code-owned last-run stamp before this turn started. Do not redo that scheduling math — do not skip a shown task because it "ran recently", and do not re-fire a task from memory of earlier ticks.
+- A note names the omitted (not-due) tasks. Never act on them and never read their state files this tick.
+- Code enforces only the interval and the window. Any condition written in a task's body (e.g. "run on Thursday evening", a `target_date` check) is still yours to honor.
 
-For each task in HEARTBEAT.md, in order:
+For each task shown, in order:
 
-1. **Read the state file.** Parse the `last_run:` ISO timestamp.
-2. **Interval check.** Find the task's interval in HEARTBEAT.md (e.g. `every 24h`, `every 1h`). If `(now − last_run) < interval`, the task is NOT due — skip it: do NOT message Roi, do NOT call further tools for it, move on. The whole point of `last_run` is to enforce the interval. Do not bypass it because "the briefing would be fresh" or "enough time has passed to be useful again" — those are not valid reasons to re-fire.
-3. **Chat check (only for due tasks).** If a `--- Today's chat with Roi ---` section is provided and Roi has clearly already addressed this task today (logged the workout it would ask about, discussed the briefing it would send, made the decision it would surface), do NOT send the briefing. Instead append a line `User handled this on YYYY-MM-DD at HH:MM (Israel) — skipping today.` to the state file and move on.
-4. **Act (only for due, unaddressed tasks).** Use your tools, message Roi if appropriate, then **update the state file**: replace `last_run:` with the current Israel-time ISO timestamp and refresh the notes line. The state file update is not optional — without it, the next tick will re-fire the same task.
+1. **Read its state file** (`heartbeat/<task_name>.md`) for working context — schedules, target dates, notes from previous runs.
+2. **Chat check.** If a `--- Today's chat with Roi ---` section is provided and Roi has clearly already addressed this task today (logged the workout it would ask about, discussed the briefing it would send, made the decision it would surface), skip the briefing: append a line `User handled this on YYYY-MM-DD at HH:MM (Israel) — skipping today.` to the state file. This resolves the task — count it as acted on.
+3. **Act.** Use your tools, message Roi if the task calls for it, then **update the state file**: replace `last_run:` with the current Israel-time ISO timestamp and refresh the notes. (Scheduling no longer reads `last_run:` — keep writing it for now as a cross-check of the code-owned stamps.)
+4. **Not its moment yet?** If the task's own body says there is nothing to do this tick (wrong day, `target_date` not today), leave it: no further tools, no message, and do NOT count it as acted. It will be offered again next tick.
+
+After the task work, update today's daily log (the exact filename and `since` timestamp are given in the tick message): fold today's user conversations (`get_chat_history`) in alongside heartbeat activity. If the file already exists, read it first and update rather than overwrite. Format: `## Conversations (today)` / `## Heartbeat Activity` / `## Notes`.
 
 **Always end the tick by calling `heartbeat_respond` exactly once**, as your last tool call, after all task work:
-- `acted_tasks`: exact names (from HEARTBEAT.md) of every task you acted on this tick; `[]` if none. Do not list tasks you only checked and skipped.
+- `acted_tasks`: exact names (from the task headers) of every task you resolved this tick — did its work, or confirmed via the chat check that Roi already handled it. `[]` if none. Never a task you left for a later tick (step 4), and never an omitted task.
 - `notify`: true only if Roi needs to see a message this tick; put the user-facing text in `notification_text`.
 - `summary`: one line for the internal log.
 
-After the `heartbeat_respond` call, still reply as before: exactly `[NO_ACTION]` if no task was due, otherwise the message text — delivery is currently keyed off your reply text.
+After the `heartbeat_respond` call, still reply as before: exactly `[NO_ACTION]` if no message is warranted, otherwise the message text — delivery is currently keyed off your reply text.
 
-To add/modify a recurring task or a one-time proactive check-in, rewrite HEARTBEAT.md with the full updated content. Format: `- **task-name** | every Xh (or: once) | state: `heartbeat/task_name.md`` followed by what to do. For one-time tasks, remove them from HEARTBEAT.md and delete their state file after completing.
+To add, change or remove a recurring task, use `manage_heartbeat_task` — never rewrite HEARTBEAT.md via write_memory. Heartbeat ticks may not create new tasks; if one seems needed, propose it to Roi in chat. For a one-time ping at a fixed moment, use `manage_reminder` instead.

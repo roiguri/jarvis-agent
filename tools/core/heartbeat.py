@@ -78,10 +78,12 @@ def heartbeat_respond(
     last tool call of the tick, after all task work is done.
 
     Args:
-        acted_tasks: Exact names (from HEARTBEAT.md) of every task you acted
-            on this tick — completed its work and updated its state file.
-            Empty list if nothing was due or nothing was done. Do NOT list
-            tasks you only checked and skipped.
+        acted_tasks: Exact names (from HEARTBEAT.md) of every task you
+            resolved this tick — completed its work and updated its state
+            file, or confirmed Roi already handled it in today's chat.
+            Empty list if none. Never list a task you left for a later tick
+            (its body's conditions weren't met yet), and never a task that
+            was omitted from this tick's list.
         notify: True only if Roi should receive a message from this tick.
         summary: One line for the internal log — what this tick did (or why
             nothing was done). Always required.
