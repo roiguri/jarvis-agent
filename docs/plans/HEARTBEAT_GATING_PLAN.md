@@ -272,11 +272,22 @@ A second reference reviewed after this plan was drafted — [github.com/nousrese
 
 Each phase is one or more commits on `feat/heartbeat-gating`, independently testable and revertable. Phases 1–3 add no behavior change (infrastructure + parallel writes) so regressions are easy to isolate. Phase 8 (self-authoring — Roi's priority) is independent and can be pulled forward to right after Phase 3.
 
+**Status (2026-07-10):** Phases 1–6 and 8 are deployed and validated in production. The first day surfaced two anomalies, fixed the same day by four post-deploy commits + one memory-file edit:
+
+- `bf6c1e5` — `prompts/heartbeat.md` still carried the pre-gating per-task scheduling loop, driving notes-file read storms and acks for non-due tasks; rewritten to match the gated contract (shown = due; omitted = untouchable). Tick trigger prompt slimmed to the per-tick values only.
+- `a7f2423` — runner drops ack `acted_tasks` entries that weren't in this tick's due list (a rogue ack must not shift another task's schedule).
+- `0822d88` — stamps use the tick's start time (not ack time) and `any_due` gets a 60s cadence grace, so an `every 1h` task fires every in-window tick instead of every other one.
+- `HEARTBEAT.md` (runtime data, not committed): every task got a `due:` window; morning-readiness now always sends its message even without synced watch data.
+
+Post-fix evidence (first day): 20/20 ticks acked, 0 omissions, 0 notify-vs-reply disagreements, 0 rogue-stamp warnings, hourly cadence held all day, day-windowed tasks fired only in their windows.
+
+**Next checkpoint — 2026-07-13** (shortened from the original ≥1-week window by owner decision): if `state.json` ↔ markdown `last_run:` still agree and ack omission/disagreement rates hold at ~0, do Phases 7 and 9 together as one cleanup pass.
+
 ### Phase 0 — Branch (done)
 
 `git checkout -b feat/heartbeat-gating`. This plan doc lands here as the first commit (pending Roi's approval).
 
-### Phase 1 — Tool scoping infrastructure ONLY (no new tools)
+### Phase 1 — Tool scoping infrastructure ONLY (no new tools) (done 2026-07-10)
 
 **Why split out:** the scope-filtering change touches `registry.py`, which every tool flows through. Land it alone to prove **zero regression** before adding any tool that depends on it.
 
@@ -290,7 +301,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert the commit.
 
-### Phase 2 — Add the `heartbeat_respond` tool
+### Phase 2 — Add the `heartbeat_respond` tool (done 2026-07-10)
 
 **Why now:** with scoping proven safe, introduce the agent's structured ack — the signal every later phase keys off. **OpenClaw analog:** `heartbeat-response-tool.ts`.
 
@@ -315,7 +326,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert; no data migration.
 
-### Phase 3 — Write `state.json` from the tool result (parallel to existing markdown)
+### Phase 3 — Write `state.json` from the tool result (parallel to existing markdown) (done 2026-07-10; hardened by `a7f2423`, `0822d88`)
 
 **Why:** author machine state ourselves from the trusted signal, in parallel with the existing markdown `last_run:` for one iteration so we can diff before depending on it.
 
@@ -335,7 +346,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert; optionally `rm state.json`.
 
-### Phase 4 — Gate the LLM on cadence + min-spacing (the infrastructure gate)
+### Phase 4 — Gate the LLM on cadence + min-spacing (the infrastructure gate) (done 2026-07-10; 60s cadence grace added in `0822d88`)
 
 **Why:** with truth-stamped state, code answers "anything cadence-due?" without an LLM round-trip. (Per §0, few calls skipped *yet* with the 1h tasks — but this produces the due-list Phases 5/6 need.) **OpenClaw analog:** `shouldDeferWake` → `not-due` + `min-spacing`.
 
@@ -362,7 +373,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert the gate guard; `state.json` keeps being written.
 
-### Phase 5 — Inject only the due tasks into the heartbeat prompt (always-on token win)
+### Phase 5 — Inject only the due tasks into the heartbeat prompt (always-on token win) (done 2026-07-10; prompt-contract fix in `bf6c1e5`)
 
 **Why:** works even while the LLM still runs hourly — shrinks the prompt from 8 task blocks to the 1–2 due. **OpenClaw analog:** *"Only due tasks are included in the heartbeat prompt."*
 
@@ -376,7 +387,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert; `due_tasks=None` restores old behavior.
 
-### Phase 6 — Per-task time/day windows (the call-count win)
+### Phase 6 — Per-task time/day windows (the call-count win) (done 2026-07-10; all 8 tasks windowed)
 
 **Why (per §0):** the 1h tasks keep the LLM running hourly until their windows are machine-enforced. This is where call-count reduction materializes.
 
@@ -397,7 +408,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** remove `due:` annotations; cadence-only resumes.
 
-### Phase 7 — Retire the `last_run:` line from notes files (hygiene)
+### Phase 7 — Retire the `last_run:` line from notes files (hygiene) (pending — checkpoint 2026-07-13)
 
 **Why last:** keep `last_run:` in markdown through Phases 3–6 as a live cross-check. Once `state.json` has matched it ≥1 week, the markdown copy is redundant.
 
@@ -411,7 +422,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** restore the prompt instruction; files untouched.
 
-### Phase 8 — `manage_heartbeat_task` tool + authoring prompts (Roi's priority)
+### Phase 8 — `manage_heartbeat_task` tool + authoring prompts (Roi's priority) (done 2026-07-10)
 
 **Why a separate phase, and when:** independent of the gating phases — needs only the grammar (§1.2) and the shared parser (`heartbeat_state.parse_tasks`, Phase 3). Can land right after Phase 3, ahead of the cost phases, since it's the capability Roi most cares about. Full design in §1.6.
 
@@ -436,7 +447,7 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 **Rollback:** revert; remove tool + AGENTS.md rules. Existing tasks untouched.
 
-### Phase 9 — Ack-primary delivery, reply-text fallback (added 2026-07-10; evidence-gated like Phase 7)
+### Phase 9 — Ack-primary delivery, reply-text fallback (added 2026-07-10; pending — checkpoint 2026-07-13)
 
 **Why.** Phases 2–8 leave the tick with two authoritative outputs: the reply text drives delivery (`[NO_ACTION]` contract), the ack drives stamping. They can disagree — the bad window is `notify=true` in the ack + `[NO_ACTION]` in the reply, a silently lost briefing; the reverse sends noise. The channels aren't redundant (`acted_tasks=[x]` + no message is a legal silent-maintenance tick), so the fix is a clear hierarchy, not deduplication. **OpenClaw analog:** its `heartbeat_respond` payload drives everything; the text token survives as fallback only.
 
