@@ -107,6 +107,18 @@ async def run_heartbeat() -> None:
             ack.get("acted_tasks"), ack.get("notify"), str(ack.get("summary", ""))[:200],
         )
         acted = ack.get("acted_tasks") or []
+        # Only tasks that were actually due this tick may advance their
+        # stamp — an ack echoing some other task (e.g. from thread history)
+        # must not shift that task's schedule. When the gate failed open
+        # (due_names is None) there is no due list to check against.
+        if due_names is not None:
+            rogue = [n for n in acted if n not in due_names]
+            if rogue:
+                logger.warning(
+                    "Heartbeat: ack named non-due task(s) %s — not stamping those",
+                    rogue,
+                )
+                acted = [n for n in acted if n in due_names]
         if acted:
             # Code-owned last_run stamps, advanced only for tasks the agent
             # reported acting on. The agent's own last_run: line in the notes
