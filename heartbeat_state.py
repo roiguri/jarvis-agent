@@ -34,6 +34,13 @@ STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
 _ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
+# Slack for the cadence comparison. Ticks run exactly one interval apart,
+# but the gate's clock is read at job start, so consecutive reads sit a few
+# ms either side of the nominal interval — without slack, an every-1h task
+# stamped at the previous tick misses ~half its checks by milliseconds.
+# Must stay well under the smallest supported cadence (1h).
+_CADENCE_GRACE = timedelta(seconds=60)
+
 # Task header: "- **task-name** | every 24h | due: 06:00-22:00 | state: `heartbeat/x.md`"
 _HEADER_RE = re.compile(r"^-\s*\*\*(?P<name>[^*]+?)\*\*(?P<rest>.*)$")
 # Cadence: "every 1h" / "every 24h" / "every 7 days" / "every 2 hours"
@@ -284,8 +291,9 @@ def any_due(
     silently skipping the tick.
 
     A task is due when its cadence has elapsed (never stamped, stamp
-    unreadable, cadence unparseable, or ``now - last_run >= cadence``) AND
-    its ``due:`` window — if it has a parseable one — is open at ``now``.
+    unreadable, cadence unparseable, or ``now - last_run`` reaching the
+    cadence less ``_CADENCE_GRACE``) AND its ``due:`` window — if it has a
+    parseable one — is open at ``now``.
     """
     now = now or datetime.now(timezone.utc)
     tasks = parse_tasks(heartbeat_path)
@@ -313,7 +321,7 @@ def any_due(
                     prev = datetime.fromisoformat(raw)
                     if prev.tzinfo is None:
                         prev = prev.replace(tzinfo=timezone.utc)
-                    cadence_due = now - prev >= t.cadence
+                    cadence_due = now - prev >= t.cadence - _CADENCE_GRACE
                 except ValueError:
                     logger.warning(
                         "heartbeat_state: unreadable last_run for %r — treating as due",

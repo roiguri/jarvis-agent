@@ -124,7 +124,12 @@ async def run_heartbeat() -> None:
             # reported acting on. The agent's own last_run: line in the notes
             # files keeps being written in parallel for cross-checking.
             try:
-                stamped = await asyncio.to_thread(heartbeat_state.stamp, acted)
+                # Stamp with the tick's start time (when the gate decided),
+                # not completion time — the turn's duration must not shift
+                # the task's schedule.
+                stamped = await asyncio.to_thread(
+                    heartbeat_state.stamp, acted, now_utc
+                )
                 logger.info("Heartbeat: stamped last_run for %s", stamped)
             except Exception:
                 logger.exception("Heartbeat: failed to stamp last_run state")
