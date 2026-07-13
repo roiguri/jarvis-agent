@@ -35,8 +35,9 @@ def get_scheduler() -> AsyncIOScheduler:
 
 async def run_heartbeat() -> None:
     """Periodic agent turn. HEARTBEAT.md + recent daily logs + tick rules are
-    injected by the agent's build_system_prompt (scope='heartbeat'); this just
-    issues the imperative and sends the reply if it isn't [NO_ACTION].
+    injected by the agent's build_system_prompt (scope='heartbeat'); this
+    issues the imperative and delivers per the heartbeat_respond ack
+    (reply text is the fallback when the ack is missing).
 
     A model turn only happens when at least one task is cadence-due per the
     code-owned last_run state. The gate fails open: any error in it runs the
@@ -134,15 +135,27 @@ async def run_heartbeat() -> None:
             except Exception:
                 logger.exception("Heartbeat: failed to stamp last_run state")
 
-    if response and not response.strip().startswith("[NO_ACTION]"):
-        logger.info("Heartbeat: sending message to user")
+    # Delivery: the ack is authoritative — notify/notification_text decide what
+    # Roi sees; the reply text matters only when the ack is missing (already
+    # warned above), so a dropped ack degrades to the old reply-keyed behavior
+    # rather than losing a message.
+    if ack is not None:
+        text = ack.get("notification_text", "")
+        deliver = bool(ack.get("notify") and text)
+        source = "ack"
+    else:
+        text = response or ""
+        deliver = bool(text and not text.strip().startswith("[NO_ACTION]"))
+        source = "reply-text fallback"
+    if deliver:
+        logger.info("Heartbeat: sending message to user (%s)", source)
         try:
-            await default_user_channel().send_to_owner(response)
-            await asyncio.to_thread(append_notification_log, "heartbeat", response)
+            await default_user_channel().send_to_owner(text)
+            await asyncio.to_thread(append_notification_log, "heartbeat", text)
         except Exception as e:
             logger.error("Heartbeat: failed to send message: %s", e)
     else:
-        logger.info("Heartbeat: [NO_ACTION] — nothing to send")
+        logger.info("Heartbeat: nothing to send (%s)", source)
 
 
 async def fire_reminder(event: dict) -> None:
