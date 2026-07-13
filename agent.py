@@ -689,29 +689,31 @@ def ask_jarvis(
         try:
             end_snap = agent_executor.get_state(config)
             active_end = sorted((end_snap.values or {}).get("active_skills", set()))
+            end_messages = (end_snap.values or {}).get("messages", [])
         except Exception:
             active_end = active_start
-        no_action = scope == "heartbeat" and final_response.strip().startswith("[NO_ACTION]")
+            end_messages = []
+        # no_action mirrors delivery: the ack's notify flag is authoritative
+        # ("no message sent to Roi"), reply text only when the ack is missing.
+        no_action = False
+        if scope == "heartbeat":
+            ack = _ack_from_messages(end_messages)
+            if ack is not None:
+                no_action = not ack.get("notify")
+            else:
+                no_action = final_response.strip().startswith("[NO_ACTION]")
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
 
 
-def get_heartbeat_ack(thread_id: str) -> dict | None:
-    """The ``heartbeat_respond`` payload from a thread's LAST turn, or None.
+def _ack_from_messages(messages) -> dict | None:
+    """The ``heartbeat_respond`` payload from the last turn in ``messages``.
 
-    Walks the checkpointed messages after the final HumanMessage (the turn
-    boundary) and returns the args of the last heartbeat_respond tool call in
-    that slice — a stale ack from an earlier tick is never picked up. Any
-    failure degrades to None, never raises.
+    Walks the messages after the final HumanMessage (the turn boundary) and
+    returns the args of the last heartbeat_respond tool call in that slice —
+    a stale ack from an earlier tick is never picked up. None if absent.
     """
-    try:
-        snap = agent_executor.get_state({"configurable": {"thread_id": thread_id}})
-        messages = (snap.values or {}).get("messages", [])
-    except Exception:
-        logger.exception("get_heartbeat_ack: failed to read state for %s", thread_id)
-        return None
-
     last_human = None
     for i, m in enumerate(messages):
         if isinstance(m, HumanMessage):
@@ -725,6 +727,20 @@ def get_heartbeat_ack(thread_id: str) -> dict | None:
             if tc.get("name") == "heartbeat_respond":
                 ack = tc.get("args") or {}
     return ack
+
+
+def get_heartbeat_ack(thread_id: str) -> dict | None:
+    """The ``heartbeat_respond`` payload from a thread's LAST turn, or None.
+
+    Any failure degrades to None, never raises.
+    """
+    try:
+        snap = agent_executor.get_state({"configurable": {"thread_id": thread_id}})
+        messages = (snap.values or {}).get("messages", [])
+    except Exception:
+        logger.exception("get_heartbeat_ack: failed to read state for %s", thread_id)
+        return None
+    return _ack_from_messages(messages)
 
 
 def ask_jarvis_once(user_input: str) -> str:
