@@ -34,11 +34,14 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
         ├─ stamp(acted_tasks) → state.json          only acted tasks advance
-        └─ reply not [NO_ACTION]? → send_to_owner + notification log
+        └─ ack.notify? → send_to_owner(notification_text) + notification log
 ```
 
-Message delivery is still keyed off the reply text (`[NO_ACTION]` contract in
-`prompts/heartbeat.md`); the ack payload drives state stamping and logging.
+The ack is authoritative end to end: `acted_tasks` drives state stamping,
+`notify`/`notification_text` drive message delivery. The reply text (the
+`[NO_ACTION]` contract in `prompts/heartbeat.md`) survives only as the
+fallback delivery path when the ack is missing — slated for removal once logs
+show it never fires.
 
 ---
 
@@ -125,9 +128,11 @@ Guards:
   the running scope from `turn_context.CURRENT_SCOPE` (a ContextVar set by
   `ask_jarvis`; never from model-supplied arguments), defaulting to `user`
   outside a turn.
-- Raw `write_memory("HEARTBEAT.md", …)` remains physically possible (the file
-  is inside the memory sandbox) but `prompts/AGENTS.md` directs all task edits
-  through the tool; the lenient read side is the safety net for hand edits.
+- Raw `write_memory("HEARTBEAT.md", …)` is rejected in code — the guard
+  compares the canonical sandbox-relative name, so alias spellings like
+  `./HEARTBEAT.md` cannot bypass it. `manage_heartbeat_task` is the agent's
+  only write path. Roi's hand edits on disk remain possible; the lenient read
+  side is the safety net for those.
 
 ---
 
