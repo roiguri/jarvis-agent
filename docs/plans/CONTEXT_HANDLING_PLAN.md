@@ -2,8 +2,8 @@
 
 **Issue:** #33 (archive) = #18 (origin mirror) — "Reduce token spend" umbrella. Also touches archive #54 (compaction).
 **Date:** 2026-07-09.
-**Inputs:** 14-day telemetry baseline (`observability/usage.py`), OpenClaw docs + source dive (see [HEARTBEAT_GATING_PLAN.md §2](HEARTBEAT_GATING_PLAN.md)), Nous Research `hermes-agent` docs, archive issue #54 staged analysis.
-**Companion:** [HEARTBEAT_GATING_PLAN.md](HEARTBEAT_GATING_PLAN.md) — Workstream 1 below, fully specified there.
+**Inputs:** 14-day telemetry baseline (`observability/usage.py`), OpenClaw docs + source dive (see [HEARTBEAT_GATING_PLAN.md §2](archive/HEARTBEAT_GATING_PLAN.md)), Nous Research `hermes-agent` docs, archive issue #54 staged analysis.
+**Companion:** [HEARTBEAT_GATING_PLAN.md](archive/HEARTBEAT_GATING_PLAN.md) — Workstream 1 below; shipped & verified 2026-07-13, plan archived.
 
 ---
 
@@ -11,11 +11,11 @@
 
 **Problem.** Jarvis's context handling is structurally expensive and has no recall beyond exact-name file reads. Measured over 14 days: 27.1M input tokens / $1.72, of which **72% went to heartbeat ticks that decided to do nothing** (295 no-op ticks × ~66k input tokens × ~3.7 LLM calls each). Cross-turn prompt caching is effectively zero because the system prompt's first bytes are a per-minute timestamp — the 25–36% measured cache hits come only from calls *within* the same turn. Memory recall requires knowing a file's exact name; nothing is searchable. History beyond the 50-message window is simply gone unless the agent proactively saved it.
 
-**Plan.** Seven workstreams, ordered by measured impact and risk. WS1 is already fully planned; WS2–4 are small `agent.py`-centric changes that compound with it; WS5–6 are capability wins borrowed from `hermes-agent`; WS7 stays parked until evidence demands it.
+**Plan.** Seven workstreams, ordered by measured impact and risk. WS1 is done (shipped & verified 2026-07-13); WS2–4 are small `agent.py`-centric changes that compound with it; WS5–6 are capability wins borrowed from `hermes-agent`; WS7 stays parked until evidence demands it.
 
 | # | Workstream | Attacks | Size | Expected effect |
 |---|---|---|---|---|
-| WS1 | Heartbeat gating + windows + self-authoring | the 84% (heartbeat spend) | 8 phases, planned | Most hours: no LLM call at all; remaining ticks carry 1–2 task blocks, not 8 |
+| WS1 | Heartbeat gating + windows + self-authoring | the 84% (heartbeat spend) | 9 phases, **done 2026-07-13** | Most hours: no LLM call at all; remaining ticks carry 1–2 task blocks, not 8 — verified in production |
 | WS2 | Cache-stable prompt layout | every remaining call, both scopes | small | Cross-turn cache hits on the stable prefix; measure via `cache_read_tokens` |
 | WS3 | Heartbeat light context | per-tick input | small | Tick input 66k → target ≤15k |
 | WS4 | Bootstrap context budget | unbounded prompt growth | small | Backstop: caps injected file copies, files intact on disk |
@@ -23,7 +23,7 @@
 | WS6 | Memory size pressure | long-term prompt creep | small | USER.md/MEMORY.md stay curated instead of growing forever |
 | WS7 | Conversation compaction | 50-message window loss | parked | Only if archive #54's revisit-triggers appear |
 
-**Sequencing.** WS1 phases 1–6 first (biggest lever, already planned). WS2 can land any time — it's independent and benefits everything. WS3 right after WS1 Phase 6. WS4 whenever convenient. WS5/WS6 are a capability track, schedulable independently. WS7 waits for evidence.
+**Sequencing.** WS1 is done (all 9 phases). WS2 can land any time — it's independent and benefits everything. WS3 is now unblocked (WS1 Phase 6 shipped). WS4 whenever convenient. WS5/WS6 are a capability track, schedulable independently. WS7 waits for evidence.
 
 **Risk posture.** Everything except WS7 is additive or a reordering; each workstream is independently shippable and revertable, verified against telemetry (`turns.jsonl` records input/output/cache-read per turn, so every claim here is checkable after deploy).
 
@@ -44,7 +44,7 @@ Absolute cost is small (~$3.7/month on `gemini-3-flash-preview`) — the point i
 
 ## Research digest: what the references do
 
-Full OpenClaw source-dive lives in [HEARTBEAT_GATING_PLAN.md §2](HEARTBEAT_GATING_PLAN.md). The context-relevant mechanisms across both references, against Jarvis today:
+Full OpenClaw source-dive lives in [HEARTBEAT_GATING_PLAN.md §2](archive/HEARTBEAT_GATING_PLAN.md). The context-relevant mechanisms across both references, against Jarvis today:
 
 | Mechanism | OpenClaw | hermes-agent | Jarvis today |
 |---|---|---|---|
@@ -59,7 +59,7 @@ Full OpenClaw source-dive lives in [HEARTBEAT_GATING_PLAN.md §2](HEARTBEAT_GATI
 
 ## WS1 — Heartbeat gating, windows, self-authoring
 
-Fully specified in [HEARTBEAT_GATING_PLAN.md](HEARTBEAT_GATING_PLAN.md) (8 phases, incl. the Hermes-derived create-in-heartbeat-scope guard). Attacks the 84%. Nothing to add here; every other workstream compounds with it.
+**Done — shipped 2026-07-10..13, verified in production; plan archived.** Fully specified in [HEARTBEAT_GATING_PLAN.md](archive/HEARTBEAT_GATING_PLAN.md) (9 phases, incl. the Hermes-derived create-in-heartbeat-scope guard and ack-primary delivery). Attacked the 84%; see the archived plan’s checkpoint block for the verification evidence. Every other workstream compounds with it.
 
 ---
 

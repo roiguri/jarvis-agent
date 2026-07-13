@@ -281,7 +281,13 @@ Each phase is one or more commits on `feat/heartbeat-gating`, independently test
 
 Post-fix evidence (first day): 20/20 ticks acked, 0 omissions, 0 notify-vs-reply disagreements, 0 rogue-stamp warnings, hourly cadence held all day, day-windowed tasks fired only in their windows.
 
-**Next checkpoint — 2026-07-13** (shortened from the original ≥1-week window by owner decision): if `state.json` ↔ markdown `last_run:` still agree and ack omission/disagreement rates hold at ~0, do Phases 7 and 9 together as one cleanup pass.
+**Checkpoint passed — 2026-07-13** (shortened from the original ≥1-week window by owner decision): the parallel-run window closed with ack omission 0/37+, notify/reply disagreement 0, and state.json ↔ markdown agreement exact on every acted tick. Phases 7 and 9 shipped the same day and were verified in production:
+
+- **Phase 7** (`df47552` + memory-file edits): notes files stayed free of `last_run:` across post-deploy ticks that read and updated them; no parse warnings after the `state:` → `notes:` header rename.
+- **Phase 9** (`da3430d`, `ce3efea`, `1abd17e`): all delivery shapes observed live — `notify=False` ticks log `nothing to send (ack)`, `notify=True` ticks delivered from `notification_text` (CrossFit pre-class briefing at the first tick inside its <4h window; Monday running prep), fallback never fired. `no_action` telemetry now derives from the ack's notify flag (deliberately not the `and not acted_tasks` variant, to stay comparable with the measured 88%-no-op baseline).
+- Related hardening (`b1a1980`): `write_memory` now rejects HEARTBEAT.md (manage_heartbeat_task is the only agent write path) and protection guards compare canonical names so alias spellings can't bypass them.
+
+**All phases done.** Remaining follow-ups live in §7 and issue #27 (drop the reply-text fallback once logs show it never fires).
 
 ### Phase 0 — Branch (done)
 
@@ -408,7 +414,7 @@ Post-fix evidence (first day): 20/20 ticks acked, 0 omissions, 0 notify-vs-reply
 
 **Rollback:** remove `due:` annotations; cadence-only resumes.
 
-### Phase 7 — Retire the `last_run:` line from notes files (hygiene) (pending — checkpoint 2026-07-13)
+### Phase 7 — Retire the `last_run:` line from notes files (hygiene) (done 2026-07-13)
 
 **Why last:** keep `last_run:` in markdown through Phases 3–6 as a live cross-check. Once `state.json` has matched it ≥1 week, the markdown copy is redundant.
 
@@ -447,7 +453,7 @@ Post-fix evidence (first day): 20/20 ticks acked, 0 omissions, 0 notify-vs-reply
 
 **Rollback:** revert; remove tool + AGENTS.md rules. Existing tasks untouched.
 
-### Phase 9 — Ack-primary delivery, reply-text fallback (added 2026-07-10; pending — checkpoint 2026-07-13)
+### Phase 9 — Ack-primary delivery, reply-text fallback (added 2026-07-10; done 2026-07-13)
 
 **Why.** Phases 2–8 leave the tick with two authoritative outputs: the reply text drives delivery (`[NO_ACTION]` contract), the ack drives stamping. They can disagree — the bad window is `notify=true` in the ack + `[NO_ACTION]` in the reply, a silently lost briefing; the reverse sends noise. The channels aren't redundant (`acted_tasks=[x]` + no message is a legal silent-maintenance tick), so the fix is a clear hierarchy, not deduplication. **OpenClaw analog:** its `heartbeat_respond` payload drives everything; the text token survives as fallback only.
 
