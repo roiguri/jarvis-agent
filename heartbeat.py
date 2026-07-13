@@ -144,6 +144,9 @@ async def run_heartbeat() -> None:
         deliver = bool(ack.get("notify") and text)
         source = "ack"
     else:
+        # TODO(#27): remove this reply-text fallback (and the [NO_ACTION]
+        # reply contract in prompts/heartbeat.md) once logs show it never
+        # fires.
         text = response or ""
         deliver = bool(text and not text.strip().startswith("[NO_ACTION]"))
         source = "reply-text fallback"

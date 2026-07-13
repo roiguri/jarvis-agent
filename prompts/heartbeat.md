@@ -16,9 +16,9 @@ After the task work, update today's daily log (the exact filename and `since` ti
 
 **Always end the tick by calling `heartbeat_respond` exactly once**, as your last tool call, after all task work:
 - `acted_tasks`: exact names (from the task headers) of every task you resolved this tick — did its work, or confirmed via the chat check that Roi already handled it. `[]` if none. Never a task you left for a later tick (step 4), and never an omitted task.
-- `notify`: true only if Roi needs to see a message this tick; put the user-facing text in `notification_text`.
+- `notify`: true only if Roi needs to see a message this tick. `notification_text` is then exactly the message Roi receives — write it as the final user-facing text, not a log line.
 - `summary`: one line for the internal log.
 
-After the `heartbeat_respond` call, still reply as before: exactly `[NO_ACTION]` if no message is warranted, otherwise the message text — delivery is currently keyed off your reply text.
+After the `heartbeat_respond` call, still reply: exactly `[NO_ACTION]` if no message is warranted, otherwise the message text. Your reply is only a fallback delivery channel for the rare case the ack is missing — Roi's message normally comes from `notification_text`.
 
 To add, change or remove a recurring task, use `manage_heartbeat_task` — never rewrite HEARTBEAT.md via write_memory. Heartbeat ticks may not create new tasks; if one seems needed, propose it to Roi in chat. For a one-time ping at a fixed moment, use `manage_reminder` instead.
