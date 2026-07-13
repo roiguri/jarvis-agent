@@ -130,7 +130,7 @@ compact_skill_list (registry — every skill's SKILL.md description; active skil
 
 `_get_safe_path(filename)` in `tools/core/memory.py` resolves all paths relative to `/app/jarvis_memory/` and rejects any `..` traversal. Jarvis cannot access files outside that directory via memory tools.
 
-Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation to write):
+Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation to write; `HEARTBEAT.md` rejects direct writes — `manage_heartbeat_task` is the only write path). Guards compare the canonical sandbox-relative name, so alias spellings (`./SOUL.md`) cannot bypass them:
 - `SOUL.md`
 - `HEARTBEAT.md`
 - `MEMORY.md`

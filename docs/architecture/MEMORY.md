@@ -78,14 +78,14 @@ Consequences that the rest of this architecture relies on:
 
 ### Protected files
 
-Deletion is blocked for files the system needs to exist; `SOUL.md` additionally requires a Telegram confirmation to **write** (identity changes are user-gated):
+Deletion is blocked for files the system needs to exist; `SOUL.md` additionally requires a Telegram confirmation to **write** (identity changes are user-gated), and `HEARTBEAT.md` rejects direct writes entirely (`manage_heartbeat_task` is the only write path). Guards compare the canonical sandbox-relative name (resolved by the same path logic the operation uses), so alias spellings like `./SOUL.md` cannot bypass them:
 
 | File | Delete | Write |
 |---|---|---|
 | `SOUL.md` | blocked | confirmation required |
 | `USER.md` | blocked | allowed (no confirm) |
 | `MEMORY.md` | blocked | allowed |
-| `HEARTBEAT.md` | blocked | allowed |
+| `HEARTBEAT.md` | blocked | blocked — `manage_heartbeat_task` only |
 
 ---
 
@@ -99,7 +99,7 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
 | `MEMORY.md` | jarvis_memory | **no** — read on demand via tools | yes | yes | no (delete blocked) |
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
-| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated + confirmation); raw `write_memory` possible but prompt-forbidden | create/update/delete confirm (delete of file blocked) |
+| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated + confirmation); raw `write_memory` rejected in code | create/update/delete confirm (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | via `get_chat_history` tool | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — today's `event="heartbeat"` slice | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
 
