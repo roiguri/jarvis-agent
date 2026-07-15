@@ -6,7 +6,7 @@ Branch: `feat/outbox-unification` (based on `feat/heartbeat-gating`; PR targets 
 ## Checklist
 
 - [x] Slice 0 — this plan doc
-- [ ] Slice 1 — Outbox core + reminders migrated (+ delete-on-success fix)
+- [x] Slice 1 — Outbox core + reminders migrated (+ delete-on-success fix)
 - [ ] Slice 2 — heartbeat notifications (+ stamp-after-delivery fix)
 - [ ] Slice 3 — media webhook notifier
 - [ ] Slice 4 — confirmation outcomes + shared loop bridge

@@ -14,6 +14,7 @@ from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
+from gateway import outbox as gateway_outbox
 from gateway.factory import build_telegram_stack, default_user_channel
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
@@ -116,6 +117,7 @@ async def main() -> None:
         owner_id=int(ALLOWED_USER_ID),
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
+        log_sink=async_append_notification_log,
     )
 
     # Notifications and confirmation outcomes go through the channel's
@@ -151,6 +153,7 @@ async def main() -> None:
         # is ready. Then start the confirmation TTL sweeper.
         stack.channel.attach(application.bot)
         stack.store.bind_loop(asyncio.get_running_loop())
+        gateway_outbox.bind_loop(asyncio.get_running_loop())
         stack.store.start_sweeper()
         await stack.channel.register_command_menu()
 
