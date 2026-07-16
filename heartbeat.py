@@ -67,8 +67,8 @@ async def run_heartbeat() -> None:
                 "unknown (running all)" if due_names is None else due_names)
 
     from agent import ask_jarvis, get_heartbeat_ack
-    from gateway.factory import default_user_channel
-    from tools.core import append_notification_log
+    from gateway.factory import default_outbox
+    from gateway.outbox import EVENT_HEARTBEAT
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
     today = now_israel.strftime("%Y-%m-%d")
@@ -105,6 +105,7 @@ async def run_heartbeat() -> None:
     except Exception:
         logger.exception("Heartbeat: failed to read heartbeat_respond ack")
         ack = None
+    acted: list[str] = []
     if ack is None:
         logger.warning("Heartbeat: no heartbeat_respond call this tick — not stamping")
     else:
@@ -125,20 +126,6 @@ async def run_heartbeat() -> None:
                     rogue,
                 )
                 acted = [n for n in acted if n in due_names]
-        if acted:
-            # Code-owned last_run stamps, advanced only for tasks the agent
-            # reported acting on. The agent's own last_run: line in the notes
-            # files keeps being written in parallel for cross-checking.
-            try:
-                # Stamp with the tick's start time (when the gate decided),
-                # not completion time — the turn's duration must not shift
-                # the task's schedule.
-                stamped = await asyncio.to_thread(
-                    heartbeat_state.stamp, acted, now_utc
-                )
-                logger.info("Heartbeat: stamped last_run for %s", stamped)
-            except Exception:
-                logger.exception("Heartbeat: failed to stamp last_run state")
 
     # Delivery: the ack is authoritative — notify/notification_text decide what
     # Roi sees; the reply text matters only when the ack is missing (already
@@ -155,15 +142,37 @@ async def run_heartbeat() -> None:
         text = response or ""
         deliver = bool(text and not text.strip().startswith("[NO_ACTION]"))
         source = "reply-text fallback"
+    delivered_ok = True
     if deliver:
         logger.info("Heartbeat: sending message to user (%s)", source)
-        try:
-            await default_user_channel().send_to_owner(text)
-            await asyncio.to_thread(append_notification_log, "heartbeat", text)
-        except Exception as e:
-            logger.error("Heartbeat: failed to send message: %s", e)
+        outcome = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT)
+        delivered_ok = outcome.ok
+        if not outcome.ok:
+            logger.error("Heartbeat: failed to send message: %s", outcome.error)
     else:
         logger.info("Heartbeat: nothing to send (%s)", source)
+
+    # Stamping happens only after delivery is settled: a failed send leaves
+    # the acted tasks unstamped so they come due again next tick and the
+    # notification gets another chance, instead of being silently dropped.
+    if acted:
+        if not delivered_ok:
+            logger.warning(
+                "Heartbeat: delivery failed — not stamping %s; tasks re-run next tick",
+                acted,
+            )
+        else:
+            # Code-owned last_run stamps, advanced only for tasks the agent
+            # reported acting on. Stamp with the tick's start time (when the
+            # gate decided), not completion time — the turn's duration must
+            # not shift the task's schedule.
+            try:
+                stamped = await asyncio.to_thread(
+                    heartbeat_state.stamp, acted, now_utc
+                )
+                logger.info("Heartbeat: stamped last_run for %s", stamped)
+            except Exception:
+                logger.exception("Heartbeat: failed to stamp last_run state")
 
 
 async def fire_reminder(event: dict) -> None:
