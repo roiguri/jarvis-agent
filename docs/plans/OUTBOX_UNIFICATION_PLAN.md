@@ -9,7 +9,7 @@ Branch: `feat/outbox-unification` (based on `feat/heartbeat-gating`; PR targets 
 - [x] Slice 1 — Outbox core + reminders migrated (+ delete-on-success fix)
 - [x] Slice 2 — heartbeat notifications (+ stamp-after-delivery fix)
 - [x] Slice 3 — media webhook notifier
-- [ ] Slice 4 — confirmation outcomes + shared loop bridge
+- [x] Slice 4 — confirmation outcomes + shared loop bridge
 - [ ] Slice 5 — host decoupling (main.py loses all Telegram knowledge)
 - [ ] Slice 6 — docs alignment + archive this plan
 

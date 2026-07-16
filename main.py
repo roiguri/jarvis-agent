@@ -15,7 +15,7 @@ from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
 from gateway import outbox as gateway_outbox
-from gateway.factory import build_telegram_stack, default_user_channel
+from gateway.factory import build_telegram_stack, default_outbox
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
 from tools.core import (
@@ -106,7 +106,8 @@ async def main() -> None:
             reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
             if reply:
                 await asyncio.to_thread(append_chat_log, "assistant", reply, thread_id)
-                await default_user_channel().send_to_owner(reply)
+                # Conversational reply, already chat-logged — no notification event.
+                await default_outbox().notify_owner(reply)
         except Exception:
             logger.exception("Failed to deliver confirmation outcome")
 
@@ -147,7 +148,6 @@ async def main() -> None:
         # async with, after the Application is initialized, so application.bot
         # is ready. Then start the confirmation TTL sweeper.
         stack.channel.attach(application.bot)
-        stack.store.bind_loop(asyncio.get_running_loop())
         gateway_outbox.bind_loop(asyncio.get_running_loop())
         stack.store.start_sweeper()
         await stack.channel.register_command_menu()

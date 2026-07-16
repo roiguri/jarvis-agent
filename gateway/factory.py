@@ -90,11 +90,11 @@ def build_telegram_stack(
     event-tagged sends through (keeps the gateway free of tools-layer imports).
     """
     channel = TelegramChannel(owner_id)
+    outbox = Outbox(channel, log_sink)
     confirmation_ui = TelegramConfirmationUI(channel)
-    store = InMemoryConfirmationStore(confirmation_ui, channel, on_confirmation_outcome)
+    store = InMemoryConfirmationStore(confirmation_ui, outbox, on_confirmation_outcome)
     confirmation_ui.bind_store(store)
     router = TelegramInboundRouter(channel, on_message)
-    outbox = Outbox(channel, log_sink)
 
     set_default_user_channel(channel)
     set_confirmation(store)
