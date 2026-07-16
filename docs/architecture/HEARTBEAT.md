@@ -124,18 +124,24 @@ picked up). Missing ack → warning, no stamp, task re-fires — safe.
 ## Authoring (`manage_heartbeat_task`)
 
 `create` / `update` / `delete` / `list` in `tools/core/heartbeat.py`, bound in
-both scopes. Validates the mutated file end-to-end before proposing it (the
+both scopes. Validates the mutated file end-to-end before writing it (the
 changed task must round-trip through the same parser the gate uses; all other
-tasks must survive byte-identical), then routes through the standard gateway
-confirmation (see [GATEWAY.md](GATEWAY.md) Plane 3) and writes via the memory
-module's atomic, lock-serialized writer. `update` keeps unspecified fields;
-`due="none"` clears a window.
+tasks must survive byte-identical), then writes via the memory module's atomic,
+lock-serialized writer. `update` keeps unspecified fields; `due="none"` clears
+a window.
+
+Changes land immediately — no confirmation step. HEARTBEAT.md is a
+Jarvis-managed file, and validation (not an owner tap) is what protects it: a
+malformed task is rejected before anything touches disk. The tool returns the
+resulting task block so the agent reports what actually landed. This also makes
+the autonomous path work: a tick tightening its own due window would otherwise
+depend on a confirmation nobody is watching for.
 
 Guards:
 - **Heartbeat turns cannot `create`** (update/delete/list only) — a tick must
   not be able to schedule new work for itself; new tasks originate from chat,
-  where the confirmation tap has a human actively watching. The tool learns
-  the running scope from `turn_context.CURRENT_SCOPE` (a ContextVar set by
+  where the owner is in the loop conversationally. The tool learns the
+  running scope from `turn_context.CURRENT_SCOPE` (a ContextVar set by
   `ask_jarvis`; never from model-supplied arguments), defaulting to `user`
   outside a turn.
 - Raw `write_memory("HEARTBEAT.md", …)` is rejected in code — the guard
