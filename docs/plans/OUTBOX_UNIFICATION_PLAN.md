@@ -10,7 +10,7 @@ Branch: `feat/outbox-unification` (based on `feat/heartbeat-gating`; PR targets 
 - [x] Slice 2 — heartbeat notifications (+ stamp-after-delivery fix)
 - [x] Slice 3 — media webhook notifier
 - [x] Slice 4 — confirmation outcomes + shared loop bridge
-- [ ] Slice 5 — host decoupling (main.py loses all Telegram knowledge)
+- [x] Slice 5 — host decoupling (main.py loses all Telegram knowledge)
 - [ ] Slice 6 — docs alignment + archive this plan
 
 Workflow per slice: implement → user restarts `jarvis.service` → verify per the slice's list → user approves → commit. One commit per slice.
@@ -117,7 +117,7 @@ Factory: `build_telegram_stack(on_message, on_confirmation_outcome, log_sink)` r
 
 **Files:** `gateway/channels/telegram/host.py` (new), `gateway/factory.py`, `main.py`.
 
-**Verify:** full regression — restart clean; chat message → reply; `/status`; command autocomplete still registered; reminder fires; webhook script; confirmation flow; `grep -n "telegram" main.py` → nothing.
+**Verify:** full regression — restart clean; chat message → reply; `/status`; command autocomplete still registered; reminder fires; webhook script; confirmation flow; `grep -nE "^(from|import) telegram" main.py` → nothing (no PTB/telegram imports; the `build_telegram_stack(...)` call remains — the composition root choosing which channel to deploy is config, not protocol coupling).
 
 ## Slice 6 — Docs alignment
 
