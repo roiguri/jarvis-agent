@@ -33,8 +33,11 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
-        ├─ stamp(acted_tasks) → state.json          only acted tasks advance
-        └─ ack.notify? → send_to_owner(notification_text) + notification log
+        ├─ ack.notify? → default_outbox().notify_owner(notification_text,
+        │                event="heartbeat")         send + log-on-success
+        └─ stamp(acted_tasks) → state.json          only acted tasks advance,
+                                                    and only after delivery
+                                                    settled (see below)
 ```
 
 The ack is authoritative end to end: `acted_tasks` drives state stamping,
@@ -42,6 +45,13 @@ The ack is authoritative end to end: `acted_tasks` drives state stamping,
 `[NO_ACTION]` contract in `prompts/heartbeat.md`) survives only as the
 fallback delivery path when the ack is missing — slated for removal once logs
 show it never fires.
+
+**Delivery before stamping.** The send goes through the gateway Outbox, which
+returns an outcome instead of raising. Stamps advance only when the tick had
+nothing to deliver or the delivery succeeded; a failed send leaves the acted
+tasks unstamped, so they come due again next tick and the notification gets
+another chance rather than being silently dropped. A `notify=False` tick
+stamps normally.
 
 ---
 

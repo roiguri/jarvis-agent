@@ -1,7 +1,7 @@
 # Runtime Refactor — Gradual Implementation Plan
 
 The step-by-step rollout for building the architecture in
-[docs/architecture/RUNTIME.md](../architecture/RUNTIME.md): the tool registry,
+[docs/architecture/RUNTIME.md](../../architecture/RUNTIME.md): the tool registry,
 scoped loading, same-turn skill activation, and the `create_agent` →
 `StateGraph` migration.
 
@@ -256,7 +256,7 @@ tools exist via the compact list, not prose).
   ("filtering not yet enabled" → enabled).
 - Delete the Step-0 safety backup `/app/backups/threads.sqlite*.bak-*`
   (and the memory pointer that tracked it).
-- Update CLAUDE.md + [DEVELOPMENT.md](../../DEVELOPMENT.md) tool-package
+- Update CLAUDE.md + [DEVELOPMENT.md](../../../DEVELOPMENT.md) tool-package
   sections, "add a new tool" pointer, and System Prompt Architecture to the
   registry/`build_system_prompt` reality; record the Step-8 → Phase-3
   deferral in this plan and in RUNTIME.md.
@@ -288,6 +288,6 @@ oracle sweep semantically matches.
 
 ## See Also
 
-- [docs/architecture/RUNTIME.md](../architecture/RUNTIME.md) — the target architecture this plan builds.
+- [docs/architecture/RUNTIME.md](../../architecture/RUNTIME.md) — the target architecture this plan builds.
 - [docs/plans/ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) — rationale, rejected alternatives, concurrency model.
-- [CLAUDE.md](../../CLAUDE.md) — deployment inner loop and hard rules.
+- [CLAUDE.md](../../../CLAUDE.md) — deployment inner loop and hard rules.

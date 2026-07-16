@@ -31,12 +31,12 @@ Background sections that don't change behavior but inform the phases (skim befor
 Each phase will be picked up by a separate agent session. Before starting *any* phase, the implementing agent should:
 
 ### 1. Read these files first (whichever phase you're on)
-- [CLAUDE.md](../../CLAUDE.md) — repo-level conventions, deployment workflow, hard constraints (especially: never read `/app/secrets/.env`).
-- [DEVELOPMENT.md](../../DEVELOPMENT.md) — architecture reference. Update it alongside any phase that changes structure.
+- [CLAUDE.md](../../../CLAUDE.md) — repo-level conventions, deployment workflow, hard constraints (especially: never read `/app/secrets/.env`).
+- [DEVELOPMENT.md](../../../DEVELOPMENT.md) — architecture reference. Update it alongside any phase that changes structure.
 - This document, end to end. Each phase has its own "Reference reading" subsection naming the additional files specific to that phase.
 
-### 2. Understand the runtime stack (versions in [requirements.txt](../../requirements.txt))
-- **LLM:** Google Gemini via `langchain-google-genai`. Model: `gemini-3-flash-preview` ([agent.py:120](../../agent.py#L120)). Temperature 0.2.
+### 2. Understand the runtime stack (versions in [requirements.txt](../../../requirements.txt))
+- **LLM:** Google Gemini via `langchain-google-genai`. Model: `gemini-3-flash-preview` ([agent.py:120](../../../agent.py#L120)). Temperature 0.2.
 - **Agent framework:** LangChain agents + LangGraph. Currently uses `create_agent` (LangChain prebuilt) over a custom `JarvisState` and `PruningSqliteSaver`. Phase 2 drops the prebuilt for a hand-rolled `StateGraph`.
 - **Channel:** python-telegram-bot (PTB) v20+, async API.
 - **Scheduler:** APScheduler 3.x with `IntervalTrigger` (heartbeat, hourly) and `DateTrigger` (one-shot reminders).
@@ -52,7 +52,7 @@ Then send a Telegram message to verify behavior. Restart-test-iterate is the inn
 
 ### 4. Hard rules
 - Never read `/app/secrets/.env`. If you need to know which keys exist, read the code that uses them.
-- Don't break the memory sandbox (`_get_safe_path` in [tools/memory_tools.py](../../tools/memory_tools.py)). The agent must not be able to escape `/app/jarvis_memory/` via memory tools.
+- Don't break the memory sandbox (`_get_safe_path` in [tools/memory_tools.py](../../../tools/memory_tools.py)). The agent must not be able to escape `/app/jarvis_memory/` via memory tools.
 - Don't introduce `os.system`, `subprocess` with shell=True, or any code-exec capability for the agent. Sandbox boundary is a hard line.
 - Each phase ends with the verification protocol in its "Verification" subsection. Don't skip; don't claim done without running it.
 
@@ -89,15 +89,15 @@ You're right. Jarvis is a Telegram-shaped monolith with a thin LangGraph wrapper
 
 Concrete failures in the current code:
 
-1. **No gateway interface.** [gateway/telegram_gateway.py](../../gateway/telegram_gateway.py) *is* the gateway. Tools `from gateway.telegram_gateway import get_gateway` directly ([tools/memory_tools.py:35](../../tools/memory_tools.py#L35), [tools/media_tools.py:405](../../tools/media_tools.py#L405), and 6 other sites). A second channel means duplicating `ConfirmationManager`, `InboundRouter`, media download, and patching every tool.
+1. **No gateway interface.** [gateway/telegram_gateway.py](../../../gateway/telegram_gateway.py) *is* the gateway. Tools `from gateway.telegram_gateway import get_gateway` directly ([tools/memory_tools.py:35](../../../tools/memory_tools.py#L35), [tools/media_tools.py:405](../../../tools/media_tools.py#L405), and 6 other sites). A second channel means duplicating `ConfirmationManager`, `InboundRouter`, media download, and patching every tool.
 
-2. **All 39 tools always loaded.** [tools/__init__.py:58-108](../../tools/__init__.py#L58-L108) is one flat list passed to `create_agent()` once at module load ([agent.py:237-243](../../agent.py#L237-L243)). When you discuss cooking, the LLM still sees Sonarr/Radarr/Arbox/heartbeat tools. Heartbeat sees `delete_sonarr_series_with_files`. Every turn pays for every tool's prompt overhead.
+2. **All 39 tools always loaded.** [tools/__init__.py:58-108](../../../tools/__init__.py#L58-L108) is one flat list passed to `create_agent()` once at module load ([agent.py:237-243](../../../agent.py#L237-L243)). When you discuss cooking, the LLM still sees Sonarr/Radarr/Arbox/heartbeat tools. Heartbeat sees `delete_sonarr_series_with_files`. Every turn pays for every tool's prompt overhead.
 
-3. **Single global `agent_executor` singleton** ([agent.py:237-243](../../agent.py#L237-L243)). Same prompt, same tools, same model for every thread. No way to vary per context.
+3. **Single global `agent_executor` singleton** ([agent.py:237-243](../../../agent.py#L237-L243)). Same prompt, same tools, same model for every thread. No way to vary per context.
 
-4. **System prompt is hardcoded text** in [agent.py:127-228](../../agent.py#L127-L228) (~100 lines) duplicated against tool docstrings. Time context is jammed into the user message in [main.py:60-62](../../main.py#L60-L62) instead of into the prompt envelope.
+4. **System prompt is hardcoded text** in [agent.py:127-228](../../../agent.py#L127-L228) (~100 lines) duplicated against tool docstrings. Time context is jammed into the user message in [main.py:60-62](../../../main.py#L60-L62) instead of into the prompt envelope.
 
-5. **`ConfirmationManager` is Telegram PTB types** ([gateway/telegram_gateway.py:391-541](../../gateway/telegram_gateway.py#L391-L541)). It also has a leak: `_cleanup_expired` only fires inside `handle_callback`; un-clicked confirmations live forever in `_pending`.
+5. **`ConfirmationManager` is Telegram PTB types** ([gateway/telegram_gateway.py:391-541](../../../gateway/telegram_gateway.py#L391-L541)). It also has a leak: `_cleanup_expired` only fires inside `handle_callback`; un-clicked confirmations live forever in `_pending`.
 
 6. **Module-level singletons everywhere**: `_gateway_instance`, `agent_executor`, `_scheduler`. No DI, no test seams.
 
@@ -105,7 +105,7 @@ Concrete failures in the current code:
 
 8. **Tool docstrings duplicated in `_BASE_SYSTEM_PROMPT`**. Source of truth is split.
 
-9. **Hardcoded internal Jellyfin address** (`jellyfin.local:8096`) in [gateway/notifier.py:16](../../gateway/notifier.py#L16).
+9. **Hardcoded internal Jellyfin address** (`jellyfin.local:8096`) in [gateway/notifier.py:16](../../../gateway/notifier.py#L16).
 
 What works and should be preserved: `_get_safe_path` memory sandbox, SOUL.md / MEMORY.md split, heartbeat thread isolation, `InboundMessage` dataclass.
 
@@ -117,7 +117,7 @@ What works and should be preserved: `_get_safe_path` memory sandbox, SOUL.md / M
 |---|---|---|
 | **Gateway as coordinator + channel plugins** ([channels overview](https://docs.openclaw.ai/channels/index.md)) | Channels are interchangeable; replies route back to source | Extract `Channel` ABC; Telegram becomes one implementation; email/WhatsApp slot in. |
 | **Bootstrap files: SOUL/AGENTS/IDENTITY/USER/TOOLS.md auto-injected at session start** ([agent runtime](https://docs.openclaw.ai/concepts/agent.md)) | System prompt is assembled from files, not hardcoded | Already have SOUL.md and MEMORY.md. Add AGENTS.md (operating rules) and USER.md (Roi profile). Delete `_BASE_SYSTEM_PROMPT`. |
-| **Compact skill list in prompt + on-demand activation** ([skills](https://docs.openclaw.ai/tools/skills.md)) | LLM only sees skill *names* until invoked; full schema loaded later | Two-tier tools: core always-on, skills advertised compactly and activated per conversation via `activate_skill(...)`. **This is the answer to your "cooking conversation shouldn't see gym tools" concern.** *Extended hierarchically:* a skill may have sub-skills (`media/radarr`), advertised one level deeper with the same names-first/schemas-on-demand rule — the first intentional divergence from OpenClaw's flat skill model (see [RUNTIME.md](../architecture/RUNTIME.md) "Sub-skills / nested namespaces"). |
+| **Compact skill list in prompt + on-demand activation** ([skills](https://docs.openclaw.ai/tools/skills.md)) | LLM only sees skill *names* until invoked; full schema loaded later | Two-tier tools: core always-on, skills advertised compactly and activated per conversation via `activate_skill(...)`. **This is the answer to your "cooking conversation shouldn't see gym tools" concern.** *Extended hierarchically:* a skill may have sub-skills (`media/radarr`), advertised one level deeper with the same names-first/schemas-on-demand rule — the first intentional divergence from OpenClaw's flat skill model (see [RUNTIME.md](../../architecture/RUNTIME.md) "Sub-skills / nested namespaces"). |
 | **Per-agent allowlists, not auto-load** ([skills](https://docs.openclaw.ai/tools/skills.md)) | "A non-empty allowlist replaces, rather than merges with, default skills" | Tool registry with `scopes=["user","heartbeat"]`; user gets full surface, heartbeat gets a narrow whitelist. |
 | **Confirmation as policy + allowlist + user approve** ([exec approvals](https://docs.openclaw.ai/tools/exec-approvals.md)) | Confirmation is cross-cutting | `Confirmation` ABC; tools opt in via `@destructive` decorator; channel implements UI. |
 | **Channel-agnostic message schema** | Routing back to source is automatic | `InboundMessage` already exists; make it the *only* type tools/agent see. |
@@ -202,7 +202,7 @@ Default per task is set in HEARTBEAT.md alongside the task definition. Heartbeat
 
 ### Where actual races CAN happen
 
-1. **Both threads writing to the same memory file** (heartbeat updating `daily_<today>.md` while user thread, mid-tool-call, also writes to it). OpenClaw's solution: file-based, process-aware write lock. **Our fix:** add an `flock`-based lock around `write_memory`'s file write in [tools/memory_tools.py](../../tools/memory_tools.py). Phase 3 Half A.
+1. **Both threads writing to the same memory file** (heartbeat updating `daily_<today>.md` while user thread, mid-tool-call, also writes to it). OpenClaw's solution: file-based, process-aware write lock. **Our fix:** add an `flock`-based lock around `write_memory`'s file write in [tools/memory_tools.py](../../../tools/memory_tools.py). Phase 3 Half A.
 
 2. **Heartbeat injecting into user thread's checkpoint while a user turn is mid-flight.** LangGraph's checkpointer is SQLite — concurrent writes would race. Mitigation: serialize injections through an asyncio `Lock` keyed by thread_id; or only inject when the user thread is "idle" (no in-flight run). Phase 2 implementation detail.
 
@@ -212,7 +212,7 @@ OpenClaw solves these via per-session queue lanes + steer mode. We don't need th
 
 ## Checkpointing — What It's For (your question)
 
-LangGraph's checkpointer ([agent.py:87-102](../../agent.py#L87-L102), `PruningSqliteSaver` over `threads.sqlite`) stores the agent's *current* state per thread:
+LangGraph's checkpointer ([agent.py:87-102](../../../agent.py#L87-L102), `PruningSqliteSaver` over `threads.sqlite`) stores the agent's *current* state per thread:
 - Message list (conversation history within the sliding window)
 - Custom state fields (after Phase 2: `active_skills`)
 - Tool-call results in flight (so a crash mid-loop can resume)
@@ -441,10 +441,10 @@ This is not "we don't want to write the orchestration." It's ~100 lines and it's
 #### Reference reading (read these before designing the refactor)
 
 Existing code:
-- [gateway/telegram_gateway.py](../../gateway/telegram_gateway.py) — full file. Currently 541 lines that need to be split. Note: `InboundMessage` dataclass at line 50, `ConfirmationManager` class at lines 391-541, `TelegramInboundRouter` with media-group batching at 188-385.
-- [gateway/notifier.py](../../gateway/notifier.py) — Sonarr/Radarr notification batching. Stays gateway-internal but moves under `gateway/telegram/`.
-- [gateway/webhook_server.py](../../gateway/webhook_server.py) — currently a separate webhook handler; becomes its own `Channel` subclass.
-- [main.py](../../main.py) — see [main.py:101-138](../../main.py#L101-L138) for the current Telegram wiring; this is what `factory.create_channels()` will replace.
+- [gateway/telegram_gateway.py](../../../gateway/telegram_gateway.py) — full file. Currently 541 lines that need to be split. Note: `InboundMessage` dataclass at line 50, `ConfirmationManager` class at lines 391-541, `TelegramInboundRouter` with media-group batching at 188-385.
+- [gateway/notifier.py](../../../gateway/notifier.py) — Sonarr/Radarr notification batching. Stays gateway-internal but moves under `gateway/telegram/`.
+- [gateway/webhook_server.py](../../../gateway/webhook_server.py) — currently a separate webhook handler; becomes its own `Channel` subclass.
+- [main.py](../../../main.py) — see [main.py:101-138](../../../main.py#L101-L138) for the current Telegram wiring; this is what `factory.create_channels()` will replace.
 - Every `get_gateway()` callsite. Find them: `grep -rn "get_gateway\|from gateway.telegram_gateway" /app/jarvis_code --include="*.py"`. There are ~10. Each must lose the direct import.
 
 OpenClaw references:
@@ -476,7 +476,7 @@ gateway/
 └── webhook/             # webhook_server.py moves here as a Channel
 ```
 
-**Channel ABC:** the authoritative contract is in [docs/architecture/GATEWAY.md](../architecture/GATEWAY.md#L151) — GATEWAY.md is the source of truth for Phase 1 contracts (it is code-accurate and internally consistent). Adopt it in full, including the owner-addressing and streaming-aware methods:
+**Channel ABC:** the authoritative contract is in [docs/architecture/GATEWAY.md](../../architecture/GATEWAY.md#L151) — GATEWAY.md is the source of truth for Phase 1 contracts (it is code-accurate and internally consistent). Adopt it in full, including the owner-addressing and streaming-aware methods:
 
 ```python
 class Channel(ABC):
@@ -509,7 +509,7 @@ class Channel(ABC):
 - **WhatsApp** — Cloud API requires public webhook + Meta Business verification. Templates required for outbound after the 24h window. Plan for that constraint.
 - **Custom app** — uses the read API (deferred) for state queries. If it sends messages, it's just another `Channel` (HTTP POST inbound, SSE/WebSocket outbound).
 
-**Confirmation refactor:** the authoritative contract is the `Confirmation` / `ConfirmationUI` split in [GATEWAY.md](../architecture/GATEWAY.md#L189). **Preserve the existing sync model — do not switch to async-bool.** The current tools call `request_confirmation_sync(...)` from a sync worker thread and get a status string back *immediately* (fire-and-forget; the outcome is posted later). Switching to `await ... -> bool` would force every tool async and block the worker thread on user input — a strictly worse model and not a transparent shim.
+**Confirmation refactor:** the authoritative contract is the `Confirmation` / `ConfirmationUI` split in [GATEWAY.md](../../architecture/GATEWAY.md#L189). **Preserve the existing sync model — do not switch to async-bool.** The current tools call `request_confirmation_sync(...)` from a sync worker thread and get a status string back *immediately* (fire-and-forget; the outcome is posted later). Switching to `await ... -> bool` would force every tool async and block the worker thread on user input — a strictly worse model and not a transparent shim.
 
 - `Confirmation` ABC: `request_confirmation_sync(description, action_fn, result_ok_text=..., result_cancel_text=...) -> str` — called from a sync tool worker thread, returns a status string ("Awaiting your approval…") immediately.
 - `InMemoryConfirmationStore` owns bookkeeping, TTL eviction, and outcome dispatch. It is channel-agnostic.
@@ -521,16 +521,16 @@ class Channel(ABC):
 **Inbound flow:**
 - Each channel produces `InboundMessage` and calls a single `on_message` handler, which returns reply text the channel posts back.
 - **`InboundMessage.thread_id` stays `f"telegram_{user_id}"` in Phase 1.** The `:` separator change (`telegram:<user_id>`) is a **Phase 2** concern, deliberately deferred per GATEWAY.md because it is coupled to the LangGraph checkpointer-key and `chat_history.jsonl` record migration. Changing it in Phase 1 would silently orphan every existing checkpoint and break history filtering. Phase 1 is a pure structural move with zero state-format change.
-- `process_inbound_message` in [main.py:50-83](../../main.py#L50-L83) is the single entry point all channels call.
+- `process_inbound_message` in [main.py:50-83](../../../main.py#L50-L83) is the single entry point all channels call.
 
 **Files to change:**
 - Create: `gateway/base.py`, `gateway/factory.py`, `gateway/confirmation/{base,manager}.py`, `gateway/telegram/{channel,router,confirmation}.py`.
 - Move: `gateway/telegram_gateway.py` → split across `telegram/`. `gateway/notifier.py` → `gateway/telegram/notifier.py`. `gateway/webhook_server.py` → `gateway/webhook/`.
-- Edit: every tool that calls `get_gateway()` for confirmation ([tools/memory_tools.py:36,121](../../tools/memory_tools.py#L36), [tools/media_tools.py:405,776](../../tools/media_tools.py#L405)) to receive `confirmation` via tool context instead.
-- **Edit: [heartbeat.py](../../heartbeat.py) proactive-send callsites — [heartbeat.py:111](../../heartbeat.py#L111) and [heartbeat.py:140](../../heartbeat.py#L140) both call `get_gateway().send_message(...)`.** Replace with `default_user_channel().send_to_owner(...)`. These are *not* confirmation callsites; missing them fails the done-criterion below.
-- **Edit: [gateway/notifier.py:7](../../gateway/notifier.py#L7)** imports the concrete `TelegramGateway` class and pushes poster images. Rewire to `default_user_channel().send_to_owner_media(...)` (or accept an injected channel) when it moves under `gateway/telegram/`.
-- Edit: [main.py:18](../../main.py#L18) (`from gateway.telegram_gateway import ...`) and the Telegram wiring at [main.py:101-138](../../main.py#L101-L138) to use `factory.create_channels()` and start each.
-- Replace: hardcoded internal Jellyfin address in [gateway/notifier.py:16](../../gateway/notifier.py#L16) → env var (e.g. `JELLYFIN_INTERNAL_URL`).
+- Edit: every tool that calls `get_gateway()` for confirmation ([tools/memory_tools.py:36,121](../../../tools/memory_tools.py#L36), [tools/media_tools.py:405,776](../../../tools/media_tools.py#L405)) to receive `confirmation` via tool context instead.
+- **Edit: [heartbeat.py](../../../heartbeat.py) proactive-send callsites — [heartbeat.py:111](../../../heartbeat.py#L111) and [heartbeat.py:140](../../../heartbeat.py#L140) both call `get_gateway().send_message(...)`.** Replace with `default_user_channel().send_to_owner(...)`. These are *not* confirmation callsites; missing them fails the done-criterion below.
+- **Edit: [gateway/notifier.py:7](../../../gateway/notifier.py#L7)** imports the concrete `TelegramGateway` class and pushes poster images. Rewire to `default_user_channel().send_to_owner_media(...)` (or accept an injected channel) when it moves under `gateway/telegram/`.
+- Edit: [main.py:18](../../../main.py#L18) (`from gateway.telegram_gateway import ...`) and the Telegram wiring at [main.py:101-138](../../../main.py#L101-L138) to use `factory.create_channels()` and start each.
+- Replace: hardcoded internal Jellyfin address in [gateway/notifier.py:16](../../../gateway/notifier.py#L16) → env var (e.g. `JELLYFIN_INTERNAL_URL`).
 - **Telegram media-cache move** (`/app/jarvis_memory/media/` → `gateway/telegram/media_cache/`) and relocating `save_media_file`/`trim_media` out of `tools/history_tools.py`: **Phase 3, not Phase 1** (per GATEWAY.md "Layering note"). Phase 1 preserves the existing `save_media_file_fn` injection point unchanged. The line-770 "Phase 1 finish-up" note elsewhere in this doc is superseded by this.
 
 **Verification (per CLAUDE.md instructions):**
@@ -563,11 +563,11 @@ This is the phase that solves your "cooking shouldn't see gym tools" problem, wi
 #### Reference reading (read these before designing the refactor)
 
 Existing code:
-- [agent.py](../../agent.py) — full file. Specifically: `JarvisState` (lines 74-75), `_add_and_trim` reducer (60-72), `_strip_media_blobs` (24-57), `PruningSqliteSaver` (87-102), the `create_agent` call (237-243), `_BASE_SYSTEM_PROMPT` (140-225), `ask_jarvis()` (245-369). The whole file is being restructured; understand all of it.
-- [tools/__init__.py](../../tools/__init__.py) — flat list `jarvis_tools` (lines 58-108). This goes away in favor of `registry.get_tools(...)`.
-- All tool files under [tools/](../../tools/) — each tool's docstring will become its registry entry. Read enough to understand the shape; don't memorize every signature.
-- [main.py:50-83](../../main.py#L50-L83) — `process_inbound_message`, the entry point that calls `ask_jarvis`. Will call the new `build_graph(...)` instead.
-- [heartbeat.py:54-116](../../heartbeat.py#L54-L116) — heartbeat runner. Same call site pattern as user thread.
+- [agent.py](../../../agent.py) — full file. Specifically: `JarvisState` (lines 74-75), `_add_and_trim` reducer (60-72), `_strip_media_blobs` (24-57), `PruningSqliteSaver` (87-102), the `create_agent` call (237-243), `_BASE_SYSTEM_PROMPT` (140-225), `ask_jarvis()` (245-369). The whole file is being restructured; understand all of it.
+- [tools/__init__.py](../../../tools/__init__.py) — flat list `jarvis_tools` (lines 58-108). This goes away in favor of `registry.get_tools(...)`.
+- All tool files under [tools/](../../../tools/) — each tool's docstring will become its registry entry. Read enough to understand the shape; don't memorize every signature.
+- [main.py:50-83](../../../main.py#L50-L83) — `process_inbound_message`, the entry point that calls `ask_jarvis`. Will call the new `build_graph(...)` instead.
+- [heartbeat.py:54-116](../../../heartbeat.py#L54-L116) — heartbeat runner. Same call site pattern as user thread.
 
 OpenClaw references:
 - Skills (the pattern we're mirroring) — https://docs.openclaw.ai/tools/skills.md (per-agent allowlists, "compact XML list of available skills" injected into system prompt, allowlist replaces defaults)
@@ -700,7 +700,7 @@ tools/
 
 #### System prompt assembly
 
-Replace the hardcoded tool descriptions in [agent.py:140-225](../../agent.py#L140-L225) with two generated sections:
+Replace the hardcoded tool descriptions in [agent.py:140-225](../../../agent.py#L140-L225) with two generated sections:
 1. Full schemas for core tools (LangGraph injects these from `tools=[...]` automatically).
 2. A compact `## Available skills` block built by `registry.compact_skill_list(scope, active_skills)`.
 
@@ -710,10 +710,10 @@ Tool docstrings become the single source of truth. No manual sync.
 
 - Create: `tools/registry.py`, `tools/decorators.py`.
 - Reorganize: split `tools/*.py` into `core/`, `media/`, `fitness/` (preserve git blame via `git mv`).
-- Edit: [agent.py](../../agent.py) — `build_agent_for_turn(scope, thread_id)` reads `active_skills` from checkpointer state; constructs the agent with `core + active_namespace_tools`.
+- Edit: [agent.py](../../../agent.py) — `build_agent_for_turn(scope, thread_id)` reads `active_skills` from checkpointer state; constructs the agent with `core + active_namespace_tools`.
 - Edit: `JarvisState` — add `active_skills: set[str]`.
-- Edit: [tools/__init__.py](../../tools/__init__.py) — replace flat list with `import_all()` triggering registration side-effects.
-- Edit: [main.py](../../main.py), [heartbeat.py](../../heartbeat.py) — call `build_agent_for_turn(scope, thread_id)` per turn.
+- Edit: [tools/__init__.py](../../../tools/__init__.py) — replace flat list with `import_all()` triggering registration side-effects.
+- Edit: [main.py](../../../main.py), [heartbeat.py](../../../heartbeat.py) — call `build_agent_for_turn(scope, thread_id)` per turn.
 
 #### Verification
 
@@ -749,11 +749,11 @@ Existing state to inspect on the running container (use `pct exec 106 -- ls -la 
 - `/app/jarvis_memory/media/*.{ogg,jpg,mp4}` — Telegram media blobs; relocate to `gateway/telegram/media_cache/`.
 
 Existing code:
-- [agent.py:127-228](../../agent.py#L127-L228) — `_load_soul_md()` and `_BASE_SYSTEM_PROMPT`. The 87 lines of hardcoded text get split into AGENTS.md (rules) + the prompt builder (dynamic context).
-- [tools/memory_tools.py](../../tools/memory_tools.py) — `_get_safe_path` sandbox (lines 1-30 area), `write_memory` confirmation flow (35-46), `delete_memory` flow (121-134). Add deny-list for `threads.sqlite*`. Add `flock`-based write lock.
-- [tools/heartbeat_tools.py](../../tools/heartbeat_tools.py) and [heartbeat.py](../../heartbeat.py) — both reference `scheduled_events.json` path; update to new location in `/app/jarvis_data/scheduling/`.
-- [tools/fitness_tools.py:9](../../tools/fitness_tools.py#L9) — DB path; updates to new location.
-- [tools/history_tools.py:10](../../tools/history_tools.py#L10) — `MEDIA_STORAGE` constant; updates for the media relocation.
+- [agent.py:127-228](../../../agent.py#L127-L228) — `_load_soul_md()` and `_BASE_SYSTEM_PROMPT`. The 87 lines of hardcoded text get split into AGENTS.md (rules) + the prompt builder (dynamic context).
+- [tools/memory_tools.py](../../../tools/memory_tools.py) — `_get_safe_path` sandbox (lines 1-30 area), `write_memory` confirmation flow (35-46), `delete_memory` flow (121-134). Add deny-list for `threads.sqlite*`. Add `flock`-based write lock.
+- [tools/heartbeat_tools.py](../../../tools/heartbeat_tools.py) and [heartbeat.py](../../../heartbeat.py) — both reference `scheduled_events.json` path; update to new location in `/app/jarvis_data/scheduling/`.
+- [tools/fitness_tools.py:9](../../../tools/fitness_tools.py#L9) — DB path; updates to new location.
+- [tools/history_tools.py:10](../../../tools/history_tools.py#L10) — `MEDIA_STORAGE` constant; updates for the media relocation.
 
 OpenClaw references:
 - Memory concepts — https://docs.openclaw.ai/concepts/memory (the layered model we're loosely mirroring)
@@ -781,10 +781,10 @@ What's actually in `/app/jarvis_memory/` right now (verified by listing the dire
 | **Long-term knowledge (file)** | free-form .md/.txt | active_projects.md, fitness.md, running_playbook.md, user_preferences.txt, people_and_connections.txt | No naming convention. MEMORY.md should index but enforcement is "agent prompt." |
 | **Episodic — daily** | markdown | daily/daily_2026-05-08.md, etc. | OK, written by heartbeat. |
 | **Episodic — heartbeat tasks** | markdown | heartbeat/attendance_sync.md, heartbeat/crossfit_check.md, heartbeat/haircut_reminder.md, heartbeat/mobility_check.md | OK; one file per heartbeat task. |
-| **Domain DB (UNDOCUMENTED in CLAUDE.md)** | sqlite | fitness.sqlite (28KB) — used by [tools/fitness_tools.py:9](../../tools/fitness_tools.py#L9) | **Mess:** separate DB for fitness only, parallel to `threads.sqlite`. CLAUDE.md doesn't mention it. Why is fitness alone special? |
+| **Domain DB (UNDOCUMENTED in CLAUDE.md)** | sqlite | fitness.sqlite (28KB) — used by [tools/fitness_tools.py:9](../../../tools/fitness_tools.py#L9) | **Mess:** separate DB for fitness only, parallel to `threads.sqlite`. CLAUDE.md doesn't mention it. Why is fitness alone special? |
 | **Conversation state (LangGraph)** | sqlite | threads.sqlite (9MB + 5.8MB WAL) — `PruningSqliteSaver` keeps 1 row per thread | OK conceptually but the WAL has grown big — likely needs a VACUUM. |
 | **Activity log (append-only)** | jsonl | chat_history.jsonl (456KB), notifications.jsonl (8KB) — 90-day retention | OK; serves a different purpose than checkpointer (audit trail vs LangGraph state). Both are needed. |
-| **Telegram media blobs** | binary | media/audio_*.ogg, media/image_*.jpg, media/video_*.mp4 (40+ files) — used by [tools/history_tools.py:10](../../tools/history_tools.py#L10) | **Mess:** these are Telegram-specific (filenames embed Telegram file IDs). They live under "memory" but are a gateway artifact. With multi-channel, this becomes incoherent. |
+| **Telegram media blobs** | binary | media/audio_*.ogg, media/image_*.jpg, media/video_*.mp4 (40+ files) — used by [tools/history_tools.py:10](../../../tools/history_tools.py#L10) | **Mess:** these are Telegram-specific (filenames embed Telegram file IDs). They live under "memory" but are a gateway artifact. With multi-channel, this becomes incoherent. |
 | **Operational state** | JSON | scheduled_events.json (300 bytes — APScheduler reminders) | OK; protected. |
 
 OpenClaw equivalents (from research):
@@ -802,15 +802,15 @@ OpenClaw equivalents (from research):
 
 **Decisions for Half A:**
 
-1. **fitness.sqlite — relocate to `/app/jarvis_data/fitness/`** (per the "Tool Data Location" section below). It's a deterministic structured logging surface for workouts; the DB has no value without the fitness tools. Path resolution: `os.environ.get("FITNESS_DB_PATH", "/app/jarvis_data/fitness/fitness.sqlite")`. Update [tools/fitness_tools.py:9](../../tools/fitness_tools.py#L9). Document as "tool-owned persistence" in CLAUDE.md.
+1. **fitness.sqlite — relocate to `/app/jarvis_data/fitness/`** (per the "Tool Data Location" section below). It's a deterministic structured logging surface for workouts; the DB has no value without the fitness tools. Path resolution: `os.environ.get("FITNESS_DB_PATH", "/app/jarvis_data/fitness/fitness.sqlite")`. Update [tools/fitness_tools.py:9](../../../tools/fitness_tools.py#L9). Document as "tool-owned persistence" in CLAUDE.md.
 
-2. **Telegram media blobs — relocate to gateway.** Move `/app/jarvis_memory/media/` → `/app/jarvis_code/gateway/telegram/media_cache/`. Update [tools/history_tools.py:10](../../tools/history_tools.py#L10). Rationale: filenames embed Telegram file IDs (`audio_AwACAgQAAxk...`), making them gateway artifacts, not agent memory. This also future-proofs multi-channel: WhatsApp/email media goes under their own gateway dirs. **Note on OpenClaw:** their docs are surprisingly vague on cross-channel media storage (only confirms "media and reactions vary by channel"). They don't define a unified storage location — implying channel-specific is the de-facto pattern. Our move aligns.
+2. **Telegram media blobs — relocate to gateway.** Move `/app/jarvis_memory/media/` → `/app/jarvis_code/gateway/telegram/media_cache/`. Update [tools/history_tools.py:10](../../../tools/history_tools.py#L10). Rationale: filenames embed Telegram file IDs (`audio_AwACAgQAAxk...`), making them gateway artifacts, not agent memory. This also future-proofs multi-channel: WhatsApp/email media goes under their own gateway dirs. **Note on OpenClaw:** their docs are surprisingly vague on cross-channel media storage (only confirms "media and reactions vary by channel"). They don't define a unified storage location — implying channel-specific is the de-facto pattern. Our move aligns.
 
 3. **Daily logs — make user-scope-visible.** Heartbeat writes them. Today's daily log auto-loaded into user-scope prompt (mirrors OpenClaw's "today + yesterday auto-load"). Heartbeat scope still gets last 2 days. Why this matters for your concurrency question (Concurrency Model section above): when heartbeat sends Roi a Telegram message, it appends a one-line note to today's daily log. Next user turn, the user-scope agent has the context.
 
-4. **Memory file write locks.** Add `flock`-based lock around `write_memory`'s actual write step in [tools/memory_tools.py](../../tools/memory_tools.py). Prevents heartbeat-vs-user races on the same file. OpenClaw's pattern. ~10 lines.
+4. **Memory file write locks.** Add `flock`-based lock around `write_memory`'s actual write step in [tools/memory_tools.py](../../../tools/memory_tools.py). Prevents heartbeat-vs-user races on the same file. OpenClaw's pattern. ~10 lines.
 
-5. **`scheduled_events.json` — relocate to `/app/jarvis_data/scheduling/`.** Same principle as fitness.sqlite: tool-owned opaque state (not agent-edited markdown), shouldn't sit in `jarvis_memory/`. Update [tools/heartbeat_tools.py](../../tools/heartbeat_tools.py) and [heartbeat.py](../../heartbeat.py). Once relocated, the file is physically outside the memory tools' surface — no deny-list needed for it (the deny-list still applies to `threads.sqlite*` which can't be relocated since LangGraph owns the path).
+5. **`scheduled_events.json` — relocate to `/app/jarvis_data/scheduling/`.** Same principle as fitness.sqlite: tool-owned opaque state (not agent-edited markdown), shouldn't sit in `jarvis_memory/`. Update [tools/heartbeat_tools.py](../../../tools/heartbeat_tools.py) and [heartbeat.py](../../../heartbeat.py). Once relocated, the file is physically outside the memory tools' surface — no deny-list needed for it (the deny-list still applies to `threads.sqlite*` which can't be relocated since LangGraph owns the path).
 
    **The principle, stated cleanly:** agent-readable markdown state stays in `/app/jarvis_memory/` (the agent reasons about it via memory tools). Tool-opaque state (binary DBs, code-managed JSON the agent never reads directly) lives in `/app/jarvis_data/<tool>/`. The `jarvis_memory/` deny-list narrows to just files the runtime owns and can't relocate (`threads.sqlite`, `threads.sqlite-wal`, `threads.sqlite-shm`).
 
@@ -860,7 +860,7 @@ You asked: "what files Jarvis can access, what is loaded automatically and when,
 
 **Hidden / dev-controlled / restricted writes:**
 - `AGENTS.md` — `write_memory` blocks writes to it (returns "AGENTS.md is dev-controlled; edit via repo + restart"). Agent can read but not modify.
-- `SOUL.md` — write goes through `ConfirmationManager` (already implemented at [tools/memory_tools.py:35-46](../../tools/memory_tools.py#L35-L46)).
+- `SOUL.md` — write goes through `ConfirmationManager` (already implemented at [tools/memory_tools.py:35-46](../../../tools/memory_tools.py#L35-L46)).
 - `MEMORY.md`, `HEARTBEAT.md`, `scheduled_events.json` — deletes blocked (already enforced).
 
 **SOUL vs AGENTS split:** SOUL.md is user-curated identity (persona, tone, voice — short). AGENTS.md holds developer-controlled operating rules (tool usage protocols, memory architecture instructions, heartbeat protocol — long). Restart required for AGENTS.md changes is acceptable.
@@ -908,7 +908,7 @@ Always reason about and display times in Israel local time. The current time is
 provided in the prompt envelope.
 ```
 
-This replaces the ~100-line `_BASE_SYSTEM_PROMPT` in [agent.py:127-228](../../agent.py#L127-L228).
+This replaces the ~100-line `_BASE_SYSTEM_PROMPT` in [agent.py:127-228](../../../agent.py#L127-L228).
 
 **Prompt assembly (`prompts/builder.py`):**
 ```python
@@ -929,7 +929,7 @@ def build_system_prompt(scope: str, active_skills: set[str], context: RuntimeCon
     return "\n\n".join(p for p in parts if p)
 ```
 
-- Time context moves from [main.py:60](../../main.py#L60) into the system prompt envelope.
+- Time context moves from [main.py:60](../../../main.py#L60) into the system prompt envelope.
 - Each scope ("user" / "heartbeat") gets a different assembly.
 - Files trimmed/skipped per OpenClaw's pattern: blank files skipped; if a file is missing, inject a single "missing file" marker so the agent knows.
 
@@ -948,34 +948,34 @@ def build_agent_for_turn(scope: str, thread_id: str) -> CompiledGraph:
     )
 ```
 
-[main.py](../../main.py) calls `build_agent_for_turn("user", thread_id)` per request. [heartbeat.py](../../heartbeat.py) calls `build_agent_for_turn("heartbeat", "heartbeat")`.
+[main.py](../../../main.py) calls `build_agent_for_turn("user", thread_id)` per request. [heartbeat.py](../../../heartbeat.py) calls `build_agent_for_turn("heartbeat", "heartbeat")`.
 
 **Files to change:**
 
 *Half A (memory cleanup):*
-- Decide on fitness.sqlite (read [tools/fitness_tools.py](../../tools/fitness_tools.py); if structured-tabular, document; if note-shaped, migrate to markdown and delete DB).
-- Move `/app/jarvis_memory/media/` → `/app/jarvis_code/gateway/telegram/media_cache/`. Edit [tools/history_tools.py:10](../../tools/history_tools.py#L10) to point at new path.
+- Decide on fitness.sqlite (read [tools/fitness_tools.py](../../../tools/fitness_tools.py); if structured-tabular, document; if note-shaped, migrate to markdown and delete DB).
+- Move `/app/jarvis_memory/media/` → `/app/jarvis_code/gateway/telegram/media_cache/`. Edit [tools/history_tools.py:10](../../../tools/history_tools.py#L10) to point at new path.
 - Add heartbeat tasks: `memory_index_audit.md` (validates MEMORY.md), `wal_checkpoint.md` (PRAGMA wal_checkpoint).
-- Update [DEVELOPMENT.md](../../DEVELOPMENT.md) and [CLAUDE.md](../../CLAUDE.md) to document the seven memory layers explicitly.
+- Update [DEVELOPMENT.md](../../../DEVELOPMENT.md) and [CLAUDE.md](../../../CLAUDE.md) to document the seven memory layers explicitly.
 
 *Half B (identity + dynamic prompt):*
 - Create: `prompts/builder.py`, `/app/jarvis_memory/AGENTS.md` (extract from current `_BASE_SYSTEM_PROMPT`), `/app/jarvis_memory/USER.md` (consolidate user_preferences.txt + relevant memories).
-- Edit: [agent.py](../../agent.py) — delete `_BASE_SYSTEM_PROMPT`; expose `build_agent_for_turn(scope, thread_id)` (already restructured in Phase 2).
-- Edit: [main.py](../../main.py) — drop `time_ctx` prepending; pass `scope="user"`.
-- Edit: [heartbeat.py](../../heartbeat.py) — drop manual `[HEARTBEAT — scheduled check]` prefix and inline HEARTBEAT.md/daily-logs construction (the prompt builder owns it now).
+- Edit: [agent.py](../../../agent.py) — delete `_BASE_SYSTEM_PROMPT`; expose `build_agent_for_turn(scope, thread_id)` (already restructured in Phase 2).
+- Edit: [main.py](../../../main.py) — drop `time_ctx` prepending; pass `scope="user"`.
+- Edit: [heartbeat.py](../../../heartbeat.py) — drop manual `[HEARTBEAT — scheduled check]` prefix and inline HEARTBEAT.md/daily-logs construction (the prompt builder owns it now).
 - Edit: prompt builder includes today's daily log for user scope, last 2 days for heartbeat scope.
-- Delete: backward-compat `media_paths`/`media_types` branch in [agent.py:267-272](../../agent.py#L267-L272).
+- Delete: backward-compat `media_paths`/`media_types` branch in [agent.py:267-272](../../../agent.py#L267-L272).
 
 **Verification:**
 1. `pct exec 106 -- systemctl restart jarvis.service` — system prompt logged once at startup per scope. Verify SOUL.md + AGENTS.md + USER.md content all present.
 2. Telegram chat: ask "what did I do yesterday?" — Jarvis answers from yesterday's daily log without manually calling `read_memory` (it's already in the prompt for user scope).
 3. Edit `/app/jarvis_memory/AGENTS.md` to add a temporary rule like "always end your response with 🦊", restart, send a message — behavior changes without touching code. Revert.
 4. Trigger heartbeat — log heartbeat-scope prompt; verify HEARTBEAT.md and last 2 daily logs present.
-5. Confirm time context is in the prompt envelope, not prepended to user text in [main.py](../../main.py).
+5. Confirm time context is in the prompt envelope, not prepended to user text in [main.py](../../../main.py).
 6. Verify `/app/jarvis_memory/media/` is gone and `gateway/telegram/media_cache/` holds the blobs; old chat history that referenced media still resolves.
 7. Verify MEMORY.md audit task runs and reports any drift; intentionally create a stray `.md` and confirm it's flagged.
 
-**Done criterion:** `_BASE_SYSTEM_PROMPT` deleted from [agent.py](../../agent.py). All seven memory layers documented in CLAUDE.md. Telegram media blobs no longer live under `jarvis_memory/`. Daily logs visible to user scope. fitness.sqlite either explicitly documented as a "domain DB" tier or eliminated.
+**Done criterion:** `_BASE_SYSTEM_PROMPT` deleted from [agent.py](../../../agent.py). All seven memory layers documented in CLAUDE.md. Telegram media blobs no longer live under `jarvis_memory/`. Daily logs visible to user scope. fitness.sqlite either explicitly documented as a "domain DB" tier or eliminated.
 
 ---
 
@@ -1076,7 +1076,7 @@ It was the answer when the question was "where does fitness.sqlite go," but it d
 In Phase 3 Half A:
 - Create `/app/jarvis_data/scheduling/`, `/app/jarvis_data/fitness/`.
 - Move `scheduled_events.json` and `fitness.sqlite` to their new homes.
-- Update [tools/heartbeat_tools.py](../../tools/heartbeat_tools.py), [heartbeat.py](../../heartbeat.py), [tools/fitness_tools.py:9](../../tools/fitness_tools.py#L9) to read from new paths (env-overridable).
+- Update [tools/heartbeat_tools.py](../../../tools/heartbeat_tools.py), [heartbeat.py](../../../heartbeat.py), [tools/fitness_tools.py:9](../../../tools/fitness_tools.py#L9) to read from new paths (env-overridable).
 - Update CLAUDE.md to document the three-dir layout.
 - One-time migration: `pct exec 106 -- mv /app/jarvis_memory/scheduled_events.json /app/jarvis_data/scheduling/` etc., done while service is stopped.
 

@@ -25,13 +25,14 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── main.py                # Entry point
 ├── gateway/                   # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
 │   ├── base.py                # Channel ABC + InboundMessage (neutral contracts)
-│   ├── factory.py             # build_telegram_stack(); default_user_channel(); get_confirmation()
+│   ├── outbox.py              # Outbox — single owner-send seam (log-on-success, SendOutcome, thread→loop bridge)
+│   ├── factory.py             # build_telegram_stack(); default_outbox(); get_confirmation(); default_owner_thread_id()
 │   ├── confirmation/          # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
 │   ├── commands/              # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
 │   │   ├── router.py          #   @command decorator + try_handle_command(inbound) entry point
 │   │   └── handlers.py        #   built-in handlers (/help, /clear, /skills, /status, /memory, /heartbeat, /logs)
 │   ├── channels/              # Concrete channels, one dir each
-│   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py
+│   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py, host.py (PTB lifecycle)
 │   └── webhook/               # Channel-agnostic: server.py (FastAPI), notifier.py (media aggregator)
 ├── prompts/                   # DEV-controlled prompt content (committed, NOT agent-writable)
 │   ├── AGENTS.md              # Operating rules — read into every system prompt
@@ -146,7 +147,7 @@ Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.m
 
 1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
 2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
-3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, ...)` ack, and still replies `[NO_ACTION]`/message text (delivery keys off the reply; stamping keys off the ack — only acted tasks advance `state.json`)
+3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack, and still replies `[NO_ACTION]`/message text (fallback delivery path only). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
 4. Writes a unified daily log: `daily/daily_YYYY-MM-DD.md` covering both heartbeat activity and today's user conversations (via `get_chat_history(since=...)`)
 
 Task authoring goes through `manage_heartbeat_task` (validated, confirmation-gated; heartbeat turns may not `create`). The agent's notes files still carry a transitional `last_run:` line in parallel with `state.json` until the two have agreed in production.

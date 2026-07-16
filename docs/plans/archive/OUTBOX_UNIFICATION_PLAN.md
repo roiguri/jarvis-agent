@@ -11,7 +11,7 @@ Branch: `feat/outbox-unification` (based on `feat/heartbeat-gating`; PR targets 
 - [x] Slice 3 — media webhook notifier
 - [x] Slice 4 — confirmation outcomes + shared loop bridge
 - [x] Slice 5 — host decoupling (main.py loses all Telegram knowledge)
-- [ ] Slice 6 — docs alignment + archive this plan
+- [x] Slice 6 — docs alignment + archive this plan
 
 Workflow per slice: implement → user restarts `jarvis.service` → verify per the slice's list → user approves → commit. One commit per slice.
 

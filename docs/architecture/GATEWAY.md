@@ -73,19 +73,29 @@ sequenceDiagram
 
 Two flavors of outbound:
 
-1. **Reply to an inbound** — the channel router knows the originating `chat_id` and posts the reply back. This path uses `Channel.send(chat_id, text)` (or `send_media`).
-2. **Proactive send** — heartbeat or scheduler-triggered messages. The caller has no `chat_id`; the channel must already know who its owner is. This path uses `Channel.send_to_owner(text)`.
+1. **Reply to an inbound** — the channel router knows the originating `chat_id` and posts the reply back. This path uses `Channel.send(chat_id, text)` (or `send_media`) and stays inside the channel package.
+2. **Proactive send** — heartbeat, reminder, confirmation-outcome, or webhook-triggered messages. The caller has no `chat_id`. This path goes through the **Outbox** (`gateway/outbox.py`), the single domain→channel seam for owner-addressed sends; the Outbox calls `Channel.send_to_owner(text)` / `send_to_owner_media(...)`.
 
 ```
 agent reply ─────▶ Channel.send(chat_id, text) ─────▶ External system
-                   Channel.send_media(...)
+(channel router)   Channel.send_media(...)
                    Channel.send_stream(...)            (default impl: collect, then send)
 
-heartbeat / ─────▶ default_user_channel()             ─────▶ Channel.send_to_owner(text) ─────▶ External system
-proactive          .send_to_owner(text)                       Channel.send_to_owner_media(...)
+heartbeat /  ─────▶ default_outbox()          ─────▶ Channel.send_to_owner(text)       ─────▶ External system
+reminders /         .notify_owner(text,               Channel.send_to_owner_media(...)
+confirmation /       event=..., metadata=...)
+webhook notifier          │
+                          ├─ on success + event tagged: append notifications.jsonl (injected log sink)
+                          └─ returns SendOutcome(ok, error) — never raises
 ```
 
-`send_to_owner` is the **decoupling seam**. Heartbeat does not know `ALLOWED_USER_ID`, `chat_id`, or any channel-specific addressing. The channel reads its own owner-config env at construction time and stores it internally.
+The Outbox standardizes what the call sites used to hand-roll:
+
+- **Log-on-success**: sends tagged with an `event` (closed constant set: `EVENT_HEARTBEAT`, `EVENT_REMINDER`, `EVENT_MEDIA`, `EVENT_LLM_MEDIA` — string values frozen; the agent's prompt-awareness slice filters `event == "heartbeat"`) are recorded in `notifications.jsonl` only after delivery succeeded, via a host-injected log sink (the gateway imports nothing from the tools layer). Untagged sends (conversational confirmation outcomes) deliver without a log row — `notifications.jsonl` is "proactive pushes only".
+- **Failure reporting**: a send never raises; the caller gets `SendOutcome(ok, error)` and decides what a failed delivery means for its own bookkeeping (heartbeat skips stamping `state.json`; a reminder stays in the events file and retries).
+- **Thread→loop bridge**: module-level `bind_loop(loop)` / `submit(coro)` let sync worker threads (tool executors) safely schedule sends or UI work on the host loop — the confirmation store uses this for prompt scheduling.
+
+`send_to_owner` remains the channel-level seam: no caller knows `ALLOWED_USER_ID`, `chat_id`, or any channel-specific addressing. The channel reads its own owner-config env (via the factory) at construction time and addresses internally.
 
 ### Plane 3 — Confirmation (destructive tool → user → action)
 
@@ -113,9 +123,10 @@ Destructive tools (`delete_memory`, `delete_sonarr_series_with_files`, etc.) can
                                               ┌──────────────────────────────────┐
                                               │ store.resolve(callback_id, ok)   │
                                               │  - runs action_fn() if ok        │
-                                              │  - posts outcome via             │
-                                              │    default_user_channel()        │
-                                              │      .send_to_owner(...)         │
+                                              │  - delivers outcome via the      │
+                                              │    injected on_outcome callback, │
+                                              │    or outbox.notify_owner(...)   │
+                                              │    verbatim as fallback          │
                                               └──────────────────────────────────┘
 ```
 
@@ -139,10 +150,10 @@ sequenceDiagram
     else cancelled or expired
         Store->>UI: edit_outcome(cancellation text)
     end
-    Store-)User: send_to_owner(outcome notification)
+    Store-)User: on_outcome(...) or outbox.notify_owner(...)
 ```
 
-The store is **channel-agnostic**. The UI plug-in is the only Telegram-specific (or email-specific, etc.) piece.
+The store is **channel-agnostic**. The UI plug-in is the only Telegram-specific (or email-specific, etc.) piece. The outcome is delivered through the host-injected `on_outcome` callback (which feeds it back through the agent for a conversational acknowledgement) or, if none is wired, posted verbatim via the Outbox — with **no** notification event either way: confirmation outcomes are conversation, recorded in `chat_history.jsonl`, never in `notifications.jsonl`.
 
 ---
 
@@ -241,8 +252,9 @@ class Channel(ABC):
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool: ...
 
+    @property
     @abstractmethod
-    async def start(self, on_message: Callable[[InboundMessage], Awaitable[str | None]]) -> None: ...
+    def owner_thread_id(self) -> str: ...
 
     async def send_stream(self, chat_id: str, chunks: AsyncIterator[str]) -> None:
         """Default: collect chunks, then send once. Streaming channels override."""
@@ -252,11 +264,35 @@ class Channel(ABC):
 
 | Method | Purpose | Notes |
 |---|---|---|
-| `send` / `send_media` | Reply to a known chat. | Used by inbound dispatch (Plane 1 → Plane 2). |
-| `send_to_owner` / `send_to_owner_media` | Proactive message to the channel's owner. | Channel reads its own owner-config env at construction. |
+| `send` / `send_media` | Reply to a known chat. | Used by the channel's own router (Plane 1 → Plane 2). |
+| `send_to_owner` / `send_to_owner_media` | Proactive message to the channel's owner. | Called only by the Outbox. Channel reads its own owner-config env at construction. |
 | `authorize` | Is this user allowed to use Jarvis on this channel? | Single allowlist per channel today; can grow later. |
-| `start` | Begin accepting inbound. | For polling channels (Telegram via PTB) this may be a no-op — the host owns the lifecycle. For webhook channels the channel may register routes. |
+| `owner_thread_id` | Agent thread id of the owner's conversation. | Same value the channel's router stamps on inbound messages; lets domain code address the owner's thread without knowing the format. |
 | `send_stream` | Streaming send (TTS, partial reply). | Default collect-then-send; voice channels override. |
+
+Lifecycle is deliberately **not** on the ABC: bring-up/tear-down is owned by the channel *package* (Telegram: `gateway/channels/telegram/host.py` wraps the PTB Application; the factory returns a stack with `start()`/`stop()`). A former abstract `start(on_message)` was removed once the host pattern left it with no caller.
+
+### `Outbox` (`gateway/outbox.py`)
+
+```python
+EVENT_HEARTBEAT = "heartbeat"; EVENT_REMINDER = "reminder"
+EVENT_MEDIA = "notification"; EVENT_LLM_MEDIA = "llm_notification"   # values frozen
+
+@dataclass
+class SendOutcome:
+    ok: bool
+    error: str | None = None
+
+def bind_loop(loop) -> None                       # host binds once at startup (inside host.start())
+def submit(coro) -> concurrent.futures.Future     # thread-safe scheduling onto the host loop
+
+class Outbox:
+    def __init__(self, channel: Channel, log_sink: LogSink | None): ...
+    async def notify_owner(text, *, event=None, metadata=None) -> SendOutcome
+    async def notify_owner_media(kind, payload, caption=None, *, event=None, metadata=None) -> SendOutcome
+```
+
+The single seam for owner-addressed sends (see Plane 2). `default_outbox()` in `gateway/factory.py` is how domain code reaches it; `LogSink` is injected by the host (`async_append_notification_log`) so the gateway stays free of tools-layer imports.
 
 ### `Confirmation` ABC (`gateway/confirmation/base.py`)
 
@@ -289,7 +325,7 @@ class ConfirmationUI(ABC):
     # (e.g. PTB CallbackQueryHandler) that calls store.resolve(callback_id, outcome).
 ```
 
-`InMemoryConfirmationStore.__init__(ui: ConfirmationUI, channel: Channel)` — the store delegates rendering to `ui` and posts the final outcome via `channel.send_to_owner(...)`.
+`InMemoryConfirmationStore.__init__(ui: ConfirmationUI, outbox: Outbox, on_outcome=None)` — the store delegates rendering to `ui` and delivers the final outcome via the injected `on_outcome` domain callback (conversational acknowledgement) or `outbox.notify_owner(...)` verbatim as fallback.
 
 ---
 
@@ -330,7 +366,7 @@ adds only its own `media_cache.py`; nothing in core/agent changes.
 Two outbound methods on the `Channel` ABC:
 
 - `send_media(chat_id, kind, payload: bytes, caption)` — reply-context. The channel uploads the bytes; the caller does not know how. Used when the agent wants to attach an image to a reply (no caller today, but the contract reserves the slot).
-- `send_to_owner_media(kind, payload: bytes, caption)` — proactive. Used by the media notifier (Sonarr/Radarr poster images) and any other heartbeat-initiated channel-pushed media.
+- `send_to_owner_media(kind, payload: bytes, caption)` — proactive, reached via `outbox.notify_owner_media(...)`. Used by the media notifier (Sonarr/Radarr poster images) and any other proactive channel-pushed media.
 
 **Bytes, not paths, for outbound.** The caller (e.g. the notifier) typically fetches the media from a third party (Jellyfin/Radarr) and hands the channel the raw bytes. The channel decides how to upload (Telegram: `send_photo` with multipart upload; future email: MIME attachment). Channels that can't represent a given `kind` (e.g. early email may not support video) raise `NotImplementedError`; the caller is responsible for downgrading or skipping.
 
@@ -358,7 +394,7 @@ Proactive sends (heartbeat reminders, confirmation outcome notifications, schedu
 1. **Reach into the channel's allowlist** — fragile and Telegram-shaped (`ALLOWED_USER_ID` happens to equal `chat_id` for private chats; not true elsewhere).
 2. **Push the concept inside the channel** — `Channel.send_to_owner(text)` reads the channel's own owner-config and addresses internally.
 
-Jarvis takes option (2). Each channel reads its own owner-config env at construction:
+Jarvis takes option (2). Each channel's factory reads its owner-config env and passes it into the channel constructor:
 
 | Channel | Owner-config env | What it stores |
 |---|---|---|
@@ -367,9 +403,9 @@ Jarvis takes option (2). Each channel reads its own owner-config env at construc
 | WhatsApp (future) | `ALLOWED_PHONE` | E.164 phone |
 | Voice (future) | `ALLOWED_PHONE` | (shared with WhatsApp or its own) |
 
-The factory passes the env value into the channel constructor; nowhere else in the codebase reads it.
+The factory reads the env value and passes it into the channel constructor; nowhere else in the codebase reads it (`main.py` only calls `load_dotenv` — it never sees channel config).
 
-`default_user_channel()` (in `gateway/factory.py`) returns the channel that proactive sends should target. Today it's the single configured Telegram channel. When a second channel ships, this becomes a routing decision (per-task config or last-seen channel) — that decision lives in `factory.py`, not in callers.
+Domain code reaches the default channel through two factory accessors, never through a channel object: `default_outbox()` for proactive sends, and `default_owner_thread_id()` for addressing the owner's conversation thread (used by the confirmation-outcome callback). Today both resolve to the single configured Telegram channel. When a second channel ships, "which channel does this send/thread target" becomes a routing decision — that decision lives in `factory.py`, not in callers.
 
 ---
 
@@ -390,18 +426,19 @@ The format change to `:` separator is a Phase 2 concern paired with the `JarvisS
 
 Concrete steps to add an `email` (or `whatsapp`, etc.) channel after Phase 1 lands:
 
-1. **Pick the directory.** `gateway/email/`. Mirror Telegram's split:
+1. **Pick the directory.** `gateway/channels/email/`. Mirror Telegram's split:
    - `channel.py` — `EmailChannel(Channel)`.
    - `router.py` — IMAP IDLE / poller / webhook handler that produces `InboundMessage`.
+   - `host.py` — owns the protocol client's lifecycle (connect, begin IDLE / register webhook on `start()`, disconnect on `stop()`). Mirrors `TelegramHost`.
    - `confirmation.py` — `EmailConfirmationUI(ConfirmationUI)` (e.g. magic-link confirm/cancel URLs).
-2. **Implement the `Channel` ABC** in `channel.py`. Constructor takes `allowed_email: str` (or whatever owner-config makes sense). Implement `send` (SMTP), `send_media` (SMTP attachment), `send_to_owner` (fixed recipient), `authorize` (compare sender), `start` (begin IDLE / register webhook).
-3. **Define an owner-config env** (e.g. `ALLOWED_EMAIL`) and add it to `/app/secrets/.env`. Add channel-specific config (`SMTP_HOST`, `SMTP_USER`, `IMAP_HOST`, etc.).
+2. **Implement the `Channel` ABC** in `channel.py`. Constructor takes `allowed_email: str` (or whatever owner-config makes sense). Implement `send` (SMTP), `send_media` (SMTP attachment), `send_to_owner` (fixed recipient), `authorize` (compare sender), `owner_thread_id` (e.g. `email_<sanitized_address>` — single-source the format in `channel.py` and reuse it from the router).
+3. **Define an owner-config env** (e.g. `ALLOWED_EMAIL`) and add it to `/app/secrets/.env`. Add channel-specific config (`SMTP_HOST`, `SMTP_USER`, `IMAP_HOST`, etc.). The **factory** reads all of it — `main.py` never sees channel config.
 4. **Implement `ConfirmationUI`** if your channel needs a confirmation flow. The store interface is fixed — only `send_prompt` and `edit_outcome` are channel-specific.
-5. **Register in `gateway/factory.py`** — add a `build_email(...)` factory that constructs the channel, wires its inbound router to `process_inbound_message`, and returns the channel.
-6. **Wire startup in `main.py`** — call the factory; optionally call `set_default_user_channel(...)` if proactive sends should default to this channel.
+5. **Register in `gateway/factory.py`** — add a `build_email_stack(...)` factory that reads the config env, constructs channel + outbox + router + confirmation store/UI + host, wires the router to `process_inbound_message`, registers the defaults (outbox, confirmation, default channel), and returns a stack with `start()`/`stop()`.
+6. **Wire startup in `main.py`** — call the factory and `await stack.start()`. That's the whole host-side footprint.
 7. **Update `thread_id` convention** — use `email_<sanitized_address>` (or whatever format suits the channel's identifier domain).
 8. **(Optional) Surface slash commands.** Slash commands already work on the new channel for free — `process_inbound_message` calls `try_handle_command` before the agent regardless of which channel produced the `InboundMessage`. If your channel has a native command-menu / autocomplete / help-footer surface, add a method on the channel (mirroring Telegram's `register_command_menu()`) that calls `gateway.commands.list_commands()` and renders the list in protocol-native form; have `main.py` invoke it once at startup. No protocol → skip; `/help` is the universal fallback.
-9. **Test** following the verification protocol in [docs/plans/ARCHITECTURE_PLAN.md](../plans/ARCHITECTURE_PLAN.md). At minimum: inbound text → reply, proactive send via heartbeat, destructive-tool confirmation flow, a slash command (e.g. `/help`).
+9. **Test** following the verification protocol in [docs/plans/ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md). At minimum: inbound text → reply, proactive send via heartbeat, destructive-tool confirmation flow, a slash command (e.g. `/help`).
 
 What you should **not** need to touch when adding a channel:
 - Any file under `tools/` or `agent.py`.
