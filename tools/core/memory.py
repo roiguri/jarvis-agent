@@ -162,7 +162,7 @@ def write_memory(filename: str, content: str) -> str:
         return (
             "Error: HEARTBEAT.md is managed through manage_heartbeat_task — "
             "use it to create, update or delete heartbeat tasks (validated "
-            "and owner-confirmed). Direct writes are not allowed."
+            "before write). Direct writes are not allowed."
         )
     if filename == "SOUL.md":
         from gateway.factory import get_confirmation

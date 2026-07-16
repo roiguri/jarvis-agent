@@ -7,28 +7,29 @@ text. Bound only in heartbeat scope — a user turn has no tick to
 acknowledge.
 
 ``manage_heartbeat_task`` is the validated write path for the task list in
-HEARTBEAT.md: it parses, mutates one task block, re-validates the whole
-candidate before anything touches disk, and gates every change behind an
-owner confirmation tap. The read side (heartbeat_state.parse_tasks) stays
-lenient; this write side fails loud — a malformed task must be rejected at
-authoring time, never silently dropped by the gate later.
+HEARTBEAT.md: it parses, mutates one task block, and re-validates the whole
+candidate before anything touches disk. The read side
+(heartbeat_state.parse_tasks) stays lenient; this write side fails loud — a
+malformed task must be rejected at authoring time, never silently dropped by
+the gate later.
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 from langchain_core.tools import tool
 
 import heartbeat_state
 import turn_context
+from tools.core.memory import _exec_write_memory
 from tools.registry import tool_register
 
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _CADENCE_INPUT_RE = re.compile(
     r"^(?:every\s+)?(?P<n>\d+)\s*(?P<unit>hours?|days?|h|d)$", re.IGNORECASE
 )
+_NOTES_RE = re.compile(r"notes:\s*`([^`]+)`")
 
 
 def _normalize_cadence(cadence: str) -> str | None:
@@ -44,12 +45,31 @@ def _normalize_cadence(cadence: str) -> str | None:
     return f"every {n}{unit}"
 
 
-def _build_block(name: str, cadence: str, due: str, instruction: str) -> list[str]:
-    """A canonical task block: header line + two-space-indented body."""
+def _default_notes(name: str) -> str:
+    """The notes path a brand-new task gets: kebab name → snake filename."""
+    return f"heartbeat/{name.replace('-', '_')}.md"
+
+
+def _notes_of(header: str) -> str | None:
+    """The notes path declared on an existing header line, or None."""
+    m = _NOTES_RE.search(header)
+    return m.group(1) if m else None
+
+
+def _build_block(
+    name: str, cadence: str, due: str, instruction: str, notes: str
+) -> list[str]:
+    """A canonical task block: header line + two-space-indented body.
+
+    ``notes`` is explicit rather than derived from ``name``: an existing
+    task's notes file is frequently named by hand and does not match the
+    derived form, and rebuilding its block must carry the declared path over
+    or the task silently loses the narrative state it has accumulated.
+    """
     fields = [f"- **{name}**", cadence]
     if due:
         fields.append(f"due: {due}")
-    fields.append(f"notes: `heartbeat/{name.replace('-', '_')}.md`")
+    fields.append(f"notes: `{notes}`")
     block = [" | ".join(fields)]
     block += [f"  {line}".rstrip() for line in instruction.strip().splitlines()]
     return block
@@ -100,7 +120,7 @@ def heartbeat_respond(
     return payload
 
 
-@tool_register(namespace="core", destructive=True)
+@tool_register(namespace="core")
 @tool
 def manage_heartbeat_task(
     action: str,
@@ -116,10 +136,11 @@ def manage_heartbeat_task(
     workouts", "every Sunday summarize my week"). For a one-shot ping at a
     fixed moment ("remind me at 15:00 to call") use manage_reminder instead.
 
-    Every create/update/delete shows Roi a confirmation with the exact
-    change and only lands after he approves. Invalid input (bad cadence,
-    bad due window, duplicate/unknown name) is rejected with the reason and
-    the file stays untouched.
+    Changes land immediately. Invalid input (bad cadence, bad due window,
+    duplicate/unknown name) is rejected with the reason and the file stays
+    untouched. On success the resulting task block is returned — report back
+    what actually landed rather than restating what you asked for, since an
+    update keeps the fields you left empty.
 
     Args:
         action: "create" | "update" | "delete" | "list".
@@ -175,12 +196,10 @@ def manage_heartbeat_task(
         removed = next(b for n, b in blocks if n == name)
         new_blocks = [(n, b) for n, b in blocks if n != name]
         new_text = _render(preamble, new_blocks)
-        description = (
-            f"Delete heartbeat task '{name}':\n\n" + "\n".join(removed)
+        ok_text = (
+            f"Heartbeat task '{name}' deleted:\n\n" + "\n".join(removed)
             + "\n\n(Its notes file in heartbeat/ is kept and can be cleaned up separately.)"
         )
-        ok_text = f"Heartbeat task '{name}' deleted."
-        cancel_text = f"Deletion cancelled — '{name}' unchanged."
     else:
         if action == "create":
             if name in existing:
@@ -194,6 +213,7 @@ def manage_heartbeat_task(
                     "Use forms like '1h', '24h', '7d'."
                 )
             new_due = due.strip()
+            notes = _default_notes(name)
         else:  # update
             if name not in existing:
                 return f"Error: no task named '{name}' in HEARTBEAT.md."
@@ -201,6 +221,7 @@ def manage_heartbeat_task(
                 t for t in heartbeat_state.parse_tasks_text(current_text) if t.name == name
             )
             prior_block = next(b for n, b in blocks if n == name)
+            notes = _notes_of(prior_block[0]) or _default_notes(name)
             if cadence.strip():
                 norm_cadence = _normalize_cadence(cadence)
                 if norm_cadence is None:
@@ -238,18 +259,17 @@ def manage_heartbeat_task(
                 "'06:00-22:00', 'Tue,Sat 20:30±3h', '09:00±2h' (or 'none' to clear)."
             )
 
-        new_block = _build_block(name, norm_cadence, new_due, instruction)
+        new_block = _build_block(name, norm_cadence, new_due, instruction, notes)
         if action == "create":
             new_blocks = blocks + [(name, new_block)]
         else:
             new_blocks = [(n, b if n != name else new_block) for n, b in blocks]
         new_text = _render(preamble, new_blocks)
-        description = (
-            f"{'Create' if action == 'create' else 'Update'} heartbeat task "
-            f"'{name}':\n\n" + "\n".join(new_block)
+        ok_text = (
+            f"Heartbeat task '{name}' "
+            f"{'created' if action == 'create' else 'updated'}:\n\n"
+            + "\n".join(new_block)
         )
-        ok_text = f"Heartbeat task '{name}' {'created' if action == 'create' else 'updated'}."
-        cancel_text = f"{action.capitalize()} cancelled — HEARTBEAT.md unchanged."
 
     # Validate the full candidate exactly as the gate will read it: the
     # mutated task must round-trip with a parseable cadence (+ window when
@@ -268,18 +288,9 @@ def manage_heartbeat_task(
     if set(parsed) != expected_names:
         return "Error: internal validation failed — other tasks would be disturbed."
 
-    from gateway.factory import get_confirmation
-    from tools.core.memory import _exec_write_memory
-
-    async def _do_write() -> str:
-        return await asyncio.to_thread(_exec_write_memory, "HEARTBEAT.md", new_text)
-
-    try:
-        return get_confirmation().request_confirmation_sync(
-            description=description,
-            action_fn=_do_write,
-            result_ok_text=ok_text,
-            result_cancel_text=cancel_text,
-        )
-    except Exception as e:
-        return f"Error requesting confirmation: {e}"
+    # _exec_write_memory reports failure in its return string rather than
+    # raising, so a failed write must be caught by inspecting the result.
+    result = _exec_write_memory("HEARTBEAT.md", new_text)
+    if not result.startswith("Successfully"):
+        return f"Error: HEARTBEAT.md was not modified — {result}"
+    return ok_text

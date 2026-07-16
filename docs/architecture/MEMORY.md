@@ -99,7 +99,7 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
 | `MEMORY.md` | jarvis_memory | **no** — read on demand via tools | yes | yes | no (delete blocked) |
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
-| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated + confirmation); raw `write_memory` rejected in code | create/update/delete confirm (delete of file blocked) |
+| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | via `get_chat_history` tool | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — today's `event="heartbeat"` slice | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
 
