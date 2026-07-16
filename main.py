@@ -120,16 +120,11 @@ async def main() -> None:
         log_sink=async_append_notification_log,
     )
 
-    # Notifications and confirmation outcomes go through the channel's
-    # owner-addressed methods.
+    # Media notifications go through the stack's Outbox (send + log-on-success).
     async def _llm_format(prompt: str) -> str:
         return await asyncio.to_thread(ask_jarvis_once, prompt)
 
-    notifier = MediaNotificationManager(
-        stack.channel,
-        llm_format=_llm_format,
-        log_notification=async_append_notification_log,
-    )
+    notifier = MediaNotificationManager(stack.outbox, llm_format=_llm_format)
 
     # FastAPI app wired to the shared notifier
     fastapi_app = create_webhook_app(notifier)

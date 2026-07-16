@@ -15,15 +15,14 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from gateway.base import Channel
+from gateway.outbox import EVENT_LLM_MEDIA, EVENT_MEDIA, Outbox
 
 logger = logging.getLogger(__name__)
 
-# Injected by the host so the gateway depends on neither the agent nor the
-# tools layer. LLMFormat turns a prompt into notification text; LogSink
-# records a sent notification (event_type, text, metadata).
+# Injected by the host so the gateway never depends on the agent layer.
+# LLMFormat turns a prompt into notification text; sending and notification
+# logging go through the Outbox.
 LLMFormat = Callable[[str], Awaitable[str]]
-LogSink = Callable[[str, str, dict], Awaitable[None]]
 
 SILENCE_MOVIE = 120    # 2-min fallback — used when expected count is unknown
 SILENCE_SERIES = 600   # 10-min fallback — series timer if not all episodes arrive
@@ -161,10 +160,9 @@ class MediaNotificationManager:
     """Per-batch media aggregator. Dispatch fires when all expected items are
     accounted for, or on a silence timer."""
 
-    def __init__(self, channel: Channel, llm_format: LLMFormat, log_notification: LogSink) -> None:
-        self._channel = channel
+    def __init__(self, outbox: Outbox, llm_format: LLMFormat) -> None:
+        self._outbox = outbox
         self._llm_format = llm_format
-        self._log_notification = log_notification
         self._batches: dict[str, _Batch] = {}
         self._lock = asyncio.Lock()
 
@@ -287,27 +285,30 @@ class MediaNotificationManager:
             image_id = next((img for _, img in batch.upgraded if img), None)
             await self._send_direct(_format_batch_upgrade_message(key, batch), image_id=image_id)
 
-    async def _send_direct(self, text: str, image_id: str | None = None, log_event: str = "notification") -> None:
-        try:
-            if image_id:
-                image_bytes = await _fetch_image(image_id)
-                if image_bytes:
-                    await self._channel.send_to_owner_media("image", image_bytes, caption=text)
+    async def _send_direct(self, text: str, image_id: str | None = None, log_event: str = EVENT_MEDIA) -> None:
+        if image_id:
+            image_bytes = await _fetch_image(image_id)
+            if image_bytes:
+                outcome = await self._outbox.notify_owner_media(
+                    "image", image_bytes, caption=text,
+                    event=log_event, metadata={"has_image": True},
+                )
+                if outcome.ok:
                     logger.info("Photo notification sent (image_id=%s)", image_id)
-                    await self._log_notification(log_event, text, {"has_image": True})
-                    return
-            await self._channel.send_to_owner(text)
+                return
+        outcome = await self._outbox.notify_owner(
+            text, event=log_event, metadata={"has_image": False}
+        )
+        if outcome.ok:
             logger.info("Text notification sent")
-            await self._log_notification(log_event, text, {"has_image": False})
-        except Exception:
-            logger.exception("Failed to send notification")
 
     async def _send_via_llm(self, prompt: str, image_id: str | None = None) -> None:
         try:
             response_text = await self._llm_format(prompt)
-            if not response_text:
-                logger.warning("LLM returned empty response — skipping send.")
-                return
-            await self._send_direct(response_text, image_id=image_id, log_event="llm_notification")
         except Exception:
-            logger.exception("Failed to send LLM notification")
+            logger.exception("Failed to format LLM notification")
+            return
+        if not response_text:
+            logger.warning("LLM returned empty response — skipping send.")
+            return
+        await self._send_direct(response_text, image_id=image_id, log_event=EVENT_LLM_MEDIA)
