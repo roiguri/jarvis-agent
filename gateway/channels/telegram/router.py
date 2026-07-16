@@ -11,17 +11,10 @@ import logging
 from telegram import Update
 
 from gateway.base import InboundMessage, OnMessage
-from gateway.channels.telegram.channel import TelegramChannel
+from gateway.channels.telegram.channel import TelegramChannel, thread_id_for as _thread_id
 from gateway.channels.telegram.media_cache import save as _save_media
 
 logger = logging.getLogger(__name__)
-
-# thread_id format is frozen at telegram_<user_id> for Phase 1. The ":" separator
-# change is a Phase 2 concern coupled to the checkpointer-key migration; changing
-# it here would orphan every existing LangGraph checkpoint and history record.
-def _thread_id(user_id: int) -> str:
-    return f"telegram_{user_id}"
-
 
 class TelegramInboundRouter:
     def __init__(

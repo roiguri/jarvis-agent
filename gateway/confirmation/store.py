@@ -3,7 +3,7 @@ Channel-agnostic confirmation store.
 
 Owns all bookkeeping for Plane 3: the pending-action table, TTL eviction, running
 the action on approval, and dispatching the outcome. It delegates rendering to a
-ConfirmationUI and posts a final outcome line to the owner via the Channel. It
+ConfirmationUI and posts a final outcome line to the owner via the Outbox. It
 does not know about Telegram, inline keyboards, or the agent.
 """
 
@@ -15,8 +15,9 @@ from datetime import datetime
 import uuid
 from typing import Awaitable, Callable
 
-from gateway.base import Channel
+from gateway import outbox as outbox_mod
 from gateway.confirmation.base import Confirmation, ConfirmationUI, PendingAction
+from gateway.outbox import Outbox
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,11 @@ class InMemoryConfirmationStore(Confirmation):
     def __init__(
         self,
         ui: ConfirmationUI,
-        channel: Channel,
+        outbox: Outbox,
         on_outcome: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._ui = ui
-        self._channel = channel
+        self._outbox = outbox
         # Domain callback that turns a neutral outcome line into a
         # conversational acknowledgement (runs the agent + replies). Injected
         # by the host so the gateway never imports the agent layer. If unset,
@@ -47,16 +48,11 @@ class InMemoryConfirmationStore(Confirmation):
         self._on_outcome = on_outcome
         self._pending: dict[str, PendingAction] = {}
         self._lock = threading.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
         self._sweeper: asyncio.Task | None = None
 
-    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Capture the running event loop. Called once at startup, from inside
-        the loop, before any inbound traffic is accepted."""
-        self._loop = loop
-
     def start_sweeper(self) -> None:
-        """Begin the periodic TTL eviction task. Requires a bound loop."""
+        """Begin the periodic TTL eviction task. Requires the outbox loop to
+        be bound (main binds it at startup)."""
         if self._sweeper is None or self._sweeper.done():
             self._sweeper = asyncio.create_task(self._sweep_loop())
 
@@ -71,7 +67,7 @@ class InMemoryConfirmationStore(Confirmation):
         result_ok_text: str = "Action completed.",
         result_cancel_text: str = "Action cancelled.",
     ) -> str:
-        if self._loop is None:
+        if not outbox_mod.loop_bound():
             return "Error: confirmation system not ready, cannot request approval."
 
         callback_id = uuid.uuid4().hex[:8]
@@ -83,9 +79,7 @@ class InMemoryConfirmationStore(Confirmation):
                 result_cancel_text=result_cancel_text,
             )
 
-        future = asyncio.run_coroutine_threadsafe(
-            self._ui.send_prompt(callback_id, description), self._loop
-        )
+        future = outbox_mod.submit(self._ui.send_prompt(callback_id, description))
         future.add_done_callback(
             lambda fut: self._on_prompt_done(callback_id, description, fut)
         )
@@ -121,10 +115,8 @@ class InMemoryConfirmationStore(Confirmation):
             f"[System: The confirmation prompt could not be delivered. "
             f"Task: {description}. Action was NOT scheduled.]"
         )
-        if self._loop is not None:
-            asyncio.run_coroutine_threadsafe(
-                self._deliver_outcome(notice), self._loop
-            )
+        if outbox_mod.loop_bound():
+            outbox_mod.submit(self._deliver_outcome(notice))
 
     # ------------------------------------------------------------------
     # Resolution — called on the event loop by the channel's callback handler
@@ -170,12 +162,14 @@ class InMemoryConfirmationStore(Confirmation):
 
     async def _deliver_outcome(self, system_text: str) -> None:
         """Hand the neutral outcome to the domain for a conversational
-        acknowledgement, or post it verbatim if no handler is wired."""
+        acknowledgement, or post it verbatim if no handler is wired.
+        Verbatim posts are conversation, not proactive pushes — no
+        notification-log event."""
         try:
             if self._on_outcome is not None:
                 await self._on_outcome(system_text)
             else:
-                await self._channel.send_to_owner(system_text)
+                await self._outbox.notify_owner(system_text)
         except Exception:
             logger.exception("Failed to deliver confirmation outcome")
 

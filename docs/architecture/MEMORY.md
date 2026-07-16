@@ -42,8 +42,8 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── SOUL.md                # user-curated identity/voice (agent-writable w/ confirmation)
 ├── USER.md                # durable user profile/prefs (agent-writable, no confirm)
 ├── MEMORY.md              # agent-maintained master index of memory files
-├── HEARTBEAT.md           # agent-managed recurring task list
-├── heartbeat/*.md         # per-task state files
+├── HEARTBEAT.md           # recurring task list (edited via manage_heartbeat_task)
+├── heartbeat/*.md         # per-task NOTES files (narrative state; machine last_run lives in jarvis_data)
 ├── daily/daily_YYYY-MM-DD.md   # episodic daily logs (written by heartbeat)
 ├── *.txt / *.md           # long-term memory the agent writes freely
 └── threads.sqlite(+-wal,-shm)  # deny-listed exception (LangGraph owns the path)
@@ -55,6 +55,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
 ├── scheduling/scheduled_events.json
+├── heartbeat/state.json   # code-owned per-task last_run stamps (gate input — see HEARTBEAT.md doc)
 └── logs/{chat_history,notifications}.jsonl
 
 /app/jarvis_code/gateway/*/media_cache/   # channel-owned (see GATEWAY.md)
@@ -77,14 +78,14 @@ Consequences that the rest of this architecture relies on:
 
 ### Protected files
 
-Deletion is blocked for files the system needs to exist; `SOUL.md` additionally requires a Telegram confirmation to **write** (identity changes are user-gated):
+Deletion is blocked for files the system needs to exist; `SOUL.md` additionally requires a Telegram confirmation to **write** (identity changes are user-gated), and `HEARTBEAT.md` rejects direct writes entirely (`manage_heartbeat_task` is the only write path). Guards compare the canonical sandbox-relative name (resolved by the same path logic the operation uses), so alias spellings like `./SOUL.md` cannot bypass them:
 
 | File | Delete | Write |
 |---|---|---|
 | `SOUL.md` | blocked | confirmation required |
 | `USER.md` | blocked | allowed (no confirm) |
 | `MEMORY.md` | blocked | allowed |
-| `HEARTBEAT.md` | blocked | allowed |
+| `HEARTBEAT.md` | blocked | blocked — `manage_heartbeat_task` only |
 
 ---
 
@@ -98,7 +99,7 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
 | `MEMORY.md` | jarvis_memory | **no** — read on demand via tools | yes | yes | no (delete blocked) |
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
-| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only | yes | yes | no (delete blocked) |
+| `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated + confirmation); raw `write_memory` rejected in code | create/update/delete confirm (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | via `get_chat_history` tool | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — today's `event="heartbeat"` slice | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
 
@@ -108,7 +109,7 @@ The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is 
 
 ## System Prompt Assembly
 
-`build_system_prompt(scope, active_skills)` in `agent.py` assembles the prompt **fresh on every model call**. There is no prompt constant in code.
+`build_system_prompt(scope, active_skills, due_tasks=None)` in `agent.py` assembles the prompt **fresh on every model call**. There is no prompt constant in code.
 
 ```
 [Current time: <Israel local>] / [Active scope: user|heartbeat]   # envelope
@@ -120,7 +121,8 @@ USER.md            (jarvis_memory — durable user profile)
    + today's heartbeat-sent notifications (live slice of notifications.jsonl)
 ─ scope == "heartbeat" ────────────────────────────────────────
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
-   + HEARTBEAT.md
+   + HEARTBEAT.md — due task blocks only when due_tasks is a list
+     (non-due tasks collapse to a one-line note; None = full file)
    + today's user chat (live slice of chat_history.jsonl)
    + yesterday's daily log
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
@@ -132,10 +134,10 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 
 ### Per-scope content (not per-scope capability)
 
-Scope changes *which prompt content* is assembled, never *which tools are reachable* — that distinction is owned by [RUNTIME.md](RUNTIME.md) ("Scope — Informational, Not Restrictive"). This layer owns only the file composition of each branch:
+Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
 - **`user`** — conversational framing + **today's daily log** + **today's heartbeat-sent notifications** (live slice of `notifications.jsonl` filtered to `event="heartbeat"` and timestamps ≥ start-of-Israel-day). The notifications give the chat assistant a live view of what the background tick has already pushed; the daily log carries the richer narrative (still useful, but lagging because it is rewritten only at end-of-tick).
-- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the `[NO_ACTION]` tick contract, present *only* here so it never adds noise to user turns) + `HEARTBEAT.md` + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
+- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the `[NO_ACTION]` tick contract, present *only* here so it never adds noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
 Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. They sit alongside the daily log rather than replacing it: live for freshness, daily log for narrative.
 

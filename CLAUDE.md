@@ -19,17 +19,20 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ```
 /app/jarvis_code/          # Application code (this repo)
 ├── agent.py               # LangGraph agent + system prompt construction
-├── heartbeat.py           # APScheduler heartbeat runner
+├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
+├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
+├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── main.py                # Entry point
 ├── gateway/                   # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
 │   ├── base.py                # Channel ABC + InboundMessage (neutral contracts)
-│   ├── factory.py             # build_telegram_stack(); default_user_channel(); get_confirmation()
+│   ├── outbox.py              # Outbox — single owner-send seam (log-on-success, SendOutcome, thread→loop bridge)
+│   ├── factory.py             # build_telegram_stack(); default_outbox(); get_confirmation(); default_owner_thread_id()
 │   ├── confirmation/          # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
 │   ├── commands/              # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
 │   │   ├── router.py          #   @command decorator + try_handle_command(inbound) entry point
 │   │   └── handlers.py        #   built-in handlers (/help, /clear, /skills, /status, /memory, /heartbeat, /logs)
 │   ├── channels/              # Concrete channels, one dir each
-│   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py
+│   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py, host.py (PTB lifecycle)
 │   └── webhook/               # Channel-agnostic: server.py (FastAPI), notifier.py (media aggregator)
 ├── prompts/                   # DEV-controlled prompt content (committed, NOT agent-writable)
 │   ├── AGENTS.md              # Operating rules — read into every system prompt
@@ -42,6 +45,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │   │   ├── search.py          # web_search
 │   │   ├── history.py         # get_chat_history, get_notification_history (logs only — no media)
 │   │   ├── scheduling.py      # manage_reminder
+│   │   ├── heartbeat.py       # heartbeat_respond tick-ack + manage_heartbeat_task authoring
 │   │   └── activate_skill.py  # activate_skill / deactivate_skill meta-tools
 │   ├── media/                 # "media" parent skill — SKILL.md + _shared.py; owns NO tools (discovery index)
 │   │   ├── radarr/             #   sub-skill (namespace="media/radarr"): __init__.py + radarr.py + SKILL.md
@@ -61,8 +65,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── SOUL.md                # User-curated identity (protected — write requires button)
 ├── USER.md                # Durable user profile/prefs (protected — agent-writable, no confirm)
 ├── MEMORY.md              # Agent-maintained index of all memory files (protected)
-├── HEARTBEAT.md           # Active heartbeat task list (protected)
-├── heartbeat/             # Per-task state files (created/updated by Jarvis)
+├── HEARTBEAT.md           # Active heartbeat task list (protected; edited via manage_heartbeat_task)
+├── heartbeat/             # Per-task NOTES files (agent narrative state; machine last_run → jarvis_data)
 │   └── *.md
 ├── daily/                 # Daily context logs (written by heartbeat)
 │   └── daily_YYYY-MM-DD.md
@@ -72,6 +76,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 /app/jarvis_data/          # Tool-opaque state — NEVER in the memory tool surface, never read_memory'd
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
 ├── scheduling/scheduled_events.json# pending reminders (scheduler-owned)
+├── heartbeat/state.json            # code-owned per-task last_run stamps (heartbeat_state.py; gate input)
 └── logs/
     ├── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
     └── turns.jsonl, tool_calls.jsonl            # 90-day JSONL, app-only (observability/), agent never reads
@@ -126,7 +131,7 @@ compact_skill_list (registry — every skill's SKILL.md description; active skil
 
 `_get_safe_path(filename)` in `tools/core/memory.py` resolves all paths relative to `/app/jarvis_memory/` and rejects any `..` traversal. Jarvis cannot access files outside that directory via memory tools.
 
-Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation to write):
+Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation to write; `HEARTBEAT.md` rejects direct writes — `manage_heartbeat_task` is the only write path). Guards compare the canonical sandbox-relative name, so alias spellings (`./SOUL.md`) cannot bypass them:
 - `SOUL.md`
 - `HEARTBEAT.md`
 - `MEMORY.md`
@@ -138,11 +143,14 @@ Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation
 
 ## Heartbeat System
 
-`heartbeat.py` runs via APScheduler, every hour. It:
-1. Runs a LangGraph agent turn with a `heartbeat` thread ID and `scope="heartbeat"`
-2. `build_system_prompt("heartbeat", ...)` (not `heartbeat.py`) supplies the context: `prompts/heartbeat.md` tick rules, `HEARTBEAT.md`, **today's user-thread chat** (so the tick can detect already-handled tasks), and yesterday's daily log — `heartbeat.py` only passes the imperative task instruction. The heartbeat thread keeps a mixed history of recent ticks (briefings and `[NO_ACTION]` replies both) under the same 50-message cap as the user thread — keeping the noise turns in is deliberate: they dilute the in-context pattern (every visible AI response is *not* a briefing) and let real briefings age out as the cap rolls over
-3. The agent checks each task's state file (`heartbeat/*.md`); if the chat shows the user already handled it, the tick writes a `User handled this on … — skipping today` line and moves on. Otherwise: act if due, update the state file
+Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs via APScheduler every hour, and **code decides when the model runs**:
+
+1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
+2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
+3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack, and still replies `[NO_ACTION]`/message text (fallback delivery path only). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
 4. Writes a unified daily log: `daily/daily_YYYY-MM-DD.md` covering both heartbeat activity and today's user conversations (via `get_chat_history(since=...)`)
+
+Task authoring goes through `manage_heartbeat_task` (validated, confirmation-gated; heartbeat turns may not `create`). The agent's notes files still carry a transitional `last_run:` line in parallel with `state.json` until the two have agreed in production.
 
 The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + `[NO_ACTION]` contract + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
 
@@ -196,8 +204,8 @@ fake the service state.
 | Add a slash command | Add an `async def` handler in `gateway/commands/handlers.py` decorated with `@command(name, description)`. The router auto-discovers it; `/help` and each channel's command-menu (e.g. Telegram autocomplete via `register_command_menu()`) pick it up next start. Handlers receive `(InboundMessage, args: list[str])` and return reply text — they may import `agent`/`tools` but **not** any concrete channel. See docs/architecture/GATEWAY.md (Plane 1 — Slash-Command Dispatch). |
 | Change Jarvis's personality | Edit `/app/jarvis_memory/SOUL.md` directly |
 | Change behavioral rules | `/app/jarvis_code/prompts/AGENTS.md` (always-on) or `prompts/heartbeat.md` (heartbeat-scope only); a skill's own rules go in `tools/<ns>/SKILL.md`. Tool usage is driven by tool docstrings, not prompt prose. |
-| Add a heartbeat task | Append to `/app/jarvis_memory/HEARTBEAT.md` |
+| Add a heartbeat task | Ask Jarvis (it uses `manage_heartbeat_task`, confirmation-gated), or hand-edit `/app/jarvis_memory/HEARTBEAT.md` following the grammar in docs/architecture/HEARTBEAT.md (a malformed hand edit degrades to always-due, never a silent drop) |
 | Understand the memory layout | `/app/jarvis_memory/MEMORY.md` |
-| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,OBSERVABILITY}.md` |
+| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,HEARTBEAT,OBSERVABILITY}.md` |
 | Add per-turn telemetry / read usage | `observability/{telemetry,usage}.py` + `scripts/trace.py` (see [docs/architecture/OBSERVABILITY.md](docs/architecture/OBSERVABILITY.md)) |
 | Deploy / ops / local testing | `DEVELOPMENT.md` |

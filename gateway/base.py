@@ -80,10 +80,13 @@ class Channel(ABC):
     def authorize(self, raw_user_id: str) -> bool:
         """Is this user allowed to use Jarvis on this channel?"""
 
+    @property
     @abstractmethod
-    async def start(self, on_message: OnMessage) -> None:
-        """Begin accepting inbound. For polling channels whose lifecycle the host
-        owns (Telegram via PTB) this may be a no-op."""
+    def owner_thread_id(self) -> str:
+        """Canonical agent thread id for the owner's conversation on this
+        channel (same value the channel's router stamps on inbound messages).
+        Lets domain code address the owner's thread without knowing the
+        channel's thread_id format."""
 
     async def send_stream(self, chat_id: str, chunks: AsyncIterator[str]) -> None:
         """Default: collect chunks, then send once. Streaming channels override."""

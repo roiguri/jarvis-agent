@@ -7,7 +7,6 @@ text is treated as Markdown and rendered to Telegram HTML here; callers never
 deal in HTML.
 """
 
-import asyncio
 import logging
 
 from telegram import Bot, BotCommand
@@ -34,6 +33,13 @@ def _truncate_markdown(text: str, limit: int) -> str:
     return text[:limit].rstrip() + _TRUNCATION_TAIL
 
 
+# thread_id format is frozen at telegram_<user_id> for Phase 1. The ":" separator
+# change is a Phase 2 concern coupled to the checkpointer-key migration; changing
+# it here would orphan every existing LangGraph checkpoint and history record.
+def thread_id_for(user_id: int) -> str:
+    return f"telegram_{user_id}"
+
+
 class TelegramChannel(Channel):
     name = "telegram"
     supports_streaming = False
@@ -41,21 +47,15 @@ class TelegramChannel(Channel):
     def __init__(self, owner_id: int) -> None:
         self._owner_id = owner_id
         self._bot: Bot | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
-    # Lifecycle — the host (main.py) owns the PTB Application; it calls
-    # attach() once the bot is live and the event loop is running.
+    # Lifecycle — TelegramHost owns the PTB Application; it calls attach()
+    # once the bot is live.
     # ------------------------------------------------------------------
 
     def attach(self, bot: Bot) -> None:
         self._bot = bot
-        self._loop = asyncio.get_running_loop()
         logger.info("TelegramChannel attached (owner_id=%d)", self._owner_id)
-
-    @property
-    def loop(self) -> asyncio.AbstractEventLoop | None:
-        return self._loop
 
     def _require_bot(self) -> Bot:
         if self._bot is None:
@@ -124,10 +124,9 @@ class TelegramChannel(Channel):
         except (TypeError, ValueError):
             return False
 
-    async def start(self, on_message) -> None:
-        """No-op: the PTB polling lifecycle is owned by the host. Inbound dispatch
-        runs through TelegramInboundRouter."""
-        logger.debug("TelegramChannel.start() is a no-op (host owns PTB lifecycle)")
+    @property
+    def owner_thread_id(self) -> str:
+        return thread_id_for(self._owner_id)
 
     # ------------------------------------------------------------------
     # Telegram-specific helpers used by the router / confirmation UI

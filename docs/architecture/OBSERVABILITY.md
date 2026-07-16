@@ -72,7 +72,7 @@ Source: built up across a turn by `observability.telemetry.record_turn_start` (a
 
 `cache_read_tokens` is the count of input tokens served from the provider's prompt cache. It is the signal for evaluating prompt-cache effectiveness — `cache_read_tokens / input_tokens` is the cache hit rate. Reads 0 when caching is not enabled or no cached prefix matched. Sourced from `response.usage_metadata.input_token_details.cache_read` for the langchain-google-genai backend; the field is `None`-safe at every level for providers that don't expose it.
 
-`no_action` is `true` iff `scope == "heartbeat"` and the final response begins with `[NO_ACTION]`. Detected from the response text in `ask_jarvis`'s `finally`.
+`no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: when the tick's `heartbeat_respond` ack is present, `no_action = not ack.notify`; only when the ack is missing does it fall back to checking whether the response text begins with `[NO_ACTION]`. Computed in `ask_jarvis`'s `finally`.
 
 ### `tool_calls.jsonl` — one record per tool invocation
 

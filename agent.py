@@ -20,6 +20,8 @@ from langgraph.prebuilt import tools_condition
 
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
+import heartbeat_state
+import turn_context
 
 # Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
 from observability import telemetry
@@ -105,10 +107,13 @@ class JarvisState(AgentState):
     # Added defensively: pre-existing checkpoints predate these fields, so
     # they are NotRequired and every reader uses state.get(..., default).
     # scope: last-write-wins (set once per thread at the call site).
-    # active_skills: persisted across turns via _merge_skills. NOT yet used to
-    # filter the tool surface — get_tools() still returns the full set.
+    # active_skills: persisted across turns via _merge_skills; filters the
+    # bound tool surface via registry.get_tools(scope, active_skills).
+    # heartbeat_due_tasks: which HEARTBEAT.md task blocks to inject this turn
+    # (heartbeat scope only). None = all. Overwritten every turn.
     scope: NotRequired[str]
     active_skills: NotRequired[Annotated[set[str], _merge_skills]]
+    heartbeat_due_tasks: NotRequired[list[str] | None]
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +151,7 @@ load_dotenv("/app/secrets/.env")
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY not found. Please check /app/secrets/.env")
 
-# Define the paths
-# DB_PATH was added to .gitignore in Phase 2 to prevent committing the database
+# LangGraph owns this path (see CLAUDE.md placement principle); gitignored.
 DB_PATH = "/app/jarvis_memory/threads.sqlite"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -317,7 +321,11 @@ def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
     return "--- Heartbeat activity today (Israel time) ---\n" + "\n".join(lines)
 
 
-def build_system_prompt(scope: str, active_skills: set[str]) -> str:
+def build_system_prompt(
+    scope: str,
+    active_skills: set[str],
+    due_tasks: list[str] | None = None,
+) -> str:
     """Assemble the system prompt for one model call, read fresh each call.
 
     Always: a [Current time]/[Active scope] envelope + SOUL.md (identity,
@@ -329,7 +337,9 @@ def build_system_prompt(scope: str, active_skills: set[str]) -> str:
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
       addressed) + yesterday's daily log (older days are reachable via
-      read_memory on demand).
+      read_memory on demand). When ``due_tasks`` is a list, only those task
+      blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
+      one-line note); None injects the full file.
     All files are read per turn (edits take effect next turn, no restart).
     """
     now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
@@ -348,6 +358,8 @@ def build_system_prompt(scope: str, active_skills: set[str]) -> str:
         parts.append(_HEARTBEAT_FRAMING)
         parts.append(load_or_blank(_HEARTBEAT_PROMPT_PATH))
         hb = load_or_blank(_HEARTBEAT_MD_PATH)
+        if hb and due_tasks is not None:
+            hb = heartbeat_state.filter_heartbeat_md(hb, due_tasks)
         if hb:
             parts.append(f"--- HEARTBEAT.md ---\n{hb}")
         chat = _load_recent_user_chat()
@@ -397,10 +409,11 @@ def _llm_node(state: JarvisState) -> dict:
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
+    due_tasks = state.get("heartbeat_due_tasks")
     bound_llm = llm.bind_tools(registry.get_tools(scope, active))
     try:
         response = bound_llm.invoke(
-            [SystemMessage(content=build_system_prompt(scope, active))]
+            [SystemMessage(content=build_system_prompt(scope, active, due_tasks))]
             + state["messages"]
         )
     except Exception as e:
@@ -423,9 +436,8 @@ def _tool_node(state: JarvisState) -> dict:
     ToolMessage per call, exceptions captured as an error ToolMessage so the
     model can recover rather than crashing the graph).
 
-    NOTE: activation does not change the bound tool set yet —
-    registry.get_tools() still returns the full set. This step only proves
-    the state-mutation path.
+    Activation takes effect the same turn: _llm_node re-binds
+    registry.get_tools(scope, active_skills) on its next invocation.
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
@@ -530,6 +542,7 @@ def ask_jarvis(
     media_attachments: list[dict] | None = None,
     scope: str = "user",
     turn_id: str | None = None,
+    heartbeat_due_tasks: list[str] | None = None,
 ) -> str:
     """
     Encapsulates the agent execution and parses complex LangChain message blocks into a clean string.
@@ -544,6 +557,9 @@ def ask_jarvis(
         turn_id: optional pre-minted turn identifier (uuid4 hex). If omitted,
             one is generated here. Propagated via TURN_ID ContextVar so the
             nodes and tool calls can stamp it on telemetry records.
+        heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
+            blocks injected into the system prompt to these task names.
+            None injects the full file. Overwritten in state every turn.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -556,6 +572,7 @@ def ask_jarvis(
         active_start = []
     turn_id = turn_id or uuid4().hex
     _tid_token = telemetry.TURN_ID.set(turn_id)
+    _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -632,14 +649,16 @@ def ask_jarvis(
             # Use HumanMessage to pass structured content to the LLM
             message = HumanMessage(content=content)
             events = agent_executor.stream(
-                {"messages": [message], "scope": scope},
+                {"messages": [message], "scope": scope,
+                 "heartbeat_due_tasks": heartbeat_due_tasks},
                 config,
                 stream_mode="values"
             )
         else:
             # Standard text-only message
             events = agent_executor.stream(
-                {"messages": [("user", user_input)], "scope": scope},
+                {"messages": [("user", user_input)], "scope": scope,
+                 "heartbeat_due_tasks": heartbeat_due_tasks},
                 config,
                 stream_mode="values"
             )
@@ -670,11 +689,58 @@ def ask_jarvis(
         try:
             end_snap = agent_executor.get_state(config)
             active_end = sorted((end_snap.values or {}).get("active_skills", set()))
+            end_messages = (end_snap.values or {}).get("messages", [])
         except Exception:
             active_end = active_start
-        no_action = scope == "heartbeat" and final_response.strip().startswith("[NO_ACTION]")
+            end_messages = []
+        # no_action mirrors delivery: the ack's notify flag is authoritative
+        # ("no message sent to Roi"), reply text only when the ack is missing.
+        no_action = False
+        if scope == "heartbeat":
+            ack = _ack_from_messages(end_messages)
+            if ack is not None:
+                no_action = not ack.get("notify")
+            else:
+                no_action = final_response.strip().startswith("[NO_ACTION]")
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
+        turn_context.CURRENT_SCOPE.reset(_scope_token)
+
+
+def _ack_from_messages(messages) -> dict | None:
+    """The ``heartbeat_respond`` payload from the last turn in ``messages``.
+
+    Walks the messages after the final HumanMessage (the turn boundary) and
+    returns the args of the last heartbeat_respond tool call in that slice —
+    a stale ack from an earlier tick is never picked up. None if absent.
+    """
+    last_human = None
+    for i, m in enumerate(messages):
+        if isinstance(m, HumanMessage):
+            last_human = i
+    if last_human is None:
+        return None
+
+    ack = None
+    for m in messages[last_human + 1:]:
+        for tc in getattr(m, "tool_calls", None) or []:
+            if tc.get("name") == "heartbeat_respond":
+                ack = tc.get("args") or {}
+    return ack
+
+
+def get_heartbeat_ack(thread_id: str) -> dict | None:
+    """The ``heartbeat_respond`` payload from a thread's LAST turn, or None.
+
+    Any failure degrades to None, never raises.
+    """
+    try:
+        snap = agent_executor.get_state({"configurable": {"thread_id": thread_id}})
+        messages = (snap.values or {}).get("messages", [])
+    except Exception:
+        logger.exception("get_heartbeat_ack: failed to read state for %s", thread_id)
+        return None
+    return _ack_from_messages(messages)
 
 
 def ask_jarvis_once(user_input: str) -> str:

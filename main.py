@@ -1,11 +1,8 @@
-import os
 import asyncio
 import logging
 import uvicorn
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 
@@ -14,7 +11,7 @@ from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
-from gateway.factory import build_telegram_stack, default_user_channel
+from gateway.factory import build_telegram_stack, default_outbox, default_owner_thread_id
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
 from tools.core import (
@@ -36,19 +33,13 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# 2. Load environment variables securely
+# 2. Load environment variables securely. Channel-specific config (bot token,
+# owner id) is read by the channel factory, not here.
 load_dotenv("/app/secrets/.env")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
-
-if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN not found in /app/secrets/.env")
-if not ALLOWED_USER_ID:
-    raise ValueError("ALLOWED_USER_ID not found in /app/secrets/.env")
 
 
 async def process_inbound_message(inbound: InboundMessage) -> str | None:
-    """Domain-level processing: chat history + agent call. No Telegram-specific parsing here."""
+    """Domain-level processing: chat history + agent call. No channel-specific parsing here."""
     command_reply = await try_handle_command(inbound)
     if command_reply is not None:
         await asyncio.to_thread(append_chat_log, "user", inbound.user_text, inbound.thread_id)
@@ -86,9 +77,9 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
 
 async def main() -> None:
     """
-    Starts both the Telegram bot and the FastAPI webhook server inside a single
-    asyncio event loop. This allows them to share the channel stack without
-    inter-process communication.
+    Starts the channel stack and the FastAPI webhook server inside a single
+    asyncio event loop, so they share the stack without inter-process
+    communication.
     """
     logger.info("Starting Jarvis...")
 
@@ -99,35 +90,32 @@ async def main() -> None:
     async def on_confirmation_outcome(system_text: str) -> None:
         """Feed a resolved confirmation back through the agent on the owner's
         thread so Jarvis acknowledges it conversationally, then reply."""
-        thread_id = f"telegram_{int(ALLOWED_USER_ID)}"
+        thread_id = default_owner_thread_id()
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
             reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
             if reply:
                 await asyncio.to_thread(append_chat_log, "assistant", reply, thread_id)
-                await default_user_channel().send_to_owner(reply)
+                # Conversational reply, already chat-logged — no notification event.
+                await default_outbox().notify_owner(reply)
         except Exception:
             logger.exception("Failed to deliver confirmation outcome")
 
-    # Build and wire the Telegram channel stack (channel + router + confirmation
-    # store/UI). Registers the default channel for proactive sends and the
-    # confirmation backend for destructive tools.
+    # Build and wire the channel stack (channel + router + confirmation
+    # store/UI + outbox + host). Registers the defaults for proactive sends
+    # and the confirmation backend for destructive tools; reads its own
+    # config env.
     stack = build_telegram_stack(
-        owner_id=int(ALLOWED_USER_ID),
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
+        log_sink=async_append_notification_log,
     )
 
-    # Notifications and confirmation outcomes go through the channel's
-    # owner-addressed methods.
+    # Media notifications go through the stack's Outbox (send + log-on-success).
     async def _llm_format(prompt: str) -> str:
         return await asyncio.to_thread(ask_jarvis_once, prompt)
 
-    notifier = MediaNotificationManager(
-        stack.channel,
-        llm_format=_llm_format,
-        log_notification=async_append_notification_log,
-    )
+    notifier = MediaNotificationManager(stack.outbox, llm_format=_llm_format)
 
     # FastAPI app wired to the shared notifier
     fastapi_app = create_webhook_app(notifier)
@@ -135,37 +123,27 @@ async def main() -> None:
         uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="warning")
     )
 
-    # Telegram bot using PTB's async context manager
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    # Slash commands flow through handle_text so the gateway's try_handle_command
-    # can short-circuit them before the agent — no separate CommandHandler needed.
-    application.add_handler(MessageHandler(filters.TEXT, stack.router.handle_text))
-    application.add_handler(MessageHandler(filters.PHOTO, stack.router.handle_photo))
-    application.add_handler(MessageHandler(filters.VIDEO, stack.router.handle_video))
-    application.add_handler(MessageHandler(filters.VOICE, stack.router.handle_voice))
-    application.add_handler(CallbackQueryHandler(stack.confirmation_ui.handle_callback))
+    # Init APScheduler and register the heartbeat interval job before the
+    # channel comes up, so an inbound turn can never observe a missing
+    # scheduler. Jobs don't run until scheduler.start() below.
+    HEARTBEAT_INTERVAL_HOURS = 1
+    scheduler = init_scheduler()
+    scheduler.add_job(
+        run_heartbeat,
+        IntervalTrigger(hours=HEARTBEAT_INTERVAL_HOURS),
+        id="heartbeat",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
 
-    async with application:
-        # Attach the live bot and bind the event loop — must happen inside
-        # async with, after the Application is initialized, so application.bot
-        # is ready. Then start the confirmation TTL sweeper.
-        stack.channel.attach(application.bot)
-        stack.store.bind_loop(asyncio.get_running_loop())
-        stack.store.start_sweeper()
-        await stack.channel.register_command_menu()
+    # Channel up: binds the outbox loop and starts inbound handling, so
+    # everything after this point (past-due reminders, scheduler jobs) can send.
+    await stack.start()
 
-        # Init APScheduler and register the heartbeat interval job
-        HEARTBEAT_INTERVAL_HOURS = 1
-        scheduler = init_scheduler()
-        scheduler.add_job(
-            run_heartbeat,
-            IntervalTrigger(hours=HEARTBEAT_INTERVAL_HOURS),
-            id="heartbeat",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-
+    try:
         # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md)
+        # Hold references to past-due fire tasks so they can't be GC'd mid-flight.
+        past_due_tasks: list[asyncio.Task] = []
         for event in _load_events().get("events", []):
             if event.get("type") != "reminder":
                 continue
@@ -181,23 +159,19 @@ async def main() -> None:
                 logger.info("Restored reminder %s for %s", event["id"], fire_at_dt)
             else:
                 # Past-due: fire_reminder annotates the message with the original time
-                asyncio.create_task(fire_reminder(event))
+                past_due_tasks.append(asyncio.create_task(fire_reminder(event)))
                 logger.info("Past-due reminder %s — firing with original time annotation", event["id"])
 
         scheduler.start()
         logger.info("Scheduler started. Heartbeat interval: %dh.", HEARTBEAT_INTERVAL_HOURS)
-
-        await application.start()
-        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        logger.info("Jarvis is online. Telegram polling active. Webhook server on :8000.")
+        logger.info("Jarvis is online. Channel active. Webhook server on :8000.")
 
         # server.serve() blocks until SIGINT/SIGTERM, then exits gracefully
         await webhook_server.serve()
-
-        logger.info("Shutdown signal received. Stopping Telegram polling...")
+    finally:
+        logger.info("Shutdown signal received. Stopping channel...")
         scheduler.shutdown(wait=False)
-        await application.updater.stop()
-        await application.stop()
+        await stack.stop()
 
     logger.info("Jarvis shut down cleanly.")
 

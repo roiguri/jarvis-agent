@@ -45,6 +45,16 @@ def _get_safe_path(filename: str) -> str:
     return safe_path
 
 
+def _canonical_name(filename: str) -> str:
+    """The MEMORY_DIR-relative form of ``filename``.
+
+    Protection checks must compare against this, not the raw argument —
+    aliases like './SOUL.md' or 'daily/../SOUL.md' resolve to a protected
+    file without spelling its name. Raises ValueError like _get_safe_path.
+    """
+    return os.path.relpath(_get_safe_path(filename), MEMORY_DIR)
+
+
 # A preview is surfaced to the owner in a single confirmation prompt and is
 # also echoed into the LLM context several times, so it must stay bounded
 # regardless of which channel renders it. The cap is intentionally
@@ -137,11 +147,23 @@ def write_memory(filename: str, content: str) -> str:
 
     SOUL.md is protected: writing to it requests owner confirmation (showing
     a diff of the change) and only proceeds after Roi approves.
+    HEARTBEAT.md cannot be written directly — change tasks via
+    manage_heartbeat_task.
 
     Args:
         filename: File name or relative path (e.g., 'user_prefs.txt', 'daily/daily_2026-05-08.md').
         content: The exact text to save.
     """
+    try:
+        filename = _canonical_name(filename)
+    except ValueError as e:
+        return f"Error: {e}"
+    if filename == "HEARTBEAT.md":
+        return (
+            "Error: HEARTBEAT.md is managed through manage_heartbeat_task — "
+            "use it to create, update or delete heartbeat tasks (validated "
+            "and owner-confirmed). Direct writes are not allowed."
+        )
     if filename == "SOUL.md":
         from gateway.factory import get_confirmation
 
@@ -247,12 +269,13 @@ def delete_memory(filename: str) -> str:
     Args:
         filename: The name of the file to delete (e.g., 'old_notes.txt').
     """
-    if filename in _PROTECTED_FILES:
-        return f"Error: '{filename}' is protected and cannot be deleted."
     try:
-        path = _get_safe_path(filename)
+        filename = _canonical_name(filename)
     except ValueError as e:
         return f"Error: {e}"
+    if filename in _PROTECTED_FILES:
+        return f"Error: '{filename}' is protected and cannot be deleted."
+    path = _get_safe_path(filename)
     if not os.path.exists(path):
         return f"Memory file '{filename}' does not exist."
 
