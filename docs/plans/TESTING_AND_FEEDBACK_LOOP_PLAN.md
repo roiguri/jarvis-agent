@@ -449,3 +449,56 @@ not by themselves reduce a single token. The token wins are Phase 1 (the leak, ~
 then Phase 5's re-pointed roadmap — specifically WS7, which owns the 63% (§0.1). This plan's
 value is that those get chosen on evidence, and that the next "verified in production" claim is
 falsifiable.
+
+---
+
+## 5. Verification log
+
+Deploys are manual (the owner restarts; see CLAUDE.md), so every "after" reading lands hours or
+days after the commit. Record them here rather than trusting recall — WS1 was called "verified
+in production" from memory, and §0.2 is what that was worth.
+
+**Re-measure with** `observability.usage.summarize_usage(group_by="scope")` for the token rows;
+join `turns.jsonl` ↔ `tool_calls.jsonl` on `turn_id` for the per-tool counts (`scripts/trace.py`
+does the join for a single turn).
+
+### Baseline — measured 2026-07-16, pre-deploy
+
+| Metric | Value |
+|---|---|
+| heartbeat rows/day (model ticks) | 18 |
+| heartbeat input tokens/day | 1.60M |
+| LLM calls per tick | ~3.8 |
+| worst no-op tick | 214,008 input / 5 calls |
+| `get_chat_history` on heartbeat ticks | 1,229 / 1,290 |
+| `read_memory` per tick | 3.1 |
+| `write_memory` per tick | 2.3 |
+| gate skip rate | 22% (35 skipped / 127 ran, 7d journal) |
+| heartbeat share of all input | 83% (88.0M vs 17.9M user) |
+
+### Phase 1a — drop the redundant `get_chat_history` instruction
+
+Committed: _pending_ · Deployed: _pending_
+
+- [ ] `get_chat_history` gone from heartbeat ticks in `tool_calls.jsonl` (was 1,229/1,290)
+- [ ] daily log's `## Conversations (today)` still populated — now from the injected slice
+- [ ] LLM calls/tick down from ~3.8
+- [ ] If the tool call *persists* with no instruction asking for it, that is in-context
+      imitation from the thread's own history — the case for an explicit negative instruction,
+      earned by evidence rather than guessed at. Not before.
+
+### Phase 1b — inject due tasks' notes files
+
+Committed: _pending_ · Deployed: _pending_
+
+- [ ] `read_memory` per tick down from 3.1
+- [ ] heartbeat prompt grew only a few hundred chars
+- [ ] notes files still being *written* (step 3 unaffected — this removes reads only)
+
+### Phase 1c — daily log off the hourly path
+
+Committed: _pending_ · Deployed: _pending_
+
+- [ ] `write_memory` per tick down from 2.3
+- [ ] a full day's log still lands, with both `## Conversations (today)` and
+      `## Heartbeat Activity` populated
