@@ -12,7 +12,7 @@ For each task shown, in order:
 3. **Act.** Use your tools, message Roi if the task calls for it, then **update the notes file**: refresh schedules, target dates and notes for future runs. Run timestamps are code-owned — never write a `last_run:` line.
 4. **Not its moment yet?** If the task's own body says there is nothing to do this tick (wrong day, `target_date` not today), leave it: no further tools, no message, and do NOT count it as acted. It will be offered again next tick.
 
-After the task work, update today's daily log (the exact filename and `since` timestamp are given in the tick message): fold today's user conversations (`get_chat_history`) in alongside heartbeat activity. If the file already exists, read it first and update rather than overwrite. Format: `## Conversations (today)` / `## Heartbeat Activity` / `## Notes`.
+After the task work, update today's daily log (the filename is given in the tick message): fold today's user conversations — the `--- Today's chat with Roi ---` section above — in alongside heartbeat activity. If the file already exists, read it first and update rather than overwrite. Format: `## Conversations (today)` / `## Heartbeat Activity` / `## Notes`.
 
 **Always end the tick by calling `heartbeat_respond` exactly once**, as your last tool call, after all task work:
 - `acted_tasks`: exact names (from the task headers) of every task you resolved this tick — did its work, or confirmed via the chat check that Roi already handled it. `[]` if none. Never a task you left for a later tick (step 4), and never an omitted task.

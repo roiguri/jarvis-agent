@@ -72,14 +72,12 @@ async def run_heartbeat() -> None:
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
     today = now_israel.strftime("%Y-%m-%d")
-    today_start = now_israel.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
     prompt = (
         "Run the scheduled heartbeat check now. Work the due tasks shown in "
         "the HEARTBEAT.md section of your context, following the heartbeat "
         "rules above it.\n\n"
-        f"Today's daily log file: daily/daily_{today}.md. For today's chat "
-        f"use get_chat_history(50, since='{today_start}')."
+        f"Today's daily log file: daily/daily_{today}.md."
     )
 
     logger.info("Heartbeat: running agent turn")
