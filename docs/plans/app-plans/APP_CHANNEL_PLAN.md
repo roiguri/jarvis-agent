@@ -47,13 +47,27 @@ edit** — where it disagrees with this codebase, the step documents record the 
 | File | What it is |
 |---|---|
 | `original_app_plan.md` | The approved Track B plan (2026-07-12), phases B0–B6. Upstream's *sequencing*; the steps above are the conceptual split, and the phases map across them |
-| `contract.md` | Wire contract **digest**. Track A's `JARVIS_APP_ARCHITECTURE.md` §5 wins on disagreement |
+| `contract.md` | The wire contract, **generated from the hub's Pydantic models** — the single source of truth for payload *shape*. Verified current at `contract_version = f1633277132cbedf`, which the live hub reports on `GET /v1/health`. B0 records the pin; `HubClient` warns (does not hard-fail) on mismatch at startup |
 | `fake_agent.py` | A fake **agent**, not a fake hub — it long-polls a *running* hub. Its value here is as the reference implementation of the poll loop step 3 must write |
 
-**Absent, and worth requesting from the app author:** `JARVIS_APP_ARCHITECTURE.md` (the contract
-authority) and `JARVIS_APP_IMPL.md` (owns the cross-track build order, which
-`original_app_plan.md` line 85 deliberately points at rather than copies). Neither blocks the
-first phases; both are needed once confirmations and rich payloads start.
+**Contract authority (app-author handover, 2026-07-20).** `contract.md` *is* the shape authority
+— it is generated, not a digest, superseding `original_app_plan.md` line 29's pointer at a
+`JARVIS_APP_ARCHITECTURE.md §5` we never received. The cross-track build order that line 85
+deferred to `JARVIS_APP_IMPL.md` is likewise resolved: the handover states `B0 → B1 → B1.5 → B3`
+is the whole of what is end-to-end verifiable today (see below), so neither absent doc blocks us.
+
+**The honest boundary — don't build ahead of the phone.** The hub validates more than the phone
+can render: `blocks` have no renderer or action path (B2/B4 wait), chips fan out with no consumer
+(B5 waits), and there are no attachment/apps endpoints yet (B1.6/B6 wait). Buildable and
+verifiable now: **B0, B1, B1.5, B3.** Three B1 requirements live in the plan prose, not the
+schema — concurrent poll loop, drain on SIGTERM, hub-down backoff 1→60s — and `fake_agent.py`
+demonstrates the first two.
+
+**Our own re-validation duty.** The handover cannot see this repo, so it explicitly asks that
+every agent-internal reference in `original_app_plan.md` (`store.py:211`, `main.py:102`, the
+`Channel` ABC, `ask_jarvis`, line numbers) be re-checked against current code before B1. That is
+exactly the delta table in [02_MULTI_CHANNEL_SUPPORT.md](02_MULTI_CHANNEL_SUPPORT.md) — the
+re-validation is already underway there, not a new task.
 
 ---
 

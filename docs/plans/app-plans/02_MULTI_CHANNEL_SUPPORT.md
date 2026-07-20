@@ -70,6 +70,17 @@ outage means either a growing retry backlog or silently missed briefings. Telegr
 this exposure. Mitigation is cheap and analysed in open question 2; it is deliberately not built
 now, and the risk is near-zero while `telegram` remains the default.
 
+**When can the default flip to `app`?** Two conditions, both temporary (app-author handover,
+2026-07-20). Until then `telegram` stays the proactive default:
+
+- *Delivery is already safe.* App proactive delivery is currently **foreground-only** — the hub
+  *queues* a proactive message and delivers it when the app next opens; it does **not** drop.
+  So this is a timeliness limit, not a data-loss one.
+- *Timeliness is the gate.* A queued heartbeat digest read hours later is still useful; a queued
+  reminder ("leave now") is worthless. So the flip is safe for **non-time-sensitive** events
+  before push lands, and unsafe for **time-sensitive** ones (reminders) until it does. Push (FCM
+  tickle) is on the Track A roadmap. This is the same per-event-type axis as open question 2.
+
 **Confirmations still broadcast** (upstream B2, first-resolve-wins): the *prompt* goes to every
 channel because the owner may be at any device, but the *acknowledgement* follows the channel
 that answered. That is the reactive rule, and it fixes the asymmetry upstream flagged as a
