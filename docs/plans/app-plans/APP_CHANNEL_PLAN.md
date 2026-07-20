@@ -13,11 +13,14 @@ of them start. Technical detail and findings live in the step documents.
 
 | # | Step | Document | What it touches |
 |---|---|---|---|
-| 1 | Staging environment | `01_STAGING_ENVIRONMENT.md` | `config.py`, `main.py`, path constants; a second service |
+| 1 | Staging environment | [../STAGING_AND_DEPLOY.md](../STAGING_AND_DEPLOY.md) | `config.py`, `main.py`, path constants; a second service |
 | 2 | Multi-channel support | `02_MULTI_CHANNEL_SUPPORT.md` | **Existing** gateway/agent code — the owner-addressing seam |
 | 3 | Adding the new channel | `03_APP_CHANNEL.md` | **New** `gateway/channels/app/` |
 
-None written yet.
+Step 1 is **not owned by this plan.** Staging and deploy discipline are general infrastructure —
+the app channel is their first beneficiary, not their reason — so they live outside `app-plans/`
+and proceed on their own schedule. This plan consumes them as a dependency. Steps 2 and 3 are
+not written yet.
 
 **Dependencies.** 1 and 2 are independent and can proceed in either order — staging is about
 *where state lives*, step 2 is about *how the gateway addresses the owner*; they share no code.
@@ -71,9 +74,12 @@ useful — this table is how to read one in terms of the other.
 Track A's hub **exists and runs**, and per the app author B1, B1.5 and B3 are implementable now.
 What stands in the way:
 
-1. **Staging** (step 1). The upstream plan verifies every phase against the live agent
-   (`original_app_plan.md` line 91). B3 is the phase that starts pushing real heartbeat and
-   reminder traffic to a new device.
+1. **Staging** — [../STAGING_AND_DEPLOY.md](../STAGING_AND_DEPLOY.md). The upstream plan
+   verifies every phase against the live agent (`original_app_plan.md` line 91). B3 is the phase
+   that starts pushing real heartbeat and reminder traffic to a new device. That plan's open
+   question 5 covers the hub-side consequence: the app channel is *outbound*, so it binds no
+   port and cannot collide the way the webhook does — but the hub is one-bot-one-user, so once
+   the channel is live in prod, a staging agent polling the same hub would fight over updates.
 2. **Three env vars** in `/app/secrets/.env` — `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`,
    `APP_OWNER_USER_ID`. Owner-supplied.
 
