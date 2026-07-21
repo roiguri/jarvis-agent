@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import subprocess
 import uvicorn
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -75,13 +77,69 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
     return final_response
 
 
+def _running_provenance() -> dict:
+    """Git identity of the tree this process is running from — for the startup
+    log, so the journal always answers 'what code is prod on?'. Never raises:
+    any failure (git absent, not a repo) degrades to 'unknown' rather than
+    blocking startup. Returns fields; main() formats them.
+
+    (instance name + memory/data roots join this in slices 2-3, once config.py
+    exists — see docs/plans/STAGING_AND_DEPLOY.md.)"""
+    repo = os.path.dirname(os.path.abspath(__file__))
+
+    def _git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", repo, *args],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+
+    try:
+        # --exact-match exits non-zero (empty stdout) when HEAD is not on a tag.
+        tag = _git("describe", "--tags", "--exact-match", "HEAD")
+        return {
+            "branch": _git("rev-parse", "--abbrev-ref", "HEAD") or "unknown",
+            "sha": _git("rev-parse", "--short", "HEAD") or "unknown",
+            "dirty": bool(_git("status", "--porcelain")),
+            "subject": _git("log", "-1", "--format=%s") or "unknown",
+            "date": _git("log", "-1", "--format=%cs") or "unknown",  # %cs = YYYY-MM-DD
+            "deploy": tag if tag.startswith("deploy-") else "none",
+        }
+    except Exception:
+        return {"branch": "unknown", "sha": "unknown", "dirty": False,
+                "subject": "unknown", "date": "unknown", "deploy": "none"}
+
+
+def _provenance_block(p: dict) -> str:
+    """Multi-line, labelled startup readout — legible in the journal/terminal tail.
+
+    STABLE LOG ANCHOR: the ``Running code:`` header is a contract, not just a
+    label — ``scripts/jrestart.sh`` greps it to capture the block, and it is the
+    last startup line by design. Do not rename it or move it off the tail;
+    adding labelled rows below is fine (slices 2-3 do exactly that)."""
+    sha = p["sha"] + (" (uncommitted)" if p["dirty"] else "")
+    return (
+        "Running code:\n"
+        f"    branch : {p['branch']} @ {sha}\n"
+        f"    commit : {p['subject']} — {p['date']}\n"
+        f"    deploy : {p['deploy']}"
+    )
+
+
 async def main() -> None:
     """
     Starts the channel stack and the FastAPI webhook server inside a single
     asyncio event loop, so they share the stack without inter-process
     communication.
     """
+    provenance = _running_provenance()
     logger.info("Starting Jarvis...")
+    # Compact identity early, so a startup that crashes before 'online' still
+    # says what code it was. The full block is logged last (tail-visible).
+    logger.info(
+        "Running: %s @ %s%s",
+        provenance["branch"], provenance["sha"],
+        " (uncommitted)" if provenance["dirty"] else "",
+    )
 
     for log_path in (CHAT_LOG, NOTIFICATION_LOG, TURNS_LOG, TOOL_CALLS_LOG):
         trim_log(log_path)
@@ -165,6 +223,9 @@ async def main() -> None:
         scheduler.start()
         logger.info("Scheduler started. Heartbeat interval: %dh.", HEARTBEAT_INTERVAL_HOURS)
         logger.info("Jarvis is online. Channel active. Webhook server on :8000.")
+        # The full provenance block is the LAST startup line, so `journalctl -n`/
+        # `systemctl status` show it in the tail without scrolling past boot noise.
+        logger.info("%s", _provenance_block(provenance))
 
         # server.serve() blocks until SIGINT/SIGTERM, then exits gracefully
         await webhook_server.serve()

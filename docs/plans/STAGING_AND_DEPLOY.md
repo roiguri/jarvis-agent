@@ -25,8 +25,10 @@ Work down it. **Bold** items are yours (I can't restart the service or talk to B
 - [ ] Merge to `main`; **restart prod**; confirm the tick behaves
 
 ### Slice 1 — prod says what it is running
-- [ ] `main.py`: log instance, branch, SHA, deploy-tag status at startup
-- [ ] **Restart prod**, read the line in `journalctl`
+- [x] `main.py`: log git provenance at startup — a multi-line `Running code:` block (branch, sha,
+      commit subject + date, deploy-tag) as the last startup line, plus a compact early one-liner
+- [ ] **Restart prod**, read the block in `journalctl`/`systemctl status` (expect `branch : main …`)
+- [ ] (instance + memory/data roots join the block at slice 2; heartbeat/webhook/reminders at slice 3)
 
 ### Slice 2 — local testing stops touching prod
 - [ ] `config.py`: `JARVIS_INSTANCE`, `JARVIS_MEMORY_DIR`, `JARVIS_DATA_DIR` (+ derived paths)
@@ -121,13 +123,38 @@ would be worse than finishing it first.
 
 ### Slice 1 — prod says what it is running
 
-One addition to `main.py`: log instance, branch, SHA, and whether HEAD is a deploy tag.
+`main.py` logs git provenance at startup via `_running_provenance()` (fields) + `_provenance_block()`
+(formatting). Two emissions: a **compact one-liner right after `Starting Jarvis...`** (so a boot
+that crashes before "online" still says what code it was), and the **full multi-line block as the
+LAST startup line** (so `journalctl -n`/`systemctl status` show it in the tail without scrolling
+past boot noise). The block:
 
-*Delivers:* `journalctl` always answers "what is prod actually running?" The 2026-07-20 incident
-would have been visible.
-*Risk:* essentially zero — pure logging, no config, no new failure mode. Deliberately first, so
-the process gets rehearsed on something that cannot break.
-*Revert:* delete the lines.
+```
+Running code:
+    branch : main @ 5dc1842
+    commit : feat(staging): log git provenance at startup — 2026-07-21
+    deploy : none
+```
+
+The commit subject + date make it human-readable ("is this the fix I meant to deploy?"), not just
+a SHA. Every `git` call is wrapped and degrades to `unknown` rather than blocking startup.
+
+*Scope note:* **instance name and memory/data roots are deliberately not here** — they are
+`config.py` concepts (slice 2); `heartbeat/webhook/reminders` state joins at slice 3. The block is
+designed to grow a row per slice. The `deploy` field reads `none` until slice 4 creates `deploy-*`
+tags; it is scaffolding that lights up then (and becomes the log-loudly warning). The branch/SHA
+carry slice 1's value: the 2026-07-20 incident (prod tree on the wrong branch) would have been
+visible immediately.
+
+*Terminal note:* `systemctl restart` cannot stream a service's own output to the terminal (systemd
+routes it to the journal), so "see it on restart" means peeking the tail. A `jrestart` shell
+function (`systemctl restart` + `journalctl … | grep -A3 "Running code:"`) prints the block in one
+command.
+
+*Delivers:* `journalctl` always answers "what is prod actually running?"
+*Risk:* essentially zero — pure logging, no config, no new failure mode, and git failure can't
+block boot. Deliberately first, so the process gets rehearsed on something that cannot break.
+*Revert:* delete the two helpers and their log lines.
 
 ### Slice 2 — local testing stops touching prod
 
