@@ -44,6 +44,11 @@ hardcoded thread-prefix assume exactly one channel exists.
 - [ ] Verify: heartbeat↔user awareness unchanged; prompts byte-identical with one channel
 - [ ] **Restart prod**; confirm a heartbeat tick still sees today's chat
 
+### Phase 5 — concurrent-turn safety (independent; parallelizable)
+- [ ] 5a — a keyed lock serializing user turns against each other, heartbeat exempt
+- [ ] 5b — verify a second user turn waits for the first; a heartbeat tick still runs concurrently
+- [ ] **Restart prod**; two fast messages reply in order, tick unaffected
+
 ---
 
 ## Decisions
@@ -231,6 +236,32 @@ mechanism carries heartbeat↔user awareness today.
 
 *Verify:* heartbeat↔user awareness unchanged; with one channel the assembled prompts are
 byte-identical.
+
+---
+
+## Phase 5 — concurrent-turn safety
+
+**Independent of phases 1–4 — parallelizable.** It touches neither routing, rendering, nor
+context injection; it can proceed alongside them in any order.
+
+A second user channel makes it possible for the same person to have two turns in flight at once
+(`telegram_<id>` and `jarvis-app_<id>`). LangGraph thread state is isolated per thread, but the
+surfaces a turn *writes* are not: memory files, `scheduled_events.json`, and the confirmation
+store are shared, and `ask_jarvis` has no lock. Upstream accepted this for v1 when a second user
+channel was hypothetical; step 3 makes it real, so it is made safe here — in the step that owns
+multi-channel safety — rather than bolted onto the new channel.
+
+**5a — a keyed lock, heartbeat exempt.** Serialize *user* turns against each other; leave
+heartbeat concurrent. Not a global `ask_jarvis` lock — that would make a chat message wait behind
+a 90s tick. The key is the point: user threads share one lock, heartbeat holds none.
+
+**Worth doing before the app exists.** Two fast Telegram messages can already overlap on one
+thread today, so the interleaved-write exposure is latent, not new — the second channel only
+widens it. That is why this is placed as its own phase with real verification, not a footnote to
+step 3.
+
+*Verify:* a second user turn waits for the first to finish; a heartbeat tick still runs
+concurrently with a user turn (the behavior that must **not** regress).
 
 ---
 
