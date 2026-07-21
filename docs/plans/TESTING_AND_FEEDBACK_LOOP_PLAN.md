@@ -507,7 +507,31 @@ Two things this cost, both worth generalising:
 Fixed at the docstring instead (`tools/core/history.py`). Re-measure after the next deploy;
 an explicit negative instruction in `heartbeat.md` remains unearned.
 
-- [ ] `get_chat_history` per heartbeat tick, after the docstring fix (was 0.7/tick post-a8e1b70)
+Docstring fix: `0191dc4` · Deployed: 2026-07-21 06:11 UTC. Verified in the running tree (the `Z`
+example is gone; docstring now reads `+03:00`). **Docstring fix necessary but not sufficient.**
+The post-fix 07:11 tick (turn `c63ba0d6`) still called `get_chat_history`, and the heartbeat
+checkpoint (`threads.sqlite`, read-only via `SqliteSaver`) showed its args were the exact
+redundant `since:'2026-07-21T00:00:00Z'` pattern — with **three identical Z-pattern calls in the
+50-message window.** That is in-context imitation: with the docstring corrected and code/prompts
+grep-clean, the polluted thread history was the only remaining driver, and the call fired ~every
+tick, re-seeding its own window (self-perpetuating, would not self-clear).
+
+**Remedy applied: reset the heartbeat checkpoint, not a negative prompt.** Cleared the `heartbeat`
+thread 2026-07-21 07:44 UTC (`DELETE ... WHERE thread_id='heartbeat'`) to flush the examples;
+durable state (state.json, notes files, scheduled_events.json) lives outside the checkpoint and
+was untouched, as was the telegram user thread. A negative instruction was deliberately *not*
+added — it would guess at an unobserved driver (spontaneous re-derivation), and adding tick-prose
+to steer a tool is the anti-pattern this episode already taught. Measure the post-07:44 ticks via
+the `heartbeat-assert` tool-call profile: **~0 → done; non-zero → the negative instruction is then
+earned.**
+
+**Merge decision (2026-07-21).** `fix/heartbeat-cost` merged to `main` before this reads ~0. Both
+code commits are strict improvements over `main` regardless of the metric (`a8e1b70` removes an
+instruction; `0191dc4` also fixes the `Z` correctness bug), so `get_chat_history → 0` is a
+fix-forward cost target, not a merge blocker. Slice 0 of `STAGING_AND_DEPLOY.md` proceeds;
+tracking continues here.
+
+- [ ] `get_chat_history` per heartbeat tick, post-07:44 reset (was 0.7/tick post-a8e1b70)
 - [ ] mean input/tick vs the 114.8k reading above
 
 ### Phase 1b — inject due tasks' notes files
