@@ -478,14 +478,37 @@ does the join for a single turn).
 
 ### Phase 1a — drop the redundant `get_chat_history` instruction
 
-Committed: _pending_ · Deployed: _pending_
+Committed: `a8e1b70` · Deployed: 2026-07-20 16:05 UTC
 
-- [ ] `get_chat_history` gone from heartbeat ticks in `tool_calls.jsonl` (was 1,229/1,290)
-- [ ] daily log's `## Conversations (today)` still populated — now from the injected slice
-- [ ] LLM calls/tick down from ~3.8
-- [ ] If the tool call *persists* with no instruction asking for it, that is in-context
-      imitation from the thread's own history — the case for an explicit negative instruction,
-      earned by evidence rather than guessed at. Not before.
+- [x] ~~`get_chat_history` gone from heartbeat ticks~~ — **failed.** 5 of the 7 post-deploy
+      ticks still call it (07-20 17:05, 18:05; 07-21 03:05, 04:05, 05:05).
+- [x] daily log's `## Conversations (today)` still populated — yes, `daily_2026-07-20.md`
+      has post-deploy entries (17:38).
+- [ ] LLM calls/tick down from ~3.8 — no movement: 5.4 → 5.0 mean (n=7, error turns
+      excluded). Mean input/tick 102.5k → 114.8k, i.e. no measurable win.
+
+**The premise was wrong.** The checkbox above assumed the only thing asking for the call was
+the tick-message instruction this phase removed, with in-context imitation as the fallback
+explanation. Neither was the driver. `get_chat_history`'s own docstring carried
+`Example: '2026-05-08T00:00:00Z' for today's conversations only` — bound into every tick via
+`llm.bind_tools()`, advertising exactly the redundant use. The model's calls reproduce that
+example's shape (`since='2026-07-21T00:00:00Z'`, today at midnight, `Z`-suffixed), not the
+removed instruction's (`+03:00`, Israel midnight).
+
+Two things this cost, both worth generalising:
+
+- Prompt prose was edited to change tool-usage behaviour. CLAUDE.md already states tool usage
+  is driven by docstrings; the phase was scoped without grepping the tool surface for what
+  else mentioned the call. `grep -rn "get_chat_history" prompts/ agent.py heartbeat.py` returns
+  nothing — the docstring was the *only* remaining driver, and was never in scope.
+- The `Z` example was also a live correctness bug: days here are Israel time, so a UTC-midnight
+  bound silently drops 00:00–03:00 Israel from every fold-in.
+
+Fixed at the docstring instead (`tools/core/history.py`). Re-measure after the next deploy;
+an explicit negative instruction in `heartbeat.md` remains unearned.
+
+- [ ] `get_chat_history` per heartbeat tick, after the docstring fix (was 0.7/tick post-a8e1b70)
+- [ ] mean input/tick vs the 114.8k reading above
 
 ### Phase 1b — inject due tasks' notes files
 

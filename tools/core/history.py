@@ -158,19 +158,25 @@ def get_notification_history(limit: int = 20) -> str:
 @tool_register(namespace="core")
 @tool
 def get_chat_history(limit: int = 20, since: str | None = None) -> str:
-    """Read recent chat exchanges between Roi and Jarvis.
+    """Read chat exchanges between Roi and Jarvis. Use when you need history
+    from earlier days — today's chat is already in context.
 
     Args:
         limit: max number of entries to return.
-        since: optional ISO 8601 UTC timestamp — return only entries at or after this time.
-               Example: '2026-05-08T00:00:00Z' for today's conversations only.
+        since: optional ISO 8601 timestamp, offset required. Days are Israel
+               time: '2026-05-08T00:00:00+03:00', not '...Z' (starts at 03:00).
     """
     if since is not None:
         # Time-filtered path: read all entries and filter, then take last `limit`.
         try:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
         except ValueError:
-            return f"Invalid 'since' timestamp: {since!r}. Use ISO 8601 UTC, e.g. '2026-05-08T00:00:00Z'."
+            return f"Invalid 'since' timestamp: {since!r}. Use ISO 8601 with an offset, e.g. '2026-05-08T00:00:00+03:00'."
+        if since_dt.tzinfo is None:
+            # Log entries are offset-aware; comparing them against a naive
+            # bound raises TypeError mid-scan. Reject with the offset spelled
+            # out rather than guessing which day boundary was meant.
+            return f"Ambiguous 'since' timestamp: {since!r} has no UTC offset. Use e.g. '{since}+03:00' for Israel time."
         if not os.path.exists(CHAT_LOG):
             return "No chat history found."
         records = []
