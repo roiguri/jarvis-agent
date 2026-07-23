@@ -10,8 +10,8 @@ blocks (-> <pre> / <pre><code class="language-X">). Every other line is
 HTML-escaped verbatim — no headings/rules/emphasis/links — so opaque
 confirmation descriptions that legitimately contain '#', '---', '*', '_'
 (e.g. GitHub issue references) are shown literally and never mangled. The
-fence loop intentionally mirrors gateway/markdown_to_html.convert() rather
-than importing it, to keep the Telegram channel self-owned (see issue #48).
+fence loop intentionally mirrors markdown_to_html.convert() rather
+than importing it, to keep the two renderers independent (see issue #48).
 """
 
 import html

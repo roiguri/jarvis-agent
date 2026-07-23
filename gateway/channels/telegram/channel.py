@@ -14,7 +14,7 @@ from telegram.error import BadRequest
 
 from gateway.base import Channel
 from gateway.commands import list_commands as _list_slash_commands
-from gateway.markdown_to_html import convert as md_to_html
+from gateway.channels.telegram.markdown_to_html import convert as md_to_html
 
 logger = logging.getLogger(__name__)
 
