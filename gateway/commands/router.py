@@ -49,8 +49,8 @@ def command(name: str, description: str) -> Callable[[Handler], Handler]:
 
 
 def list_commands() -> list[Command]:
-    """All registered commands, sorted by name. Used by /help and by the
-    Telegram channel to populate the autocomplete menu."""
+    """All registered commands, sorted by name. Used by /help and by channels
+    to populate their command menu."""
     return [_COMMANDS[k] for k in sorted(_COMMANDS)]
 
 

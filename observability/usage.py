@@ -223,7 +223,7 @@ def _row_line(r: dict) -> str:
 
 
 def format_usage_table(rows: list[dict], title: str = "") -> str:
-    """Render rollup rows as a Telegram-friendly compact summary:
+    """Render rollup rows as a compact text summary:
 
         *Title*
         Total: N turns · IN → OUT tokens · $USD [· extras]

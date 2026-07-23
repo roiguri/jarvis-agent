@@ -4,7 +4,7 @@ Channel-agnostic confirmation store.
 Owns all bookkeeping for Plane 3: the pending-action table, TTL eviction, running
 the action on approval, and dispatching the outcome. It delegates rendering to a
 ConfirmationUI and posts a final outcome line to the owner via the Outbox. It
-does not know about Telegram, inline keyboards, or the agent.
+does not know about any channel, its native UI, or the agent.
 """
 
 import asyncio
