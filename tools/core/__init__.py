@@ -5,7 +5,6 @@ Re-exports the public surface of the core modules so callers can import from
 """
 
 from tools.core.memory import (
-    MEMORY_DIR,
     _get_safe_path,
     write_memory,
     read_memory,
@@ -32,7 +31,6 @@ from tools.core.activate_skill import activate_skill, deactivate_skill
 from tools.core.heartbeat import heartbeat_respond, manage_heartbeat_task
 
 __all__ = [
-    "MEMORY_DIR",
     "_get_safe_path",
     "write_memory",
     "read_memory",

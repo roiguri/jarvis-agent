@@ -157,8 +157,8 @@ if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY not found. Please check /app/secrets/.env")
 
 # LangGraph owns this path (see CLAUDE.md placement principle); gitignored.
-DB_PATH = "/app/jarvis_memory/threads.sqlite"
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+# config creates MEMORY_DIR at import, so no makedirs is needed here.
+DB_PATH = os.path.join(config.MEMORY_DIR, "threads.sqlite")
 
 # Initialize the LLM
 llm = ChatGoogleGenerativeAI(
@@ -173,7 +173,7 @@ llm = ChatGoogleGenerativeAI(
 # SOUL.md (user-curated identity) is read from the memory dir. AGENTS.md
 # (developer-owned operating rules) is committed code under prompts/ and is
 # never in the Jarvis-writable memory surface.
-_MEMORY_DIR = "/app/jarvis_memory"
+_MEMORY_DIR = config.MEMORY_DIR
 _DAILY_DIR = os.path.join(_MEMORY_DIR, "daily")
 _SOUL_PATH = os.path.join(_MEMORY_DIR, "SOUL.md")
 _USER_PATH = os.path.join(_MEMORY_DIR, "USER.md")

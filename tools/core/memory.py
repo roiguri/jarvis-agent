@@ -6,6 +6,7 @@ import threading
 
 from langchain_core.tools import tool
 
+import config
 from tools.registry import tool_register
 
 # Serializes concurrent memory writes. Jarvis's racing writers are the user
@@ -17,7 +18,8 @@ from tools.registry import tool_register
 # /app/jarvis_data/locks/ — a threading.Lock does not cross processes.
 _WRITE_LOCK = threading.Lock()
 
-MEMORY_DIR = "/app/jarvis_memory"
+# Sandbox root is read from config per call (config.MEMORY_DIR), not bound to a
+# module constant here — that keeps the seam a test can repoint with one setattr.
 
 # Files the agent cannot delete — structural/identity files.
 _PROTECTED_FILES = {"SOUL.md", "HEARTBEAT.md", "MEMORY.md", "USER.md"}
@@ -37,8 +39,8 @@ def _get_safe_path(filename: str) -> str:
     the resolved path stays within MEMORY_DIR. The checkpointer DB
     (``threads.sqlite*``) is deny-listed even though it lives in MEMORY_DIR.
     """
-    safe_path = os.path.abspath(os.path.join(MEMORY_DIR, filename))
-    if not safe_path.startswith(MEMORY_DIR + os.sep) and safe_path != MEMORY_DIR:
+    safe_path = os.path.abspath(os.path.join(config.MEMORY_DIR, filename))
+    if not safe_path.startswith(config.MEMORY_DIR + os.sep) and safe_path != config.MEMORY_DIR:
         raise ValueError("Security Violation: Attempted access outside of sandboxed memory directory.")
     if os.path.basename(safe_path).startswith(_DENIED_PREFIX):
         raise ValueError("'threads.sqlite' is the conversation-state database, not memory — access denied.")
@@ -52,7 +54,7 @@ def _canonical_name(filename: str) -> str:
     aliases like './SOUL.md' or 'daily/../SOUL.md' resolve to a protected
     file without spelling its name. Raises ValueError like _get_safe_path.
     """
-    return os.path.relpath(_get_safe_path(filename), MEMORY_DIR)
+    return os.path.relpath(_get_safe_path(filename), config.MEMORY_DIR)
 
 
 # A preview is surfaced to the owner in a single confirmation prompt and is
@@ -247,11 +249,11 @@ def list_memory() -> str:
     """
     try:
         result = []
-        for root, dirs, files in os.walk(MEMORY_DIR):
+        for root, dirs, files in os.walk(config.MEMORY_DIR):
             dirs[:] = sorted(d for d in dirs if not d.startswith('.'))
             for f in sorted(files):
                 if f.endswith(('.txt', '.md')):
-                    rel_path = os.path.relpath(os.path.join(root, f), MEMORY_DIR)
+                    rel_path = os.path.relpath(os.path.join(root, f), config.MEMORY_DIR)
                     result.append(f"- {rel_path}")
         return "Memory files:\n" + "\n".join(result) if result else "No memory files found."
     except Exception as e:

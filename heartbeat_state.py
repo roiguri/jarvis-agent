@@ -26,9 +26,11 @@ from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import config
+
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_PATH = "/app/jarvis_memory/HEARTBEAT.md"
+HEARTBEAT_PATH = os.path.join(config.MEMORY_DIR, "HEARTBEAT.md")
 STATE_DIR = "/app/jarvis_data/heartbeat"
 STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
