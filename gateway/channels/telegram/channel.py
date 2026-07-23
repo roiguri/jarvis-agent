@@ -42,7 +42,6 @@ def thread_id_for(user_id: int) -> str:
 
 class TelegramChannel(Channel):
     name = "telegram"
-    supports_streaming = False
 
     def __init__(self, owner_id: int) -> None:
         self._owner_id = owner_id

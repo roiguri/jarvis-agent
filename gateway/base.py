@@ -49,7 +49,6 @@ class Channel(ABC):
     """
 
     name: str  # "telegram", "email", "whatsapp", "webhook", ...
-    supports_streaming: bool = False  # True iff send_stream is meaningful (voice + TTS)
 
     @abstractmethod
     async def send(self, chat_id: str, text: str, *, reply_to: str | None = None) -> None:
