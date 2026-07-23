@@ -56,3 +56,42 @@ MEMORY_DIR = _paths["MEMORY_DIR"]
 DATA_DIR = _paths["DATA_DIR"]
 ENV_FILE = _paths["ENV_FILE"]
 INSTANCE = _paths["INSTANCE"]
+
+
+# ---------------------------------------------------------------------------
+# Behavior toggles — read from the process environment (the service unit).
+# Default OFF everywhere: a missing or misapplied config yields an inert instance
+# that never messages the owner, rather than a second one that does. Prod's unit
+# opts in; staging's omits them. They live in the unit, never in .env — .env is
+# copied between instances and would carry "be proactive" to staging silently.
+# ---------------------------------------------------------------------------
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a boolean env var, rejecting anything unrecognized loudly — an
+    ambiguous value must not silently read as True (which would be a staging
+    heartbeat messaging the owner)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise RuntimeError(
+        f"{name}={raw!r} is not a boolean — use one of true/false/yes/no/on/off/1/0."
+    )
+
+
+WEBHOOK_ENABLED = _env_bool("JARVIS_WEBHOOK_ENABLED", False)
+HEARTBEAT_ENABLED = _env_bool("JARVIS_HEARTBEAT_ENABLED", False)
+REMINDERS_ENABLED = _env_bool("JARVIS_REMINDERS_ENABLED", False)
+
+# Only consulted when the webhook is enabled; a plain override, not derived from
+# the instance name (deriving would collide on a third instance).
+try:
+    WEBHOOK_PORT = int(os.environ.get("JARVIS_WEBHOOK_PORT", "8000"))
+except ValueError:
+    raise RuntimeError(
+        f"JARVIS_WEBHOOK_PORT={os.environ.get('JARVIS_WEBHOOK_PORT')!r} is not an integer."
+    )

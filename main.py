@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 import subprocess
 import uvicorn
 from datetime import datetime, timezone
@@ -106,11 +107,17 @@ def _running_provenance() -> dict:
             "deploy": tag if tag.startswith("deploy-") else "none",
             "root": config.ROOT,
             "instance": config.INSTANCE,
+            "heartbeat": config.HEARTBEAT_ENABLED,
+            "reminders": config.REMINDERS_ENABLED,
+            "webhook": config.WEBHOOK_ENABLED,
+            "webhook_port": config.WEBHOOK_PORT,
         }
     except Exception:
         return {"branch": "unknown", "sha": "unknown", "dirty": False,
                 "subject": "unknown", "date": "unknown", "deploy": "none",
-                "root": config.ROOT, "instance": config.INSTANCE}
+                "root": config.ROOT, "instance": config.INSTANCE,
+                "heartbeat": config.HEARTBEAT_ENABLED, "reminders": config.REMINDERS_ENABLED,
+                "webhook": config.WEBHOOK_ENABLED, "webhook_port": config.WEBHOOK_PORT}
 
 
 def _provenance_block(p: dict) -> str:
@@ -121,12 +128,16 @@ def _provenance_block(p: dict) -> str:
     last startup line by design. Do not rename it or move it off the tail;
     adding labelled rows below is fine (slices 2-3 do exactly that)."""
     sha = p["sha"] + (" (uncommitted)" if p["dirty"] else "")
+    hb = "on" if p["heartbeat"] else "off"
+    rem = "on" if p["reminders"] else "off"
+    wh = f"on :{p['webhook_port']}" if p["webhook"] else "off"
     return (
         "Running code:\n"
-        f"    branch : {p['branch']} @ {sha}\n"
-        f"    commit : {p['subject']} — {p['date']}\n"
-        f"    deploy : {p['deploy']}\n"
-        f"    root   : {p['root']}  (instance: {p['instance']})"
+        f"    branch    : {p['branch']} @ {sha}\n"
+        f"    commit    : {p['subject']} — {p['date']}\n"
+        f"    deploy    : {p['deploy']}\n"
+        f"    root      : {p['root']}  (instance: {p['instance']})\n"
+        f"    proactive : heartbeat={hb} reminders={rem} webhook={wh}"
     )
 
 
@@ -180,34 +191,41 @@ async def main() -> None:
 
     notifier = MediaNotificationManager(stack.outbox, llm_format=_llm_format)
 
-    # FastAPI app wired to the shared notifier
-    fastapi_app = create_webhook_app(notifier)
-    webhook_server = uvicorn.Server(
-        uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="warning")
-    )
+    # FastAPI webhook server — only when enabled. Staging runs without it, so it
+    # neither binds a port nor collides with prod's :8000. When off, the channel +
+    # scheduler still run and a stop-signal wait (below) owns the process lifecycle.
+    webhook_server = None
+    if config.WEBHOOK_ENABLED:
+        fastapi_app = create_webhook_app(notifier)
+        webhook_server = uvicorn.Server(
+            uvicorn.Config(fastapi_app, host="0.0.0.0", port=config.WEBHOOK_PORT, log_level="warning")
+        )
 
     # Init APScheduler and register the heartbeat interval job before the
     # channel comes up, so an inbound turn can never observe a missing
     # scheduler. Jobs don't run until scheduler.start() below.
     HEARTBEAT_INTERVAL_HOURS = 1
     scheduler = init_scheduler()
-    scheduler.add_job(
-        run_heartbeat,
-        IntervalTrigger(hours=HEARTBEAT_INTERVAL_HOURS),
-        id="heartbeat",
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
+    if config.HEARTBEAT_ENABLED:
+        scheduler.add_job(
+            run_heartbeat,
+            IntervalTrigger(hours=HEARTBEAT_INTERVAL_HOURS),
+            id="heartbeat",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
 
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
     await stack.start()
 
     try:
-        # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md)
-        # Hold references to past-due fire tasks so they can't be GC'd mid-flight.
+        # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md).
+        # Skipped when reminders are disabled — staging must not re-fire the owner's
+        # real events. Hold references to past-due fire tasks so they can't be GC'd.
         past_due_tasks: list[asyncio.Task] = []
-        for event in _load_events().get("events", []):
+        events = _load_events().get("events", []) if config.REMINDERS_ENABLED else []
+        for event in events:
             if event.get("type") != "reminder":
                 continue
             fire_at_dt = datetime.fromisoformat(event["fire_at"])
@@ -226,14 +244,29 @@ async def main() -> None:
                 logger.info("Past-due reminder %s — firing with original time annotation", event["id"])
 
         scheduler.start()
-        logger.info("Scheduler started. Heartbeat interval: %dh.", HEARTBEAT_INTERVAL_HOURS)
-        logger.info("Jarvis is online. Channel active. Webhook server on :8000.")
+        if config.HEARTBEAT_ENABLED:
+            logger.info("Scheduler started. Heartbeat interval: %dh.", HEARTBEAT_INTERVAL_HOURS)
+        else:
+            logger.info("Scheduler started. Heartbeat disabled.")
+        if webhook_server is not None:
+            logger.info("Jarvis is online. Channel active. Webhook server on :%d.", config.WEBHOOK_PORT)
+        else:
+            logger.info("Jarvis is online. Channel active. Webhook disabled.")
         # The full provenance block is the LAST startup line, so `journalctl -n`/
         # `systemctl status` show it in the tail without scrolling past boot noise.
         logger.info("%s", _provenance_block(provenance))
 
-        # server.serve() blocks until SIGINT/SIGTERM, then exits gracefully
-        await webhook_server.serve()
+        if webhook_server is not None:
+            # uvicorn owns the process lifecycle: serve() blocks until SIGINT/SIGTERM.
+            await webhook_server.serve()
+        else:
+            # No webhook to block on — wait on a stop signal so the channel and
+            # scheduler keep running, then fall through to graceful shutdown.
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, stop.set)
+            await stop.wait()
     finally:
         logger.info("Shutdown signal received. Stopping channel...")
         scheduler.shutdown(wait=False)
