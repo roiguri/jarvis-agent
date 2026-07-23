@@ -37,14 +37,19 @@ class InMemoryConfirmationStore(Confirmation):
         self,
         ui: ConfirmationUI,
         outbox: Outbox,
-        on_outcome: Callable[[str], Awaitable[None]] | None = None,
+        owner_thread_id: str,
+        on_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     ) -> None:
         self._ui = ui
         self._outbox = outbox
+        # This store belongs to one channel; its owner thread and outbox are
+        # that channel's, so a resolved confirmation acks on the same channel
+        # the turn came from (origin routing) without any cross-channel lookup.
+        self._owner_thread_id = owner_thread_id
         # Domain callback that turns a neutral outcome line into a
-        # conversational acknowledgement (runs the agent + replies). Injected
-        # by the host so the gateway never imports the agent layer. If unset,
-        # the outcome is posted to the owner verbatim instead.
+        # conversational acknowledgement on a given thread/outbox (runs the
+        # agent + replies). Injected by the host so the gateway never imports
+        # the agent layer. If unset, the outcome is posted to the owner verbatim.
         self._on_outcome = on_outcome
         self._pending: dict[str, PendingAction] = {}
         self._lock = threading.Lock()
@@ -167,7 +172,7 @@ class InMemoryConfirmationStore(Confirmation):
         notification-log event."""
         try:
             if self._on_outcome is not None:
-                await self._on_outcome(system_text)
+                await self._on_outcome(system_text, self._owner_thread_id, self._outbox)
             else:
                 await self._outbox.notify_owner(system_text)
         except Exception:

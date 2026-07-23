@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 from typing import Awaitable, Callable, Protocol
 
+import turn_context
+
 from gateway.base import Channel, OnMessage
 from gateway.confirmation.base import Confirmation
 from gateway.confirmation.store import InMemoryConfirmationStore
@@ -69,7 +71,10 @@ class _Registered:
 
 _registry: dict[str, _Registered] = {}
 _default_channel_name: str | None = None
-_confirmation: Confirmation | None = None
+# Confirmation stores keyed by channel name — kept on their own axis (not in
+# _registry): a confirmation resolves by the turn's ORIGIN channel, a different
+# lookup than the proactive default.
+_confirmation_stores: dict[str, Confirmation] = {}
 
 
 def register_channel(channel: Channel, outbox: Outbox) -> None:
@@ -114,21 +119,40 @@ def default_outbox() -> Outbox:
     return _default_entry().outbox
 
 
-def set_confirmation(confirmation: Confirmation) -> None:
-    global _confirmation
-    _confirmation = confirmation
+def register_confirmation(name: str, store: Confirmation) -> None:
+    """Register a channel's confirmation store under its channel name."""
+    _confirmation_stores[name] = store
+
+
+def _channel_name_for_thread(thread_id: str | None) -> str | None:
+    """The channel a thread belongs to, by its '<name>_<id>' prefix, when that
+    channel has a registered confirmation store. None for origin-less threads
+    (e.g. the 'heartbeat' thread)."""
+    if not thread_id:
+        return None
+    name = thread_id.split("_", 1)[0]
+    return name if name in _confirmation_stores else None
 
 
 def get_confirmation() -> Confirmation:
-    """The active confirmation backend destructive tools call."""
-    if _confirmation is None:
-        raise RuntimeError("Confirmation system not configured.")
-    return _confirmation
+    """The confirmation store for the channel of the running turn (its origin),
+    so a destructive tool's prompt and ack both stay on the channel the turn
+    came from. Falls back to the default channel for origin-less turns
+    (heartbeat). Destructive tools call this with no args; the origin is read
+    from ambient turn context."""
+    name = _channel_name_for_thread(turn_context.current_thread_id()) or _default_name()
+    store = _confirmation_stores.get(name)
+    if store is None:
+        raise RuntimeError(
+            f"No confirmation store registered for channel {name!r}; "
+            f"registered: {sorted(_confirmation_stores)}."
+        )
+    return store
 
 
 def _build_telegram_stack(
     on_message: OnMessage,
-    on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
+    on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
 ) -> TelegramStack:
     """Construct and wire the Telegram channel, router, confirmation UI + store,
@@ -152,13 +176,15 @@ def _build_telegram_stack(
     channel = TelegramChannel(owner_id)
     outbox = Outbox(channel, log_sink)
     confirmation_ui = TelegramConfirmationUI(channel)
-    store = InMemoryConfirmationStore(confirmation_ui, outbox, on_confirmation_outcome)
+    store = InMemoryConfirmationStore(
+        confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
+    )
     confirmation_ui.bind_store(store)
     router = TelegramInboundRouter(channel, on_message)
     host = TelegramHost(token, channel, router, confirmation_ui, store)
 
     register_channel(channel, outbox)
-    set_confirmation(store)
+    register_confirmation(channel.name, store)
     logger.info("Telegram stack built (owner_id=%d)", owner_id)
     return TelegramStack(
         channel=channel, router=router, store=store,
@@ -174,7 +200,7 @@ _STACK_BUILDERS: dict[str, Callable[..., Stack]] = {
 def build_stack(
     name: str,
     on_message: OnMessage,
-    on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
+    on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
 ) -> Stack:
     """Build the named channel's stack and register its proactive/confirmation

@@ -22,12 +22,12 @@ hardcoded thread-prefix assume exactly one channel exists.
 - [x] 1d — generalize the factory: `build_stack(name)` + neutral `Stack` Protocol; Telegram builder is private `_build_telegram_stack` behind a name registry (no public wrapper); `main.py` calls `build_stack("telegram", …)`. Factory kept as composition root (concrete imports stay) — considered moving the builder into the channel package, chose not to
 - [ ] **Restart staging + Telegram regression** — *pending*; prod happens later via `deploy.sh`
 
-### Phase 2 — default channel + origin routing
-- [ ] 2a — `JARVIS_DEFAULT_CHANNEL` (default `telegram`); registry keyed by `Channel.name`
-- [ ] 2b — `default_outbox()` resolves through the configured default
-- [ ] 2c — confirmation acks route to the **origin** thread, not the default
-- [ ] Verify: with one channel every path is byte-identical to today
-- [ ] **Restart prod**; Telegram regression + a confirmation round-trip
+### Phase 2 — default channel + origin routing — ✅ implemented 2026-07-23
+- [x] 2a — `JARVIS_DEFAULT_CHANNEL` (default `telegram`); registry keyed by `Channel.name`
+- [x] 2b — `default_outbox()` resolves through the configured default (at call time)
+- [x] 2c — confirmations origin-scoped: per-channel store, origin-resolved in `get_confirmation()` (Design B)
+- [x] Verify: with one channel every path byte-identical (unit-verified: resolution + channel-local ack)
+- [ ] **Restart staging**; Telegram regression + a confirmation round-trip — *pending*
 
 ### Phase 3 — rendering
 - [ ] 3a — `OutboundReply{text, blocks}` + `Channel.send_rich`, default → `send(text)` (upstream B4)
@@ -133,7 +133,7 @@ Three singletons in `gateway/factory.py:51-53` assume one channel. They generali
 | Singleton | Today | After |
 |---|---|---|
 | `_default_outbox` | the one Outbox | resolves through the configured default channel |
-| `_confirmation` | the one UI | broadcast UI (step 3 wires the second) |
+| `_confirmation` | the one store | per-channel store, origin-resolved in `get_confirmation()` (no broadcast) |
 | `_default_channel` → `default_owner_thread_id()` | the one channel's thread | **origin-aware** — see below |
 
 **2a — a channel registry.** Channels register by `Channel.name`; `JARVIS_DEFAULT_CHANNEL`
@@ -143,12 +143,38 @@ returns what it returns today.
 **2b — proactive resolves through the default.** `default_outbox()` keeps its signature;
 heartbeat, reminders and the media notifier need no changes, exactly as upstream B3 promised.
 
-**2c — acks follow the origin.** `main.py:93` currently calls `default_owner_thread_id()` to
-decide where a resolved confirmation is fed back into the agent. That is proactive-shaped
-routing applied to reactive traffic: confirm on your phone and the acknowledgement lands in the
-Telegram thread, so the device you answered on never hears back. The confirmation record already
-knows which channel prompted it — carry the origin thread through the store and ack there.
-`default_owner_thread_id()` remains for genuinely owner-addressed, origin-less cases.
+**2c — confirmations are origin-scoped (Design B: per-channel handlers).** A confirmation
+belongs to the channel of the turn that raised it — prompt *and* ack. Today both are hardwired to
+the single Telegram store + `default_outbox()`, so a request from a second channel would prompt
+and acknowledge on Telegram instead. The fix keeps confirmation **on its own axis** (not fused
+into the proactive `_registry`) and makes each channel own its confirmations:
+
+- **Per-channel store.** Each channel builds its own confirmation store (its own `ConfirmationUI`
+  + outbox + owner thread), registered by name in a `_confirmation_stores` map. Store internals are
+  unchanged — each is just "one channel's confirmations."
+- **Origin resolved once.** `get_confirmation()` (in the factory — it has both the turn context
+  and the registry) reads a new `CURRENT_THREAD_ID` ambient var → origin channel name → returns
+  that channel's store. Falls back to the default channel for origin-less turns (heartbeat).
+  Destructive tools call `get_confirmation()` unchanged.
+- **Tap + ack are naturally channel-local.** The button tap already returns to the origin
+  channel's own store (each channel's host holds its store); the ack runs `ask_jarvis` on the
+  store's own thread and sends via the store's own outbox. No `PendingAction` change, no
+  cross-channel resolution, no resolver injected into the store.
+
+*Why Design B over a central store that resolves per-request:* origin is resolved in one obvious
+place (`get_confirmation`), the store's internals don't change, and it matches how OpenClaw
+(`ChannelApprovalCapability`) and Hermes (per-adapter `send_*` methods) structure interactive UI.
+
+**Scaling to blocks (buttons / forms / cards).** Confirmation is the first instance of a general
+per-channel *interaction* handler. Future block types become `render_<block>` methods on the same
+per-channel handler, each with a **text-fallback default in the base class**: a channel that can
+render richly overrides, one that can't inherits text. The origin seam (`get_confirmation` → a
+general `get_interaction`) is unchanged. Because block richness is **app-only** (Telegram has no
+custom blocks), Telegram overrides only `confirmation` (native buttons) and inherits text
+fallbacks for everything else — future block work is nearly all additive on the app side.
+"Render, don't negotiate" keeps capability checks out of `tools/`/`agent.py`. We build the
+confirmation template now; the block methods + the app's rich overrides arrive with Phase 3 +
+Step 3, not before (no consumer exists yet).
 
 *Verify:* with one channel, every path byte-identical. A confirmation round-trip acknowledges in
 the same thread it was answered from.
