@@ -9,13 +9,18 @@ from langchain_core.tools import tool
 import config
 from tools.registry import tool_register
 
-# Serializes concurrent memory writes. Jarvis's racing writers are the user
-# turn and the heartbeat turn — both `asyncio.to_thread(ask_jarvis, …)` in the
-# SAME process — so a process-wide threading.Lock is correct and sufficient.
-# INVARIANT: this holds only while memory has a single writer *process*. If a
-# second memory-writing process is ever introduced (e.g. heartbeat split out,
-# multi-worker), this must become an fcntl.flock on a lock file under
-# /app/jarvis_data/locks/ — a threading.Lock does not cross processes.
+# Serializes concurrent memory writes. Jarvis's racing writers are the user turn
+# and the heartbeat turn — both `asyncio.to_thread(ask_jarvis, …)` in the SAME
+# process — so a process-wide threading.Lock is correct and sufficient.
+#
+# INVARIANT — one memory-writing process per instance root — is held
+# PROCEDURALLY: each root (prod, staging) runs a single service unit, so separate
+# instances write separate trees and never contend. A cross-process file lock is
+# deliberately not used. What does NOT break the invariant: staging (its own root,
+# hence a different tree), or a second channel (it shares this process — its writes
+# are just another thread here). What WOULD: splitting the heartbeat into its own
+# process, or a multi-worker setup — two processes writing ONE root. That case
+# needs an fcntl.flock per write (a larger change), not this threading.Lock.
 _WRITE_LOCK = threading.Lock()
 
 # Sandbox root is read from config per call (config.MEMORY_DIR), not bound to a
