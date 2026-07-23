@@ -75,18 +75,18 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 - [x] Reword `tools/core/memory.py` single-writer comment: invariant held **procedurally**; staging (own root) and a second channel (same process) are *not* triggers — heartbeat-split-to-own-process is
 
 ### Slice 3 — the staging bot exists
-- [ ] Toggles read from the unit (**default off**; prod opts in at 2a), parsed by one shared `_env_bool` that rejects garbage loudly
-- [ ] Effective toggle states join the provenance block
-- [ ] `JARVIS_WEBHOOK_PORT` — plain override, default `8000`
-- [ ] **Create the staging bot** via BotFather; hand over the token
-- [ ] Dirs `/app/jarvis_staging/{code,jarvis_memory,jarvis_data,secrets}`; clone; venv
-- [ ] `/app/jarvis_staging/secrets/.env` = prod copy + staging bot token; dir `chmod 700`, file `600`
-- [ ] `scripts/check_env.sh` — key-set diff (never values) across `.env.example` and both instances
-- [ ] Seed memory: `rsync -a --exclude 'threads.sqlite*'`; seed `heartbeat/state.json` alongside it
-- [ ] `jarvis-staging.service` — own `ExecStart`/`WorkingDirectory`, `JARVIS_ROOT=/app/jarvis_staging`, no toggle lines; not `enable`d
-- [ ] **On its first boot, read `root :` before anything else** — this is what replaces the dropped lock
-- [ ] **Start staging**, chat with the staging bot
-- [ ] Verify isolation by named file, not a blanket `find` (below)
+- [x] Toggles read from the unit (**default off**; prod opts in at 2a), parsed by one shared `_env_bool` that rejects garbage loudly *(landed in 3A)*
+- [x] Effective toggle states join the provenance block *(the `proactive :` row)*
+- [x] `JARVIS_WEBHOOK_PORT` — plain override, default `8000`
+- [x] **Create the staging bot** via BotFather; hand over the token
+- [x] Dirs `/app/jarvis_staging/{code,jarvis_memory,jarvis_data,secrets}`; clone; venv
+- [x] `/app/jarvis_staging/secrets/.env` = prod copy + staging bot token; dir `chmod 700`, file `600`
+- [x] `scripts/check_env.sh` — key-set diff (never values) across `.env.example` and both instances
+- [x] Seed memory *(via `tar --exclude 'threads.sqlite*'` — `rsync` isn't installed on this host)*; seed `heartbeat/state.json` alongside it
+- [x] `jarvis-staging.service` — own `ExecStart`/`WorkingDirectory`, `JARVIS_ROOT=/app/jarvis_staging`, no toggle lines; not `enable`d
+- [x] **On its first boot, read `root :` before anything else** — this is what replaces the dropped lock *(read `root : /app/jarvis_staging` before typing anything)*
+- [x] **Start staging**, chat with the staging bot
+- [x] Verify isolation by named file, not a blanket `find` *(staging note present only under `/app/jarvis_staging`; prod SOUL/USER/MEMORY mtimes unchanged; staging has its own `threads.sqlite`)*
 
 ### Slice 4 — prod becomes deploy-only
 
