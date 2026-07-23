@@ -2,7 +2,6 @@ venv/
 __pycache__/
 *.pyc
 .env
-/app/jarvis_memory/threads.sqlite
 .claude/
 # Channel-owned inbound media caches (any channel, any nesting: gateway/.../media_cache/)
 gateway/channels/*/media_cache/
