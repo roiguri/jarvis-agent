@@ -175,23 +175,30 @@ Used for irreversible actions (delete memory, write SOUL.md, delete media with f
 
 ## Deployment
 
-Service: `jarvis.service`, running on the host.
+Two instances on one host, each rooted by its systemd unit's `JARVIS_ROOT`. Full
+runbook: **[docs/DEPLOY.md](docs/DEPLOY.md)**; rationale in
+**[docs/plans/STAGING_AND_DEPLOY.md](docs/plans/STAGING_AND_DEPLOY.md)**.
 
-**This Claude Code session runs on the same host** as the code and the running
-service, so commands run directly against it.
+- **Prod** — `/app/jarvis_code`, `jarvis.service`, `JARVIS_ROOT=/app`. **Deploy-only:**
+  updated exclusively by `deploy/deploy.sh` (pull `origin/main` → snapshot → tag → smoke
+  check → hand off), never edited in place.
+- **Staging** — `/app/jarvis_staging/code`, `jarvis-staging.service` (on demand, not
+  enabled), `JARVIS_ROOT=/app/jarvis_staging`. Where development and behavior testing
+  happen; inert by default. **New sessions start here** (see DEVELOPMENT.md § Development
+  Workflow).
+
+**This Claude Code session runs on the same host.** Development edits go in the staging
+tree; prod changes only through `deploy/deploy.sh` + a restart.
 
 ```bash
-# View logs
-journalctl -u jarvis -f
-
-# Restart after code changes — the USER runs this, not Claude
-systemctl restart jarvis.service
+journalctl -u jarvis -f            # prod logs
+journalctl -u jarvis-staging -f    # staging logs
 ```
 
-Claude cannot restart `jarvis.service` (no permission, and restarting would kill
-this very session's environment). After any code change, ask the user to run the
-restart, then check logs and send a Telegram message to verify. Never infer or
-fake the service state.
+Claude **cannot restart** either service (no permission) and does not run `deploy.sh`'s
+restart. After a change, ask the user to restart, then verify: read the `Running code:`
+provenance block (`scripts/jrestart.sh` prints it), check logs, and send a Telegram
+message. Never infer or fake service state.
 
 ---
 
