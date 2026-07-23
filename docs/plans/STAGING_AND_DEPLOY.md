@@ -69,9 +69,10 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 
 **2e — dev tooling and the regression net** *(touches no production runtime)*
 
-- [ ] `scripts/repl.py` (sets `JARVIS_ROOT` before importing `agent`); **delete `agent.py:764-780`**; update `DEVELOPMENT.md:166-170`
-- [ ] Land the scratch-root assertion in CI; drop the dead `.gitignore:5` line
-- [ ] Reword `tools/core/memory.py:14-18`: the single-writer invariant is held **procedurally**, and what would change that (below)
+- [x] **Delete** the local REPL — `agent.py`'s `__main__` block + the README entry (superseded by the staging bot). *Revised 2026-07-23: deleted outright, not moved to `scripts/repl.py` — it was unused.*
+- [x] **Delete** `scripts/prune_checkpoints.py` (obsolete — `PruningSqliteSaver` self-prunes on every write); drop the dead `.gitignore:5` line
+- [x] Land the scratch-root assertion as **`scripts/ci/check_paths.py`** (standalone; exits non-zero on any hardcoded prod-path leak; verified it catches an injected leak). Its `sys.modules` guard is the one the REPL would have carried. Wired into commit/merge/deploy gates at slice 4 — see [Regression gate (CI)](#regression-gate-ci)
+- [x] Reword `tools/core/memory.py` single-writer comment: invariant held **procedurally**; staging (own root) and a second channel (same process) are *not* triggers — heartbeat-split-to-own-process is
 
 ### Slice 3 — the staging bot exists
 - [ ] Toggles read from the unit (**default off**; prod opts in at 2a), parsed by one shared `_env_bool` that rejects garbage loudly
@@ -94,13 +95,14 @@ the one-way cutover. Don't bundle them.
 
 **4a — the deploy scripts**
 
-- [ ] `scripts/backup_state.sh` — `<label>` / `--restore <tarball>` / `--prune`; shared by 2·0, `deploy.sh`, and manual use (see [Backup & rollback](#backup--rollback))
+- [x] `scripts/backup_state.sh` — `<label>` / `--restore <tarball>` / `--prune`; shared by 2·0, `deploy.sh`, and manual use (see [Backup & rollback](#backup--rollback)) *(built early in 2·0)*
 - [ ] `scripts/deploy.sh`: clean-tree check → **`backup_state.sh` keyed to the tag-to-be** → `fetch` → `pull --ff-only origin main` → **tag the incoming commit** `deploy-YYYY-MM-DD-N` (push it) → sync deps if `requirements.txt` moved → `JARVIS_ROOT=/app` smoke check → assert unit still declares `JARVIS_ROOT` → `backup_state.sh --prune` → print hand-off
 - [ ] `scripts/rollback.sh`: list `deploy-*` → checkout → **write a rollback marker** → if the target's commit flags a format change, `backup_state.sh --restore` its tarball → hand-off
 - [ ] `deploy.sh` refuses to run from a rolled-back/detached tree without `--force`
 - [ ] Provenance block gains a loud row when HEAD is detached or the tree is rolled back
 - [ ] Dry run: deploy on an already-current main = clean no-op, tag created once
 - [ ] **Rehearse a rollback before you need one** — both a code-only rollback and a `--restore`
+- [ ] **Regression gate (CI)** — `.githooks/pre-commit` (via `core.hooksPath`) + a GitHub Actions workflow running `scripts/ci/check_paths.py` + a branch-protection rule on `main` + fold the check into `deploy.sh`'s smoke check (see [Regression gate (CI)](#regression-gate-ci))
 
 **4b — development moves out of prod**
 
@@ -307,7 +309,7 @@ both halves of the verification below are ordinary assertions rather than subpro
 | `tools/core/scheduling.py:15` | `EVENTS_PATH` |
 | `heartbeat_state.py:31,32` | `HEARTBEAT_PATH`, `STATE_DIR` |
 | `tools/fitness/fitness_tools.py:12` | `DB_PATH` |
-| `scripts/prune_checkpoints.py:21-23` | threads.sqlite paths — **operator** tool; must honor the same root or you prune prod while thinking you're in staging |
+| ~~`scripts/prune_checkpoints.py`~~ | **Deleted in 2e** — obsolete now that `PruningSqliteSaver` self-prunes on every write; deleting it drops the prod-hardcoded footgun rather than repointing it |
 | `scripts/trace.py` | same: reads the log dir |
 
 Follows for free but worth knowing it is a live call site: `gateway/commands/handlers.py:138,171`
@@ -360,7 +362,12 @@ invariant reads as **procedurally** held — one service unit per root, verified
 and names what would change the answer. The comment currently reads as a TODO; it should read as
 a decision.
 
-**[new] The REPL moves to `scripts/repl.py`.** "`agent.py`'s `__main__` defaults to a scratch
+**[new] The REPL — revised 2026-07-23: deleted outright, not moved.** It was unused and the staging
+bot supersedes it, so `agent.py`'s `__main__` block and its README entry are removed and no
+`scripts/repl.py` is created; `prune_checkpoints.py` is likewise deleted (obsolete — see the
+inventory). The `sys.modules` guard the REPL would have needed lives in `scripts/ci/check_paths.py`
+instead. The original analysis is retained below as the rationale for *why* relocating would not have
+been trivial. "`agent.py`'s `__main__` defaults to a scratch
 tree" is unimplementable where the earlier draft put it: `agent.py` binds `DB_PATH` at line 155
 and `_MEMORY_DIR` at 171 at **module scope**, while `if __name__ == "__main__":` runs at line 765.
 Anything the REPL sets is too late. `scripts/repl.py` sets `JARVIS_ROOT` *before* `import agent`.
@@ -576,6 +583,26 @@ is detached, so a rolled-back prod says so on every boot rather than looking nor
 that bumps `requirements.txt` reinstalls and passes the smoke check · **rehearse a rollback**, then
 confirm `deploy.sh` refuses until you pass `--force`.
 *Revert:* delete two scripts. 4a changes no application code and is useful before 4b exists.
+
+#### Regression gate (CI)
+
+`scripts/ci/check_paths.py` (landed in 2e) is the check; this is how it becomes a *gate* nothing
+gets past. Four layers, tightest last — all except the script itself are **slice-4-timed**, because
+a merge gate is meaningless until code actually flows through `origin/main` (which 4b establishes):
+
+| Layer | Mechanism | Blocks | When |
+|---|---|---|---|
+| Script | `scripts/ci/check_paths.py` — imports the app under a scratch root, exits non-zero on any hardcoded prod path | (invoked by the layers below) | **done (2e)** |
+| Commit | tracked `.githooks/pre-commit` (via `git config core.hooksPath .githooks`) runs the script | `git commit` — advisory, bypassable with `--no-verify` | slice 4 |
+| Merge | GitHub Actions runs the script on every push/PR; a branch-protection rule on `main` requires it green | merge to `main` — **unbypassable**, the real teeth | slice 4 |
+| Deploy | `deploy.sh` runs the script in its smoke check before the restart hand-off | a prod deploy | slice 4 (4a) |
+
+The unbypassable guarantee ("never merged to `main`, never deployed") is the Actions + branch-protection
++ deploy-gate combination; the commit hook is fast local feedback only. Branch protection is a GitHub
+repo setting the owner enables once the workflow exists. CI installs deps and imports the app with a
+dummy `GOOGLE_API_KEY` under a scratch root — the import makes no network call, so no real secret is
+needed. The workflow starts as this one check and is where the later test suite
+(`TESTING_AND_FEEDBACK_LOOP_PLAN.md`) hangs its jobs.
 
 #### 4b — development moves out of prod
 
