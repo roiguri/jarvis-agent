@@ -28,6 +28,21 @@ CHECK_PATHS="$REPO/scripts/ci/check_paths.py"
 CHECK_ENV="$REPO/scripts/check_env.sh"
 MARKER="$REPO/.rollback-marker"
 
+# Run as the checkout's owner, never root. This script needs no privilege — it only
+# does git + pip + a read-only `systemctl cat`; the restart (which does need root) is
+# deliberately left to the owner. Git refuses to operate on a differently-owned tree
+# ("dubious ownership"), and any git/pip write done as root would scatter root-owned
+# files through a jarvis_user tree and break the service later. So when invoked as
+# root — e.g. from `pct enter` / `pct exec 106 -- …` — drop to the tree's owner and
+# re-exec the identical command (args preserved). su-from-root needs no password.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    owner="$(stat -c %U "$REPO")"
+    if [[ "$owner" != "root" ]]; then
+        echo "deploy: invoked as root — re-exec as checkout owner '$owner' (no privilege needed)" >&2
+        exec su "$owner" -c "exec $(printf '%q ' "$REPO/deploy/deploy.sh" "$@")"
+    fi
+fi
+
 FORCE=0
 case "${1:-}" in
     --force)     FORCE=1 ;;

@@ -24,6 +24,18 @@ SERVICE="jarvis.service"
 BACKUP_DIR="$ROOT/backups"
 MARKER="$REPO/.rollback-marker"
 
+# Run as the checkout's owner, never root (same rationale as deploy.sh): this does
+# git only and never restarts, git refuses a differently-owned tree, and a root git
+# write would corrupt ownership. If invoked as root (`pct enter`/`pct exec`), drop to
+# the tree's owner and re-exec the identical command. su-from-root needs no password.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    owner="$(stat -c %U "$REPO")"
+    if [[ "$owner" != "root" ]]; then
+        echo "rollback: invoked as root — re-exec as checkout owner '$owner'" >&2
+        exec su "$owner" -c "exec $(printf '%q ' "$REPO/deploy/rollback.sh" "$@")"
+    fi
+fi
+
 say() { echo "rollback: $*" >&2; }
 die() { echo "rollback: ERROR: $*" >&2; exit 1; }
 
