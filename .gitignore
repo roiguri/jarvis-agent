@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 .env
 .claude/
+# rollback.sh writes this; it is per-checkout operational state, not code
+.rollback-marker
 # Channel-owned inbound media caches (any channel, any nesting: gateway/.../media_cache/)
 gateway/channels/*/media_cache/

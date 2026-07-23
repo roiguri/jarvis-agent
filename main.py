@@ -105,6 +105,9 @@ def _running_provenance() -> dict:
             "subject": _git("log", "-1", "--format=%s") or "unknown",
             "date": _git("log", "-1", "--format=%cs") or "unknown",  # %cs = YYYY-MM-DD
             "deploy": tag if tag.startswith("deploy-") else "none",
+            # Detached HEAD = a rollback (rollback.sh checks out a deploy tag). Loud
+            # in the block so a rolled-back prod says so on every boot, not silently.
+            "detached": not _git("symbolic-ref", "-q", "HEAD"),
             "root": config.ROOT,
             "instance": config.INSTANCE,
             "heartbeat": config.HEARTBEAT_ENABLED,
@@ -114,7 +117,7 @@ def _running_provenance() -> dict:
         }
     except Exception:
         return {"branch": "unknown", "sha": "unknown", "dirty": False,
-                "subject": "unknown", "date": "unknown", "deploy": "none",
+                "subject": "unknown", "date": "unknown", "deploy": "none", "detached": False,
                 "root": config.ROOT, "instance": config.INSTANCE,
                 "heartbeat": config.HEARTBEAT_ENABLED, "reminders": config.REMINDERS_ENABLED,
                 "webhook": config.WEBHOOK_ENABLED, "webhook_port": config.WEBHOOK_PORT}
@@ -131,7 +134,7 @@ def _provenance_block(p: dict) -> str:
     hb = "on" if p["heartbeat"] else "off"
     rem = "on" if p["reminders"] else "off"
     wh = f"on :{p['webhook_port']}" if p["webhook"] else "off"
-    return (
+    block = (
         "Running code:\n"
         f"    branch    : {p['branch']} @ {sha}\n"
         f"    commit    : {p['subject']} — {p['date']}\n"
@@ -139,6 +142,9 @@ def _provenance_block(p: dict) -> str:
         f"    root      : {p['root']}  (instance: {p['instance']})\n"
         f"    proactive : heartbeat={hb} reminders={rem} webhook={wh}"
     )
+    if p.get("detached"):
+        block += "\n    !! HEADS UP : HEAD is DETACHED (rolled back) — deploy.sh needs --force to leave"
+    return block
 
 
 async def main() -> None:

@@ -57,11 +57,31 @@ scripts/jrestart.sh      # or watch journalctl for the 'Running code:' block
 
 ## `deploy/rollback.sh` — revert prod to a previous deploy
 
-> **Coming next step.** Lists recent `deploy-*` tags, checks one out (detaching HEAD),
-> writes a rollback marker, and — if that deploy's commit flagged a persisted‑format
-> change — restores its state tarball with `backup_state.sh --restore`. Then hands off
-> the restart. A rolled‑back tree is detached, so the next `deploy.sh` needs `--force`,
-> and the startup block shows a loud "detached/rolled‑back" row.
+Run **from the prod checkout**. Reverts **code** to a chosen `deploy-*` tag. **Never
+restarts** — you do that after.
+
+```bash
+deploy/rollback.sh                       # list recent deploy-* tags (newest first)
+deploy/rollback.sh deploy-2026-07-23-1 "webhook regression"   # roll back to that tag
+```
+
+1. **Lists** recent `deploy-*` tags (no arg), or takes a target tag + optional reason.
+2. Refuses a dirty tree; shows the commits being undone.
+3. **Checks out the tag — this detaches HEAD on purpose.** That detached state is what
+   `deploy/deploy.sh` step 0 refuses (without `--force`), so the next deploy can't
+   silently un‑roll‑back you. The startup block shows a loud `HEAD is DETACHED` row on
+   every boot until you deploy forward again.
+4. Writes **`.rollback-marker`** (what/why/when — audit).
+5. Restart to apply: `pct exec 106 -- systemctl restart jarvis.service`.
+
+**Code vs data.** Rollback reverts code only. If a deploy being undone changed a
+persisted format, mark its commit message with **`[format-change]`** — then `rollback.sh`
+prints a **loud instruction** naming the pre‑change state tarball to restore with
+`deploy/backup_state.sh --restore` *before* you restart. It won't restore data for you
+(that stops the service — your conscious call).
+
+**Getting back to `main`:** `deploy/deploy.sh --force` returns you to `main` and clears
+the marker; the `--force` is required precisely so leaving a rollback is deliberate.
 
 ---
 

@@ -26,6 +26,7 @@ COMMITTED_UNIT="$REPO/deploy/jarvis.service"
 BACKUP="$REPO/deploy/backup_state.sh"
 CHECK_PATHS="$REPO/scripts/ci/check_paths.py"
 CHECK_ENV="$REPO/scripts/check_env.sh"
+MARKER="$REPO/.rollback-marker"
 
 FORCE=0
 case "${1:-}" in
@@ -68,6 +69,7 @@ JARVIS_ROOT="$ROOT" "$BACKUP" "$TAG" >/dev/null
 # 3. Fast-forward the checkout to origin/main. --ff-only fails (closed) on divergence.
 say "checkout main + pull --ff-only origin/main"
 git checkout --quiet main
+rm -f "$MARKER"   # back on main — any prior rollback is now resolved
 git pull --ff-only --quiet origin main
 new_sha="$(git rev-parse --short HEAD)"
 say "main is now at $new_sha"
