@@ -38,34 +38,34 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 
 **2·0 — snapshot prod state before touching a path** *(do this once, before 2c)*
 
-- [ ] `bash scripts/backup_state.sh pre-slice2` → `/app/backups/state-pre-slice2-<ts>.tar.gz` of `/app/jarvis_memory` + `/app/jarvis_data` (see [Backup & rollback](#backup--rollback))
-- [ ] Confirm the tarball lists SOUL/USER/MEMORY + `threads.sqlite` before proceeding
+- [x] `bash scripts/backup_state.sh pre-slice2` → `/app/backups/state-pre-slice2-<ts>.tar.gz` of `/app/jarvis_memory` + `/app/jarvis_data` (see [Backup & rollback](#backup--rollback))
+- [x] Confirm the tarball lists SOUL/USER/MEMORY + `threads.sqlite` before proceeding
 - [ ] *Revert path for all of 2c–2d:* `git revert` the commit **and** `backup_state.sh --restore` if any write went to the wrong tree
 
 **2a — the unit declares the instance** *(ops only, no code)*
 
-- [ ] **Add four `Environment=` lines to `jarvis.service`** (`JARVIS_ROOT` + the three slice-3 toggles); `daemon-reload`
-- [ ] Commit both units to `deploy/*.service`; `DEVELOPMENT.md` points at them instead of an inline copy
-- [ ] Verify: `systemctl show jarvis -p Environment` lists them; **nothing else changes** (no code reads them yet)
+- [x] **Add four `Environment=` lines to `jarvis.service`** (`JARVIS_ROOT` + the three slice-3 toggles); `daemon-reload`
+- [x] Commit `deploy/jarvis.service`; `DEVELOPMENT.md` points at it instead of an inline copy *(staging unit lands in slice 3)*
+- [x] Verify: `systemctl show jarvis -p Environment` lists them; **nothing else changes** (no code reads them yet) *(also fixed StartLimit\* [Service]→[Unit] — was silently ignored)*
 
 **2b — the process knows its root**
 
-- [ ] `config.py`: read `JARVIS_ROOT`, **refuse to start if unset**; derive the subpaths; no project imports, no lock, subtree `makedirs` only
-- [ ] Both `load_dotenv` calls (`agent.py:148`, `main.py:40`) → `config.ENV_FILE`
-- [ ] Provenance block gains `root :` / `instance :` rows
-- [ ] **Restart prod** — the block reads `root : /app`. This is the step that proves 2a's lines apply
+- [x] `config.py`: read `JARVIS_ROOT`, **refuse to start if unset**; derive the subpaths; no project imports, no lock, subtree `makedirs` only
+- [x] Both `load_dotenv` calls (`agent.py:148`, `main.py:40`) → `config.ENV_FILE`
+- [x] Provenance block gains `root :` / `instance :` rows
+- [x] **Restart prod** — the block reads `root : /app`. This is the step that proves 2a's lines apply
 
 **2c — the memory tree** *(everything under `/app/jarvis_memory`)*
 
-- [ ] `agent.py:171` `_MEMORY_DIR` (`:172-175` follow), `agent.py:155` `DB_PATH`, `tools/core/memory.py:20`, `heartbeat_state.py:31`
-- [ ] Delete the import-time `makedirs` at `agent.py:156`
-- [ ] **Restart prod**, send a message, have Jarvis write a memory file — lands in `/app/jarvis_memory` as before; history intact (same DB)
+- [x] `agent.py:171` `_MEMORY_DIR` (`:172-175` follow), `agent.py:155` `DB_PATH`, `tools/core/memory.py:20`, `heartbeat_state.py:31` *(+ dropped the dead `tools/core/__init__.py` re-export; `/memory`,`/heartbeat` handlers read `config.MEMORY_DIR`)*
+- [x] Delete the import-time `makedirs` at `agent.py:156`
+- [x] **Restart prod**, send a message, have Jarvis write a memory file — lands in `/app/jarvis_memory` as before; history intact (same DB)
 
 **2d — the data tree** *(everything under `/app/jarvis_data`)*
 
-- [ ] `tools/core/history.py:14` (+ **delete `:15`**), `tools/core/scheduling.py:15`, `heartbeat_state.py:32`, `tools/fitness/fitness_tools.py:12`
-- [ ] **Restart prod**, watch one heartbeat tick — `turns.jsonl` and `state.json` still update in place
-- [ ] Run the scratch-root assertion by hand; it must now pass
+- [x] `tools/core/history.py:14` (+ **delete `:15`**), `tools/core/scheduling.py:15`, `heartbeat_state.py:32`, `tools/fitness/fitness_tools.py:12` *(+ `agent.py` inline chat/notif logs)*
+- [~] **Restart prod**, watch one heartbeat tick — `turns.jsonl` and `state.json` still update in place *(`turns.jsonl` verified appending in place; `state.json` stamp pending next hourly tick)*
+- [x] Run the scratch-root assertion by hand; it must now pass *(full-module scan: zero `/app/jarvis_memory`/`/app/jarvis_data` leak)*
 
 **2e — dev tooling and the regression net** *(touches no production runtime)*
 
