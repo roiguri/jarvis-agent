@@ -119,10 +119,7 @@ pip install -r requirements.txt
 # 2. Configure - copy the template and fill in real values
 cp .env.example .env      # see .env.example for every variable + notes
 
-# 3a. Local REPL (no Telegram) - isolated dev thread
-python3 agent.py
-
-# 3b. Full service (Telegram + webhooks + heartbeat)
+# 3. Run the service (Telegram + webhooks + heartbeat)
 python3 main.py
 ```
 

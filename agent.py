@@ -764,21 +764,3 @@ def ask_jarvis_once(user_input: str) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return content if isinstance(content, str) else str(content)
-
-
-# Local Testing CLI
-if __name__ == "__main__":
-    print("Jarvis Agent Core initialized. Type 'quit' to exit.")
-    
-    # Simulate a user thread for local testing
-    thread_id = "local_dev_test_01"
-    
-    while True:
-        user_input = input("\nYou: ")
-        if user_input.lower() in ['quit', 'exit', 'q']:
-            break
-            
-        print("Jarvis: ", end="", flush=True)
-        # Use our clean wrapper function to get the response
-        response = ask_jarvis(user_input, thread_id)
-        print(response)
