@@ -1,9 +1,12 @@
 name: CI
 
 # The unbypassable half of the regression gate: runs on every PR and on pushes to
-# main. Pair with a branch-protection rule on `main` requiring "path-isolation" to
-# pass, so no hardcoded prod path can be merged. (The pre-commit hook is the fast
-# local half; see docs/DEPLOY.md.)
+# main. Two independent static guards, one job each:
+#   - path-isolation    — no module hardcodes a prod state path (check_paths.py)
+#   - channel-agnostic  — the app stays channel-agnostic (check_channel_agnostic.py)
+# Make each a hard gate with a branch-protection rule on `main` (GitHub → Settings →
+# Branches) requiring its check to pass. (The pre-commit hook is the fast local half
+# and runs both; see docs/DEPLOY.md.)
 on:
   push:
     branches: [main]
@@ -24,3 +27,14 @@ jobs:
         # check_paths.py sets its own scratch JARVIS_ROOT + a dummy GOOGLE_API_KEY,
         # so no real secrets are needed and the import makes no network call.
         run: python scripts/ci/check_paths.py
+
+  channel-agnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Channel-agnosticism check
+        # Pure static source scan — no app import and no deps, so no pip install.
+        run: python scripts/ci/check_channel_agnostic.py

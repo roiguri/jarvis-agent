@@ -142,10 +142,29 @@ venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
   git config core.hooksPath .githooks
   ```
   Fast local feedback; bypassable with `git commit --no-verify`.
-- **Merge** — `.github/workflows/ci.yml` runs it on every PR and push to `main`. Make it
-  unbypassable by enabling a **branch-protection rule** on `main` (GitHub → Settings →
-  Branches) requiring the `path-isolation` check to pass. This is the real gate.
-- **Deploy** — `deploy/deploy.sh` runs it before the restart hand-off.
+- **Merge** — `.github/workflows/ci.yml` runs the guards on every PR and push to `main`, as
+  two independent jobs (`path-isolation`, `channel-agnostic`). Make each unbypassable by
+  enabling a **branch-protection rule** on `main` (GitHub → Settings → Branches) requiring its
+  check to pass. This is the real gate. (`path-isolation` is already required; add
+  `channel-agnostic` to the required set to enforce it too — until then it runs and reports but
+  does not block.)
+- **Deploy** — `deploy/deploy.sh` runs the path check before the restart hand-off.
+
+## `scripts/ci/check_channel_agnostic.py` — channel-agnostic guard
+
+A pure static source scan (no app import) that keeps multi-channel support from regressing:
+domain code (and slash-command handlers) never import a concrete channel, nothing in
+`gateway/` reverse-imports the app (except `gateway/commands/`, the documented bridge), and no
+channel name leaks into `tools/` (tool docstrings are prompt content). Mirrors the Gateway
+G1/G2 items in the `code-review` skill.
+
+```bash
+venv/bin/python scripts/ci/check_channel_agnostic.py   # exit 0 clean, 1 on a leak
+```
+
+Runs at **commit** (pre-commit hook) and **merge** (its own `channel-agnostic` CI job) — the
+same first two layers as the path guard. It is **not** run at deploy: it is architecture
+hygiene, not runtime-state safety, and `main` has already passed it.
 
 ---
 
