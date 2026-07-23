@@ -1,0 +1,26 @@
+name: CI
+
+# The unbypassable half of the regression gate: runs on every PR and on pushes to
+# main. Pair with a branch-protection rule on `main` requiring "path-isolation" to
+# pass, so no hardcoded prod path can be merged. (The pre-commit hook is the fast
+# local half; see docs/DEPLOY.md.)
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  path-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # matches prod's venv
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Path-isolation check
+        # check_paths.py sets its own scratch JARVIS_ROOT + a dummy GOOGLE_API_KEY,
+        # so no real secrets are needed and the import makes no network call.
+        run: python scripts/ci/check_paths.py

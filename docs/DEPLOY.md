@@ -134,6 +134,19 @@ path. Run by `deploy.sh`, the pre‑commit hook, and CI.
 venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
 ```
 
+**The regression gate has three layers** (see the plan's "Regression gate (CI)"):
+
+- **Commit** — `.githooks/pre-commit` runs the check on every `git commit`. Active only
+  where `core.hooksPath` points at it, so enable it once per checkout:
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+  Fast local feedback; bypassable with `git commit --no-verify`.
+- **Merge** — `.github/workflows/ci.yml` runs it on every PR and push to `main`. Make it
+  unbypassable by enabling a **branch-protection rule** on `main` (GitHub → Settings →
+  Branches) requiring the `path-isolation` check to pass. This is the real gate.
+- **Deploy** — `deploy/deploy.sh` runs it before the restart hand-off.
+
 ---
 
 ## `scripts/jrestart.sh` — restart prod and show what booted
