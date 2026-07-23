@@ -18,6 +18,11 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition
 
+# Instance paths (JARVIS_ROOT and everything derived from it). First project
+# import: it validates the root and creates the state subtrees before any module
+# below resolves a path or reads the environment.
+import config
+
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
@@ -144,8 +149,8 @@ class PruningSqliteSaver(SqliteSaver):
 
 logger = logging.getLogger(__name__)
 
-# Load secrets from the external, secure directory
-load_dotenv("/app/secrets/.env")
+# Load secrets from this instance's secrets dir (ROOT/secrets/.env).
+load_dotenv(config.ENV_FILE)
 
 # Verify Google API key is loaded
 if not os.getenv("GOOGLE_API_KEY"):

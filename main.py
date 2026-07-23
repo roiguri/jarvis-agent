@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 
+# Instance paths — first project import (validates JARVIS_ROOT, derives every path).
+import config
+
 from agent import ask_jarvis, ask_jarvis_once
 from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
@@ -35,9 +38,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# 2. Load environment variables securely. Channel-specific config (bot token,
-# owner id) is read by the channel factory, not here.
-load_dotenv("/app/secrets/.env")
+# 2. Load environment variables securely from this instance's secrets dir. Channel
+# -specific config (bot token, owner id) is read by the channel factory, not here.
+load_dotenv(config.ENV_FILE)
 
 
 async def process_inbound_message(inbound: InboundMessage) -> str | None:
@@ -78,13 +81,11 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
 
 
 def _running_provenance() -> dict:
-    """Git identity of the tree this process is running from — for the startup
-    log, so the journal always answers 'what code is prod on?'. Never raises:
-    any failure (git absent, not a repo) degrades to 'unknown' rather than
-    blocking startup. Returns fields; main() formats them.
-
-    (instance name + memory/data roots join this in slices 2-3, once config.py
-    exists — see docs/plans/STAGING_AND_DEPLOY.md.)"""
+    """Git identity + instance root of the tree this process is running from — for
+    the startup log, so the journal always answers 'what code, which instance?'. The
+    git lookups never raise: any failure (git absent, not a repo) degrades to
+    'unknown' rather than blocking startup. root/instance come from config and are
+    always present. Returns fields; main() formats them."""
     repo = os.path.dirname(os.path.abspath(__file__))
 
     def _git(*args: str) -> str:
@@ -103,10 +104,13 @@ def _running_provenance() -> dict:
             "subject": _git("log", "-1", "--format=%s") or "unknown",
             "date": _git("log", "-1", "--format=%cs") or "unknown",  # %cs = YYYY-MM-DD
             "deploy": tag if tag.startswith("deploy-") else "none",
+            "root": config.ROOT,
+            "instance": config.INSTANCE,
         }
     except Exception:
         return {"branch": "unknown", "sha": "unknown", "dirty": False,
-                "subject": "unknown", "date": "unknown", "deploy": "none"}
+                "subject": "unknown", "date": "unknown", "deploy": "none",
+                "root": config.ROOT, "instance": config.INSTANCE}
 
 
 def _provenance_block(p: dict) -> str:
@@ -121,7 +125,8 @@ def _provenance_block(p: dict) -> str:
         "Running code:\n"
         f"    branch : {p['branch']} @ {sha}\n"
         f"    commit : {p['subject']} — {p['date']}\n"
-        f"    deploy : {p['deploy']}"
+        f"    deploy : {p['deploy']}\n"
+        f"    root   : {p['root']}  (instance: {p['instance']})"
     )
 
 
