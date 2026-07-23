@@ -245,7 +245,7 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     Israel-today. Truncates each message to keep the prompt bounded.
     """
     import json
-    chat_log = "/app/jarvis_data/logs/chat_history.jsonl"
+    chat_log = os.path.join(config.DATA_DIR, "logs", "chat_history.jsonl")
     if not os.path.exists(chat_log):
         return ""
     since = _today_israel_start_utc()
@@ -289,7 +289,7 @@ def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
     assistant visibility into what the background tick already pushed today
     without waiting for the daily log to be rewritten."""
     import json
-    notif_log = "/app/jarvis_data/logs/notifications.jsonl"
+    notif_log = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
     if not os.path.exists(notif_log):
         return ""
     since = _today_israel_start_utc()
