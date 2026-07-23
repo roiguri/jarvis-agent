@@ -15,12 +15,12 @@ hardcoded thread-prefix assume exactly one channel exists.
 **Bold** items are yours (restarts). Every phase ends with the Telegram regression
 (GATEWAY.md step 9: inbound→reply, heartbeat proactive, confirmation, `/help`).
 
-### Phase 1 — channel-agnostic cleanup (no behavior change)
-- [ ] 1a — move `gateway/markdown_to_html.py` into `gateway/channels/telegram/`
-- [ ] 1b — drop channel names from tool docstrings (`radarr.py:305`, `sonarr.py:312`)
-- [ ] 1c — drop channel names from comments/docstrings (`observability/usage.py:226`, `gateway/commands/router.py:53`, `gateway/confirmation/{base,store}.py`)
-- [ ] 1d — generalize the factory: `build_stack()` + `Stack`, `build_telegram_stack` becomes a thin wrapper
-- [ ] **Restart prod**; Telegram regression
+### Phase 1 — channel-agnostic cleanup (no behavior change) — ✅ implemented 2026-07-23
+- [x] 1a — move `gateway/markdown_to_html.py` into `gateway/channels/telegram/` (copy in `_render.py` kept — the two renderers are genuinely different, not duplication)
+- [x] 1b — drop channel names from tool docstrings (`radarr.py`, `sonarr.py`)
+- [x] 1c — drop channel names from comments/docstrings (`observability/usage.py`, `gateway/commands/router.py`, `gateway/confirmation/{base,store}.py`)
+- [x] 1d — generalize the factory: `build_stack(name)` + neutral `Stack` Protocol; Telegram builder is private `_build_telegram_stack` behind a name registry (no public wrapper); `main.py` calls `build_stack("telegram", …)`. Factory kept as composition root (concrete imports stay) — considered moving the builder into the channel package, chose not to
+- [ ] **Restart staging + Telegram regression** — *pending*; prod happens later via `deploy.sh`
 
 ### Phase 2 — default channel + origin routing
 - [ ] 2a — `JARVIS_DEFAULT_CHANNEL` (default `telegram`); registry keyed by `Channel.name`

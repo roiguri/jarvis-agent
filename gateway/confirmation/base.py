@@ -47,7 +47,8 @@ class ConfirmationUI(ABC):
     """The only channel-specific half of Plane 3: rendering the prompt and outcome.
 
     The store owns bookkeeping, TTL eviction, and outcome dispatch; a channel
-    implements just these two methods (e.g. TelegramConfirmationUI -> InlineKeyboard).
+    implements just these two methods, rendering the prompt in whatever native
+    UI it has (inline buttons, a reply, …).
     A channel may also expose a native callback handler that calls the store's
     resolve(callback_id, outcome).
     """

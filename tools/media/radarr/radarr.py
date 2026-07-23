@@ -302,7 +302,7 @@ def delete_radarr_movie(title: str) -> str:
 @tool
 def delete_radarr_movie_with_files(title: str) -> str:
     """Remove a movie from Radarr AND permanently delete the file from disk.
-    This is irreversible — sends a Telegram confirmation button before executing.
+    This is irreversible — sends a confirmation request before executing.
     Use when the user explicitly wants to free up disk space by deleting a movie."""
     from gateway.factory import get_confirmation
     base_url = os.getenv("RADARR_URL")

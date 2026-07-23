@@ -16,7 +16,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Protocol
 
 from gateway.base import Channel, OnMessage
 from gateway.confirmation.base import Confirmation
@@ -28,6 +28,17 @@ from gateway.channels.telegram.host import TelegramHost
 from gateway.channels.telegram.router import TelegramInboundRouter
 
 logger = logging.getLogger(__name__)
+
+
+class Stack(Protocol):
+    """What the host process needs from a built stack, regardless of channel:
+    an outbox for proactive sends and a start/stop lifecycle. Concrete stacks
+    (e.g. TelegramStack) carry channel-specific wiring beyond this."""
+
+    outbox: Outbox
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
 
 
 @dataclass
@@ -91,7 +102,7 @@ def get_confirmation() -> Confirmation:
     return _confirmation
 
 
-def build_telegram_stack(
+def _build_telegram_stack(
     on_message: OnMessage,
     on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
@@ -130,3 +141,24 @@ def build_telegram_stack(
         channel=channel, router=router, store=store,
         confirmation_ui=confirmation_ui, outbox=outbox, host=host,
     )
+
+
+_STACK_BUILDERS: dict[str, Callable[..., Stack]] = {
+    "telegram": _build_telegram_stack,
+}
+
+
+def build_stack(
+    name: str,
+    on_message: OnMessage,
+    on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
+    log_sink: LogSink | None = None,
+) -> Stack:
+    """Build the named channel's stack and register its proactive/confirmation
+    defaults. With one channel registered this is byte-identical to building it
+    directly; the name dispatch is the seam a second channel plugs into."""
+    try:
+        builder = _STACK_BUILDERS[name]
+    except KeyError:
+        raise ValueError(f"Unknown channel: {name!r}") from None
+    return builder(on_message, on_confirmation_outcome, log_sink)
