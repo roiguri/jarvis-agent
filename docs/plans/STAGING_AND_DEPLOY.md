@@ -38,7 +38,7 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 
 **2·0 — snapshot prod state before touching a path** *(do this once, before 2c)*
 
-- [x] `bash scripts/backup_state.sh pre-slice2` → `/app/backups/state-pre-slice2-<ts>.tar.gz` of `/app/jarvis_memory` + `/app/jarvis_data` (see [Backup & rollback](#backup--rollback))
+- [x] `bash deploy/backup_state.sh pre-slice2` → `/app/backups/state-pre-slice2-<ts>.tar.gz` of `/app/jarvis_memory` + `/app/jarvis_data` (see [Backup & rollback](#backup--rollback))
 - [x] Confirm the tarball lists SOUL/USER/MEMORY + `threads.sqlite` before proceeding
 - [ ] *Revert path for all of 2c–2d:* `git revert` the commit **and** `backup_state.sh --restore` if any write went to the wrong tree
 
@@ -95,9 +95,9 @@ the one-way cutover. Don't bundle them.
 
 **4a — the deploy scripts**
 
-- [x] `scripts/backup_state.sh` — `<label>` / `--restore <tarball>` / `--prune`; shared by 2·0, `deploy.sh`, and manual use (see [Backup & rollback](#backup--rollback)) *(built early in 2·0)*
-- [ ] `scripts/deploy.sh`: clean-tree check → **`backup_state.sh` keyed to the tag-to-be** → `fetch` → `pull --ff-only origin main` → **tag the incoming commit** `deploy-YYYY-MM-DD-N` (push it) → sync deps if `requirements.txt` moved → `JARVIS_ROOT=/app` smoke check → assert unit still declares `JARVIS_ROOT` → `backup_state.sh --prune` → print hand-off
-- [ ] `scripts/rollback.sh`: list `deploy-*` → checkout → **write a rollback marker** → if the target's commit flags a format change, `backup_state.sh --restore` its tarball → hand-off
+- [x] `deploy/backup_state.sh` — `<label>` / `--restore <tarball>` / `--prune`; shared by 2·0, `deploy.sh`, and manual use (see [Backup & rollback](#backup--rollback)) *(built early in 2·0)*
+- [ ] `deploy/deploy.sh`: clean-tree check → **`backup_state.sh` keyed to the tag-to-be** → `fetch` → `pull --ff-only origin main` → **tag the incoming commit** `deploy-YYYY-MM-DD-N` (push it) → sync deps if `requirements.txt` moved → `JARVIS_ROOT=/app` smoke check → assert unit still declares `JARVIS_ROOT` → `backup_state.sh --prune` → print hand-off
+- [ ] `deploy/rollback.sh`: list `deploy-*` → checkout → **write a rollback marker** → if the target's commit flags a format change, `backup_state.sh --restore` its tarball → hand-off
 - [ ] `deploy.sh` refuses to run from a rolled-back/detached tree without `--force`
 - [ ] Provenance block gains a loud row when HEAD is detached or the tree is rolled back
 - [ ] Dry run: deploy on an already-current main = clean no-op, tag created once
@@ -166,7 +166,7 @@ on real SOUL/USER/MEMORY content — an empty tree is not representative.
 edit in /app/jarvis_staging/code
   → systemctl start jarvis-staging → chat with the staging bot → stop it
   → merge to main, push to origin
-  → cd /app/jarvis_code && ./scripts/deploy.sh   (pull, tag, deps, smoke check)
+  → cd /app/jarvis_code && ./deploy/deploy.sh   (pull, tag, deps, smoke check)
   → you restart jarvis
 ```
 
@@ -640,9 +640,9 @@ both. Keeping them separate is the point; conflating them is how a "simple rever
 | Axis | Mechanism | Restores | Does **not** restore |
 |---|---|---|---|
 | **Code** | git: `deploy-*` tags (slice 4a) or `git revert` (slice 2) | the running code | on-disk *data* written by the newer code |
-| **State** | `scripts/backup_state.sh` tarballs of `jarvis_memory` + `jarvis_data` | memory, DB, logs, reminders, heartbeat stamps | code |
+| **State** | `deploy/backup_state.sh` tarballs of `jarvis_memory` + `jarvis_data` | memory, DB, logs, reminders, heartbeat stamps | code |
 
-**`scripts/backup_state.sh`** — one script, three call sites, so the mechanism is identical
+**`deploy/backup_state.sh`** — one script, three call sites, so the mechanism is identical
 everywhere:
 
 - `backup_state.sh <label>` → `/app/backups/state-<label>-<UTC-ts>.tar.gz` of both state trees.
