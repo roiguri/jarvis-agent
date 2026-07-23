@@ -27,7 +27,7 @@ hardcoded thread-prefix assume exactly one channel exists.
 - [x] 2b — `default_outbox()` resolves through the configured default (at call time)
 - [x] 2c — confirmations origin-scoped: per-channel store, origin-resolved in `get_confirmation()` (Design B)
 - [x] Verify: with one channel every path byte-identical (unit-verified: resolution + channel-local ack)
-- [ ] **Restart staging**; Telegram regression + a confirmation round-trip — *pending*
+- [x] **Restart staging**; Telegram regression + confirmation round-trip — ✅ verified live 2026-07-23 (confirm + cancel round-trips, SOUL.md protected write, proactive reminder)
 
 ### Phase 3 — rendering
 - [ ] 3a — `OutboundReply{text, blocks}` + `Channel.send_rich`, default → `send(text)` (upstream B4)
