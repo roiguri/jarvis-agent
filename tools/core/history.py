@@ -6,13 +6,14 @@ import threading
 from datetime import datetime, timedelta, timezone
 from langchain_core.tools import tool
 
+import config
 from tools.registry import tool_register
 
 # Tool-owned activity logs: append-only JSONL the agent never file-reads —
 # queried only via get_chat_history / get_notification_history. Lives outside
-# the memory surface (not /app/jarvis_memory).
-_LOG_DIR = "/app/jarvis_data/logs"
-os.makedirs(_LOG_DIR, exist_ok=True)
+# the memory surface (not the memory dir). config creates DATA_DIR/logs at import
+# — the write path here just open()s, with no lazy mkdir of its own.
+_LOG_DIR = os.path.join(config.DATA_DIR, "logs")
 
 NOTIFICATION_LOG = os.path.join(_LOG_DIR, "notifications.jsonl")
 CHAT_LOG = os.path.join(_LOG_DIR, "chat_history.jsonl")

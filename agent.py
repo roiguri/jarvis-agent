@@ -18,6 +18,11 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition
 
+# Instance paths (JARVIS_ROOT and everything derived from it). First project
+# import: it validates the root and creates the state subtrees before any module
+# below resolves a path or reads the environment.
+import config
+
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
@@ -144,16 +149,16 @@ class PruningSqliteSaver(SqliteSaver):
 
 logger = logging.getLogger(__name__)
 
-# Load secrets from the external, secure directory
-load_dotenv("/app/secrets/.env")
+# Load secrets from this instance's secrets dir (ROOT/secrets/.env).
+load_dotenv(config.ENV_FILE)
 
 # Verify Google API key is loaded
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY not found. Please check /app/secrets/.env")
 
 # LangGraph owns this path (see CLAUDE.md placement principle); gitignored.
-DB_PATH = "/app/jarvis_memory/threads.sqlite"
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+# config creates MEMORY_DIR at import, so no makedirs is needed here.
+DB_PATH = os.path.join(config.MEMORY_DIR, "threads.sqlite")
 
 # Initialize the LLM
 llm = ChatGoogleGenerativeAI(
@@ -168,7 +173,7 @@ llm = ChatGoogleGenerativeAI(
 # SOUL.md (user-curated identity) is read from the memory dir. AGENTS.md
 # (developer-owned operating rules) is committed code under prompts/ and is
 # never in the Jarvis-writable memory surface.
-_MEMORY_DIR = "/app/jarvis_memory"
+_MEMORY_DIR = config.MEMORY_DIR
 _DAILY_DIR = os.path.join(_MEMORY_DIR, "daily")
 _SOUL_PATH = os.path.join(_MEMORY_DIR, "SOUL.md")
 _USER_PATH = os.path.join(_MEMORY_DIR, "USER.md")
@@ -240,7 +245,7 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     Israel-today. Truncates each message to keep the prompt bounded.
     """
     import json
-    chat_log = "/app/jarvis_data/logs/chat_history.jsonl"
+    chat_log = os.path.join(config.DATA_DIR, "logs", "chat_history.jsonl")
     if not os.path.exists(chat_log):
         return ""
     since = _today_israel_start_utc()
@@ -284,7 +289,7 @@ def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
     assistant visibility into what the background tick already pushed today
     without waiting for the daily log to be rewritten."""
     import json
-    notif_log = "/app/jarvis_data/logs/notifications.jsonl"
+    notif_log = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
     if not os.path.exists(notif_log):
         return ""
     since = _today_israel_start_utc()
@@ -759,21 +764,3 @@ def ask_jarvis_once(user_input: str) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return content if isinstance(content, str) else str(content)
-
-
-# Local Testing CLI
-if __name__ == "__main__":
-    print("Jarvis Agent Core initialized. Type 'quit' to exit.")
-    
-    # Simulate a user thread for local testing
-    thread_id = "local_dev_test_01"
-    
-    while True:
-        user_input = input("\nYou: ")
-        if user_input.lower() in ['quit', 'exit', 'q']:
-            break
-            
-        print("Jarvis: ", end="", flush=True)
-        # Use our clean wrapper function to get the response
-        response = ask_jarvis(user_input, thread_id)
-        print(response)

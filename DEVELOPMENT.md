@@ -100,38 +100,25 @@ message instead of failing silently.
 ## Systemd Service
 
 Runs as unprivileged `jarvis_user` under systemd on LXC 106.
-Service file (inside the container): `/etc/systemd/system/jarvis.service`.
+The unit is version-controlled at **`deploy/jarvis.service`** — the single source
+of truth. The installed copy at `/etc/systemd/system/jarvis.service` must match it.
+Install (or re-sync after an edit) with:
 
-```ini
-[Unit]
-Description=Jarvis Telegram Agent
-After=network.target
-
-[Service]
-Type=simple
-User=jarvis_user
-Group=jarvis_user
-WorkingDirectory=/app/jarvis_code
-ExecStart=/app/jarvis_code/venv/bin/python3 /app/jarvis_code/main.py
-Restart=always
-RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
-TimeoutStopSec=30
-StandardOutput=journal
-StandardError=journal
-Environment="PATH=/app/jarvis_code/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-[Install]
-WantedBy=multi-user.target
+```bash
+cp /app/jarvis_code/deploy/jarvis.service /etc/systemd/system/jarvis.service
+systemctl daemon-reload
 ```
 
-Restart-tuning rationale (changes from a stock unit):
+Key settings (rationale for the changes from a stock unit):
 - `RestartSec=30` — 30s cooldown between restarts (was 5s).
 - `StartLimitIntervalSec=300` + `StartLimitBurst=5` — systemd gives up after
   5 crashes in 5 min instead of looping forever; prevents CPU exhaustion during
   a network outage.
 - `TimeoutStopSec=30` — `systemctl stop` won't hang on a stuck process.
+- `Environment="JARVIS_ROOT=/app"` — the instance root; every state path (memory,
+  data, secrets) derives from it and the process refuses to start if it is unset.
+  The `JARVIS_{HEARTBEAT,REMINDERS,WEBHOOK}_ENABLED` toggles are this instance's
+  opt-in to proactive behavior (default off in code).
 
 Common commands (Proxmox host shell):
 

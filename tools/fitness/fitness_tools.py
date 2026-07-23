@@ -7,9 +7,10 @@ from zoneinfo import ZoneInfo
 import requests
 from langchain_core.tools import tool
 
+import config
 from tools.registry import tool_register
 
-DB_PATH = "/app/jarvis_data/fitness/fitness.sqlite"
+DB_PATH = os.path.join(config.DATA_DIR, "fitness", "fitness.sqlite")
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 ARBOX_BASE = "https://apiappv2.arboxapp.com"
 

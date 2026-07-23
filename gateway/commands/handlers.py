@@ -135,13 +135,13 @@ def _memory_list_top_level() -> str:
     """Top-level memory files only — excludes daily/ (use /logs) and heartbeat/
     (use /heartbeat list) subdirs, which have their own surfaces."""
     import os
-    from tools.core.memory import MEMORY_DIR
+    import config
 
     try:
         entries = sorted(
-            f for f in os.listdir(MEMORY_DIR)
+            f for f in os.listdir(config.MEMORY_DIR)
             if f.endswith((".txt", ".md"))
-            and os.path.isfile(os.path.join(MEMORY_DIR, f))
+            and os.path.isfile(os.path.join(config.MEMORY_DIR, f))
         )
     except OSError as e:
         return f"Error listing memory: {e}"
@@ -168,9 +168,9 @@ def _heartbeat_list_tasks() -> str:
     """Per-task state files under heartbeat/ — the curated task list lives in
     HEARTBEAT.md (shown by /heartbeat with no args)."""
     import os
-    from tools.core.memory import MEMORY_DIR
+    import config
 
-    hb_dir = os.path.join(MEMORY_DIR, "heartbeat")
+    hb_dir = os.path.join(config.MEMORY_DIR, "heartbeat")
     try:
         entries = sorted(
             f for f in os.listdir(hb_dir)

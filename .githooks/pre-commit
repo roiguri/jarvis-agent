@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# pre-commit — block a commit that breaks path isolation.
+#
+# Active only where core.hooksPath points here (one-time per checkout):
+#     git config core.hooksPath .githooks
+#
+# Runs scripts/ci/check_paths.py — no module may hardcode a prod state path. This is
+# fast local feedback; the unbypassable gate is CI + branch protection (see
+# docs/DEPLOY.md). Bypass in a genuine emergency with:  git commit --no-verify
+set -euo pipefail
+
+REPO="$(git rev-parse --show-toplevel)"
+PY="$REPO/venv/bin/python"
+[[ -x "$PY" ]] || PY="python3"
+
+if ! out="$("$PY" "$REPO/scripts/ci/check_paths.py" 2>&1)"; then
+    echo "$out" >&2
+    echo "pre-commit: path-isolation check FAILED — commit blocked." >&2
+    echo "pre-commit: fix it, or bypass with 'git commit --no-verify' if you truly must." >&2
+    exit 1
+fi

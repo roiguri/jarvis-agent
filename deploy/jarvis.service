@@ -1,0 +1,34 @@
+[Unit]
+Description=Jarvis Telegram Agent
+After=network.target
+# systemd ignores these in [Service]; they only take effect in [Unit]. Give up
+# after 5 failed starts within 5 min instead of restarting forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=jarvis_user
+Group=jarvis_user
+WorkingDirectory=/app/jarvis_code
+# Point directly to the Python executable inside the virtual environment
+ExecStart=/app/jarvis_code/venv/bin/python3 /app/jarvis_code/main.py
+Restart=always
+RestartSec=30
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+# Ensure the venv is in the path
+Environment="PATH=/app/jarvis_code/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Instance identity: JARVIS_ROOT is the single declared fact — every state path
+# (memory, data, secrets) derives from it and the process refuses to start if it
+# is unset. The three toggles are this instance's opt-in to proactive behavior;
+# all default off in code, so an instance whose unit omits them stays inert and
+# never messages the owner.
+Environment="JARVIS_ROOT=/app"
+Environment="JARVIS_HEARTBEAT_ENABLED=true"
+Environment="JARVIS_REMINDERS_ENABLED=true"
+Environment="JARVIS_WEBHOOK_ENABLED=true"
+
+[Install]
+WantedBy=multi-user.target

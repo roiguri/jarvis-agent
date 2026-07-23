@@ -8,11 +8,12 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
+import config
 from tools.registry import tool_register
 
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
-EVENTS_PATH = "/app/jarvis_data/scheduling/scheduled_events.json"
+EVENTS_PATH = os.path.join(config.DATA_DIR, "scheduling", "scheduled_events.json")
 
 logger = logging.getLogger(__name__)
 
