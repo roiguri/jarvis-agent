@@ -3,7 +3,7 @@
 **Status:** planning, uncommitted. **Date:** 2026-07-20.
 **Parent:** [APP_CHANNEL_PLAN.md](APP_CHANNEL_PLAN.md).
 **Hard-depends on:** step 2 phases 1d (generic factory) + 2a (channel registry).
-**Soft-depends on:** the staging environment (`../STAGING_AND_DEPLOY.md`) — this is where the
+**Soft-depends on:** the staging environment (`../archive/STAGING_AND_DEPLOY.md`) — this is where the
 poll loop is developed and tested, so staging lands first.
 
 **Goal:** a new `gateway/channels/jarvis_app/` that carries a text turn end-to-end between the
@@ -30,7 +30,7 @@ step 2; this document is only the new package.
 (GATEWAY.md step 9) — the app channel must never disturb it.
 
 ### Prereqs (elsewhere, must be green first)
-- [ ] Staging exists (`../STAGING_AND_DEPLOY.md` slices 0–3)
+- [x] Staging exists (`../archive/STAGING_AND_DEPLOY.md` — complete 2026-07-23)
 - [ ] Step 2 phase 1d (generic factory) + 2a (channel registry) landed
 - [ ] Re-validate every agent-internal reference the old plan cites (step 2 delta table)
 - [ ] **Add `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` to `staging.env`**
