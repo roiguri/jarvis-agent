@@ -17,7 +17,7 @@ from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
-from gateway.factory import build_telegram_stack, default_outbox, default_owner_thread_id
+from gateway.factory import build_stack, default_outbox, default_owner_thread_id
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
 from tools.core import (
@@ -185,7 +185,8 @@ async def main() -> None:
     # store/UI + outbox + host). Registers the defaults for proactive sends
     # and the confirmation backend for destructive tools; reads its own
     # config env.
-    stack = build_telegram_stack(
+    stack = build_stack(
+        "telegram",
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
         log_sink=async_append_notification_log,
