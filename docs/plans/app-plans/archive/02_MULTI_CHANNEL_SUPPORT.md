@@ -1,4 +1,10 @@
-# Step 2 — Multi-channel support
+# Step 2 — Multi-channel support  ·  ARCHIVED
+
+> **ARCHIVED 2026-07-23 — folded into [../EXECUTION_PLAN.md](../EXECUTION_PLAN.md)**, now the single
+> source of truth. Kept for the verbatim phase-by-phase prose and the architecture-review findings.
+> Note the reorder the execution plan applied: Phase 3 (rendering) is **deferred and left open** —
+> designed against the real app renderer when a consumer exists — and Phase 5 (the concurrency lock)
+> runs **before** the app channel. Phases 1 & 2 are merged (PRs #42/#45).
 
 **Status:** planning, uncommitted. **Date:** 2026-07-20.
 **Parent:** [APP_CHANNEL_PLAN.md](APP_CHANNEL_PLAN.md). **Depends on:** nothing.

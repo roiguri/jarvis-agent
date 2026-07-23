@@ -1,4 +1,7 @@
-# App channel — parent plan
+# App channel — parent plan  ·  ARCHIVED
+
+> **ARCHIVED 2026-07-23 — folded into [../EXECUTION_PLAN.md](../EXECUTION_PLAN.md)**, now the single
+> source of truth. Kept for history.
 
 **Status:** planning, uncommitted. **Date:** 2026-07-20. **Branch:** `docs/app-channel-plan`.
 **Goal:** ship the custom app as a second channel beside Telegram, without the Telegram loop —

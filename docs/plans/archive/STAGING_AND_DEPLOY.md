@@ -4,7 +4,7 @@
 **Date:** started 2026-07-20, completed 2026-07-23.
 **Supersedes:** `feat/staging-env` (e20a7a4, 2026-07-10) — stale, will not be merged. Much of the
 analysis below is imported from it; additions and corrections are marked **[new]**.
-**First beneficiary:** the app channel (`docs/plans/app-plans/APP_CHANNEL_PLAN.md`), but this is
+**First beneficiary:** the app channel (`docs/plans/app-plans/EXECUTION_PLAN.md`), but this is
 general infrastructure and stands on its own.
 
 **Goal:** development stops happening inside the live service, and a broken deploy is one

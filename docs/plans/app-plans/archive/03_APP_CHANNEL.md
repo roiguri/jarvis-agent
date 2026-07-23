@@ -1,4 +1,10 @@
-# Step 3 — Adding the app channel
+# Step 3 — Adding the app channel  ·  ARCHIVED
+
+> **ARCHIVED 2026-07-23 — folded into [../EXECUTION_PLAN.md](../EXECUTION_PLAN.md)**, now the single
+> source of truth (see its Stage C for B0/B1). Kept for the verbatim settled-decisions prose. Two
+> dependencies asserted here did not hold on inspection: the render seam does **not** gate B1
+> (text-only rides the existing `send(str)`), and the concurrency lock gates the **prod flip**, not
+> building/validating B1 in staging.
 
 **Status:** planning, uncommitted. **Date:** 2026-07-20.
 **Parent:** [APP_CHANNEL_PLAN.md](APP_CHANNEL_PLAN.md).
