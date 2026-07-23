@@ -309,7 +309,7 @@ def delete_sonarr_series(title: str) -> str:
 @tool
 def delete_sonarr_series_with_files(title: str) -> str:
     """Remove a TV series from Sonarr AND permanently delete all episode files from disk.
-    This is irreversible — sends a Telegram confirmation button before executing.
+    This is irreversible — sends a confirmation request before executing.
     Use when the user explicitly wants to free up disk space by removing a show entirely."""
     from gateway.factory import get_confirmation
     base_url = os.getenv("SONARR_URL")
