@@ -58,36 +58,60 @@ class TelegramStack:
         await self.host.stop()
 
 
-# Registry for proactive sends / confirmation. Set when a stack is built.
-_default_channel: Channel | None = None
+# Runtime channel registry for proactive routing. Populated when a stack is
+# built; proactive sends resolve through it by name at call time, so the
+# configured default can change without rebinding callers.
+@dataclass
+class _Registered:
+    channel: Channel
+    outbox: Outbox
+
+
+_registry: dict[str, _Registered] = {}
+_default_channel_name: str | None = None
 _confirmation: Confirmation | None = None
-_default_outbox: Outbox | None = None
 
 
-def _set_default_channel(channel: Channel) -> None:
-    global _default_channel
-    _default_channel = channel
+def register_channel(channel: Channel, outbox: Outbox) -> None:
+    """Register a built channel and its outbox under channel.name."""
+    _registry[channel.name] = _Registered(channel, outbox)
+
+
+def set_default_channel(name: str) -> None:
+    """Override the proactive default channel at runtime (otherwise
+    JARVIS_DEFAULT_CHANNEL decides). Lets the default flip without a rebuild."""
+    global _default_channel_name
+    _default_channel_name = name
+
+
+def _default_name() -> str:
+    """The proactive default channel name: runtime override, else
+    JARVIS_DEFAULT_CHANNEL, else 'telegram'. Read at call time — never baked in."""
+    return _default_channel_name or os.getenv("JARVIS_DEFAULT_CHANNEL", "telegram")
+
+
+def _default_entry() -> _Registered:
+    name = _default_name()
+    entry = _registry.get(name)
+    if entry is None:
+        raise RuntimeError(
+            f"No channel registered as the proactive default ({name!r}); "
+            f"registered: {sorted(_registry)}."
+        )
+    return entry
 
 
 def default_owner_thread_id() -> str:
     """The agent thread id of the owner's conversation on the default channel.
-    When a second channel ships, this becomes a routing decision living here,
-    not in callers."""
-    if _default_channel is None:
-        raise RuntimeError("No default user channel configured.")
-    return _default_channel.owner_thread_id
-
-
-def set_default_outbox(outbox: Outbox) -> None:
-    global _default_outbox
-    _default_outbox = outbox
+    Origin-less, owner-addressed proactive code uses this; reactive traffic
+    (chat replies, confirmations) routes to its own origin channel instead."""
+    return _default_entry().channel.owner_thread_id
 
 
 def default_outbox() -> Outbox:
-    """The outbox owner-addressed proactive sends go through."""
-    if _default_outbox is None:
-        raise RuntimeError("No default outbox configured.")
-    return _default_outbox
+    """The outbox owner-addressed proactive sends go through (heartbeat,
+    reminders, media). Resolves the configured default channel at call time."""
+    return _default_entry().outbox
 
 
 def set_confirmation(confirmation: Confirmation) -> None:
@@ -133,9 +157,8 @@ def _build_telegram_stack(
     router = TelegramInboundRouter(channel, on_message)
     host = TelegramHost(token, channel, router, confirmation_ui, store)
 
-    _set_default_channel(channel)
+    register_channel(channel, outbox)
     set_confirmation(store)
-    set_default_outbox(outbox)
     logger.info("Telegram stack built (owner_id=%d)", owner_id)
     return TelegramStack(
         channel=channel, router=router, store=store,
