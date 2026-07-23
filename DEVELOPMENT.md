@@ -149,26 +149,43 @@ live in the private deployment config, not in this repo.
 
 ## Development Workflow
 
-1. **Edit** code at `/app/jarvis_code` inside LXC 106 (directly or synced from the host).
-2. **Test locally without Telegram** — the agent has a built-in REPL:
+Development happens in the **staging tree**, never in prod. Prod (`/app/jarvis_code`)
+is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooling is in
+[docs/DEPLOY.md](docs/DEPLOY.md); the two-instance layout and rationale in
+[docs/plans/STAGING_AND_DEPLOY.md](docs/plans/STAGING_AND_DEPLOY.md).
+
+1. **Edit** in `/app/jarvis_staging/code` on a feature branch off `main`:
    ```bash
-   cd /app/jarvis_code && source venv/bin/activate && python3 agent.py
+   cd /app/jarvis_staging/code
+   git fetch origin && git checkout -b feat/my-change origin/main
    ```
-   Drops into an interactive loop on thread_id `local_dev_test_01` (isolated from
-   the live `telegram_<user_id>` / `heartbeat` threads).
-3. **Deploy** — restart the service, then watch logs:
+2. **Test against the staging bot** (its own root, inert by default):
    ```bash
+   pct exec 106 -- systemctl start jarvis-staging.service   # on demand; not enabled
+   # chat with the STAGING bot in Telegram. Add a JARVIS_*_ENABLED=true line to
+   # deploy/jarvis-staging.service only for a run that deliberately exercises
+   # heartbeat / reminders / webhook.
+   pct exec 106 -- systemctl stop jarvis-staging.service
+   ```
+   Type-checking doesn't catch LLM-behavior regressions — talk to the staging bot.
+3. **Ship** — push the branch, open a PR to `main` (CI runs `path-isolation`), merge:
+   ```bash
+   git push origin feat/my-change
+   gh pr create --base main --fill          # merge once CI is green
+   ```
+4. **Deploy** — in the prod checkout, pull the merge and hand off the restart:
+   ```bash
+   cd /app/jarvis_code && ./deploy/deploy.sh     # never restarts; fails closed
    pct exec 106 -- systemctl restart jarvis.service
    pct exec 106 -- journalctl -u jarvis.service -f
    ```
-   Type-checking and the REPL don't catch LLM-behavior regressions — after any
-   change, send a real Telegram message to verify.
-4. **New Python deps** — install then re-freeze so the env stays reproducible:
+   Roll back a bad deploy with `deploy/rollback.sh <tag>` (see docs/DEPLOY.md).
+5. **New Python deps** — install in the staging venv and re-freeze; `deploy.sh`
+   re-installs in prod automatically when `requirements.txt` changes:
    ```bash
-   pct exec 106 -- bash -c 'source /app/jarvis_code/venv/bin/activate && pip install <pkg>'
-   pct exec 106 -- bash -c 'source /app/jarvis_code/venv/bin/activate && pip freeze > /app/jarvis_code/requirements.txt'
+   /app/jarvis_staging/code/venv/bin/pip install <pkg>
+   /app/jarvis_staging/code/venv/bin/pip freeze > /app/jarvis_staging/code/requirements.txt
    ```
-   Rebuild from scratch: `pip install -r requirements.txt`.
 
 > Adding a tool/skill/channel is an architecture concern, not an ops one — see
 > [CLAUDE.md](CLAUDE.md) "Key Files to Know" and
