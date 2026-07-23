@@ -265,6 +265,43 @@ concurrently with a user turn (the behavior that must **not** regress).
 
 ---
 
+## Architecture review (2026-07-23)
+
+Before building Phase 2's confirmation routing, the Channel-vs-Outbox split was checked
+from first principles and against two comparable assistants — **OpenClaw**
+(`openclaw/openclaw`) and **Hermes** (`NousResearch/hermes-agent`). Outcome:
+
+- **The split is principled, not an artifact of the pre-existing Outbox.** It is the
+  transport-adapter (port) vs. delivery-policy (application service) seam. OpenClaw splits it
+  *more* aggressively (a channel-agnostic `infra/outbound/deliver.ts` core + thin per-channel
+  outbound adapters); Hermes fuses send into the adapter for replies but adds a separate
+  `DeliveryRouter` for proactive sends. Both put proactive and reactive through **one delivery
+  seam, differing only in destination** — which validates `Outbox` as the single owner-send seam
+  and replies going straight through the channel.
+- **Confirmation stays on its own axis** (this **supersedes** the Decisions section's earlier
+  "confirmations broadcast, first-resolve-wins" line). A confirmation lives entirely on the
+  channel of the turn that raised it — prompt *and* ack. Interactive UI is per-channel,
+  capability-degrading (plain-text fallback), origin-resolved, with a shared callback-id
+  convention — **not** fused into the proactive `{channel, outbox}` registry. Both reference
+  systems model it this way (Hermes's `send_clarify`/`send_exec_approval`/… family; OpenClaw's
+  `ChannelApprovalCapability`), and both treat confirmation as one instance of a general
+  interactive-callback pattern. We build confirmation as that template but do **not** build the
+  general framework yet.
+
+**Deferred cleanups (tracked, not blocking):**
+- Loop-bridge (`bind_loop`/`submit`) is misfiled in `outbox.py` — it is shared sync→loop infra
+  (the confirmation store uses it too), not owner-send policy → issue #43.
+- `notify_owner`/`notify_owner_media` duplicate a `try/except → log` block; refactor to a send
+  middleware seam when a 3rd cross-cutting concern (retry/rate-limit/fallback) lands → issue #44.
+- The "owner" concept is baked into the `Channel` transport port (`send_to_owner`) — app policy
+  leaking into transport. Low value for a single-user box; flag only, do not churn.
+- `Channel` fuses inbound + outbound where OpenClaw splits them — revisit only if a send-only or
+  receive-only channel is ever added.
+
+**Do NOT adopt yet (over-engineering at N=2 channels):** plugin self-registration + lazy loading,
+`DeliveryTarget`-style envelope-string routing, durable delivery queues / commit hooks, and
+multi-account-per-channel. Noted as the growth path if the channel count ever climbs.
+
 ## Deltas — upstream plan vs. this codebase
 
 `original_app_plan.md` predates the Outbox unification (PR #34, merged 2026-07-16). Verified
