@@ -164,21 +164,33 @@ Read the printed block first. For staging the `root : /app/jarvis_staging` row i
 isolation check — it confirms you booted against the staging trees, not prod (this is
 what replaces the single-writer lock the design dropped).
 
-### Quick aliases (run from the PVE host root shell)
+### Quick commands
 
-Restarts and deploys need root, which you have on the Proxmox host. Drop these in
-`/root/.bashrc` so the whole flow is one word each — each wraps the in-container script
-with `pct exec 106`:
+**Privilege.** `deploy.sh` and `rollback.sh` need **no** root — they do git + pip only —
+and they **self-drop to the checkout owner** (`jarvis_user`) if you invoke them as root, so
+running git as root never corrupts the tree's ownership. The **restart** scripts *do* need
+root (they call `systemctl`). So: deploy as anyone, restart as root.
+
+**Inside the container** (`pct enter 106`, root shell):
+
+```bash
+/app/jarvis_code/deploy/deploy.sh                       # deploy prod (drops to jarvis_user itself)
+/app/jarvis_code/scripts/jrestart.sh                    # then restart prod + show the boot block
+/app/jarvis_staging/code/scripts/jrestart-staging.sh    # restart / cold-start staging
+```
+
+**From the PVE host** — drop these in `/root/.bashrc` (each wraps the in-container script
+with `pct exec 106`):
 
 ```bash
 alias jrestart='pct exec 106 -- /app/jarvis_code/scripts/jrestart.sh'
 alias jrestart-staging='pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh'
-alias jdeploy='pct exec 106 -- bash -lc "cd /app/jarvis_code && ./deploy/deploy.sh"'
+alias jdeploy='pct exec 106 -- /app/jarvis_code/deploy/deploy.sh'
 ```
 
-`jdeploy` runs the fail‑closed `deploy.sh` (it never restarts); follow a green deploy
-with `jrestart` to bring the new code up. Keeping them two words is deliberate — a
-restart drops in‑flight turns, so it stays a conscious second step.
+`jdeploy` runs the fail‑closed `deploy.sh` (it never restarts); follow a green deploy with
+`jrestart` to bring the new code up. Keeping deploy and restart as two steps is deliberate —
+a restart drops in‑flight turns, so it stays a conscious second step.
 
 ---
 
