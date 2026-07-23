@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 from typing import Awaitable, Callable, Protocol
 
+import turn_context
+
 from gateway.base import Channel, OnMessage
 from gateway.confirmation.base import Confirmation
 from gateway.confirmation.store import InMemoryConfirmationStore
@@ -58,53 +60,99 @@ class TelegramStack:
         await self.host.stop()
 
 
-# Registry for proactive sends / confirmation. Set when a stack is built.
-_default_channel: Channel | None = None
-_confirmation: Confirmation | None = None
-_default_outbox: Outbox | None = None
+# Runtime channel registry for proactive routing. Populated when a stack is
+# built; proactive sends resolve through it by name at call time, so the
+# configured default can change without rebinding callers.
+@dataclass
+class _Registered:
+    channel: Channel
+    outbox: Outbox
 
 
-def _set_default_channel(channel: Channel) -> None:
-    global _default_channel
-    _default_channel = channel
+_registry: dict[str, _Registered] = {}
+_default_channel_name: str | None = None
+# Confirmation stores keyed by channel name — kept on their own axis (not in
+# _registry): a confirmation resolves by the turn's ORIGIN channel, a different
+# lookup than the proactive default.
+_confirmation_stores: dict[str, Confirmation] = {}
+
+
+def register_channel(channel: Channel, outbox: Outbox) -> None:
+    """Register a built channel and its outbox under channel.name."""
+    _registry[channel.name] = _Registered(channel, outbox)
+
+
+def set_default_channel(name: str) -> None:
+    """Override the proactive default channel at runtime (otherwise
+    JARVIS_DEFAULT_CHANNEL decides). Lets the default flip without a rebuild."""
+    global _default_channel_name
+    _default_channel_name = name
+
+
+def _default_name() -> str:
+    """The proactive default channel name: runtime override, else
+    JARVIS_DEFAULT_CHANNEL, else 'telegram'. Read at call time — never baked in."""
+    return _default_channel_name or os.getenv("JARVIS_DEFAULT_CHANNEL", "telegram")
+
+
+def _default_entry() -> _Registered:
+    name = _default_name()
+    entry = _registry.get(name)
+    if entry is None:
+        raise RuntimeError(
+            f"No channel registered as the proactive default ({name!r}); "
+            f"registered: {sorted(_registry)}."
+        )
+    return entry
 
 
 def default_owner_thread_id() -> str:
     """The agent thread id of the owner's conversation on the default channel.
-    When a second channel ships, this becomes a routing decision living here,
-    not in callers."""
-    if _default_channel is None:
-        raise RuntimeError("No default user channel configured.")
-    return _default_channel.owner_thread_id
-
-
-def set_default_outbox(outbox: Outbox) -> None:
-    global _default_outbox
-    _default_outbox = outbox
+    Origin-less, owner-addressed proactive code uses this; reactive traffic
+    (chat replies, confirmations) routes to its own origin channel instead."""
+    return _default_entry().channel.owner_thread_id
 
 
 def default_outbox() -> Outbox:
-    """The outbox owner-addressed proactive sends go through."""
-    if _default_outbox is None:
-        raise RuntimeError("No default outbox configured.")
-    return _default_outbox
+    """The outbox owner-addressed proactive sends go through (heartbeat,
+    reminders, media). Resolves the configured default channel at call time."""
+    return _default_entry().outbox
 
 
-def set_confirmation(confirmation: Confirmation) -> None:
-    global _confirmation
-    _confirmation = confirmation
+def register_confirmation(name: str, store: Confirmation) -> None:
+    """Register a channel's confirmation store under its channel name."""
+    _confirmation_stores[name] = store
+
+
+def _channel_name_for_thread(thread_id: str | None) -> str | None:
+    """The channel a thread belongs to, by its '<name>_<id>' prefix, when that
+    channel has a registered confirmation store. None for origin-less threads
+    (e.g. the 'heartbeat' thread)."""
+    if not thread_id:
+        return None
+    name = thread_id.split("_", 1)[0]
+    return name if name in _confirmation_stores else None
 
 
 def get_confirmation() -> Confirmation:
-    """The active confirmation backend destructive tools call."""
-    if _confirmation is None:
-        raise RuntimeError("Confirmation system not configured.")
-    return _confirmation
+    """The confirmation store for the channel of the running turn (its origin),
+    so a destructive tool's prompt and ack both stay on the channel the turn
+    came from. Falls back to the default channel for origin-less turns
+    (heartbeat). Destructive tools call this with no args; the origin is read
+    from ambient turn context."""
+    name = _channel_name_for_thread(turn_context.current_thread_id()) or _default_name()
+    store = _confirmation_stores.get(name)
+    if store is None:
+        raise RuntimeError(
+            f"No confirmation store registered for channel {name!r}; "
+            f"registered: {sorted(_confirmation_stores)}."
+        )
+    return store
 
 
 def _build_telegram_stack(
     on_message: OnMessage,
-    on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
+    on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
 ) -> TelegramStack:
     """Construct and wire the Telegram channel, router, confirmation UI + store,
@@ -128,14 +176,15 @@ def _build_telegram_stack(
     channel = TelegramChannel(owner_id)
     outbox = Outbox(channel, log_sink)
     confirmation_ui = TelegramConfirmationUI(channel)
-    store = InMemoryConfirmationStore(confirmation_ui, outbox, on_confirmation_outcome)
+    store = InMemoryConfirmationStore(
+        confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
+    )
     confirmation_ui.bind_store(store)
     router = TelegramInboundRouter(channel, on_message)
     host = TelegramHost(token, channel, router, confirmation_ui, store)
 
-    _set_default_channel(channel)
-    set_confirmation(store)
-    set_default_outbox(outbox)
+    register_channel(channel, outbox)
+    register_confirmation(channel.name, store)
     logger.info("Telegram stack built (owner_id=%d)", owner_id)
     return TelegramStack(
         channel=channel, router=router, store=store,
@@ -151,7 +200,7 @@ _STACK_BUILDERS: dict[str, Callable[..., Stack]] = {
 def build_stack(
     name: str,
     on_message: OnMessage,
-    on_confirmation_outcome: Callable[[str], Awaitable[None]] | None = None,
+    on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
 ) -> Stack:
     """Build the named channel's stack and register its proactive/confirmation

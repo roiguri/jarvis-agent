@@ -578,6 +578,7 @@ def ask_jarvis(
     turn_id = turn_id or uuid4().hex
     _tid_token = telemetry.TURN_ID.set(turn_id)
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
+    _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -710,6 +711,7 @@ def ask_jarvis(
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
+        turn_context.CURRENT_THREAD_ID.reset(_thread_token)
 
 
 def _ack_from_messages(messages) -> dict | None:

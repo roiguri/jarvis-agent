@@ -325,7 +325,7 @@ class ConfirmationUI(ABC):
     # (e.g. PTB CallbackQueryHandler) that calls store.resolve(callback_id, outcome).
 ```
 
-`InMemoryConfirmationStore.__init__(ui: ConfirmationUI, outbox: Outbox, on_outcome=None)` — the store delegates rendering to `ui` and delivers the final outcome via the injected `on_outcome` domain callback (conversational acknowledgement) or `outbox.notify_owner(...)` verbatim as fallback.
+`InMemoryConfirmationStore.__init__(ui: ConfirmationUI, outbox: Outbox, owner_thread_id: str, on_outcome=None)` — one store **per channel**, carrying that channel's `owner_thread_id` and `outbox` so a resolved confirmation acks on the channel the turn came from. The store delegates rendering to `ui` and delivers the final outcome via the injected `on_outcome(system_text, owner_thread_id, outbox)` domain callback (conversational acknowledgement) or `outbox.notify_owner(...)` verbatim as fallback. Stores register per channel name; `get_confirmation()` resolves the **origin** channel's store from the running turn's `CURRENT_THREAD_ID` (falling back to the default channel for origin-less turns).
 
 ---
 
@@ -405,7 +405,7 @@ Jarvis takes option (2). Each channel's factory reads its owner-config env and p
 
 The factory reads the env value and passes it into the channel constructor; nowhere else in the codebase reads it (`main.py` only calls `load_dotenv` — it never sees channel config).
 
-Domain code reaches the default channel through two factory accessors, never through a channel object: `default_outbox()` for proactive sends, and `default_owner_thread_id()` for addressing the owner's conversation thread (used by the confirmation-outcome callback). Today both resolve to the single configured Telegram channel. When a second channel ships, "which channel does this send/thread target" becomes a routing decision — that decision lives in `factory.py`, not in callers.
+Domain code reaches channels through factory accessors, never through a channel object. **Proactive** sends use `default_outbox()`, which resolves the configured default channel (`JARVIS_DEFAULT_CHANNEL`, default `telegram`) at call time through a name-keyed registry; `default_owner_thread_id()` addresses the owner's thread on that default channel, for origin-less owner-addressed routing. **Reactive** traffic follows its origin channel instead: a resolved confirmation acks on the thread it came from (the store carries its own channel's thread/outbox), and `get_confirmation()` resolves the origin channel's store from the running turn's `CURRENT_THREAD_ID`. Today every accessor resolves to the single Telegram channel; when a second channel ships, "which channel does this target" is a routing decision that lives in `factory.py`, not in callers.
 
 ---
 

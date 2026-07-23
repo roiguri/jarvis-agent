@@ -17,7 +17,8 @@ from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
-from gateway.factory import build_stack, default_outbox, default_owner_thread_id
+from gateway.factory import build_stack
+from gateway.outbox import Outbox
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
 from tools.core import (
@@ -167,17 +168,20 @@ async def main() -> None:
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
 
-    async def on_confirmation_outcome(system_text: str) -> None:
-        """Feed a resolved confirmation back through the agent on the owner's
-        thread so Jarvis acknowledges it conversationally, then reply."""
-        thread_id = default_owner_thread_id()
+    async def on_confirmation_outcome(
+        system_text: str, thread_id: str, outbox: Outbox
+    ) -> None:
+        """Feed a resolved confirmation back through the agent on the ORIGIN
+        channel's thread so Jarvis acknowledges it conversationally there, then
+        reply via that channel's outbox. thread_id/outbox are the origin
+        channel's, supplied by its confirmation store."""
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
             reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
             if reply:
                 await asyncio.to_thread(append_chat_log, "assistant", reply, thread_id)
                 # Conversational reply, already chat-logged — no notification event.
-                await default_outbox().notify_owner(reply)
+                await outbox.notify_owner(reply)
         except Exception:
             logger.exception("Failed to deliver confirmation outcome")
 
