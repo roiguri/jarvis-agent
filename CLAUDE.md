@@ -177,7 +177,7 @@ Used for irreversible actions (delete memory, write SOUL.md, delete media with f
 
 Two instances on one host, each rooted by its systemd unit's `JARVIS_ROOT`. Full
 runbook: **[docs/DEPLOY.md](docs/DEPLOY.md)**; rationale in
-**[docs/plans/STAGING_AND_DEPLOY.md](docs/plans/STAGING_AND_DEPLOY.md)**.
+**[docs/plans/archive/STAGING_AND_DEPLOY.md](docs/plans/archive/STAGING_AND_DEPLOY.md)**.
 
 - **Prod** — `/app/jarvis_code`, `jarvis.service`, `JARVIS_ROOT=/app`. **Deploy-only:**
   updated exclusively by `deploy/deploy.sh` (pull `origin/main` → snapshot → tag → smoke

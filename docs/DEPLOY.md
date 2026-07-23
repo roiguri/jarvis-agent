@@ -1,7 +1,7 @@
 # Deploy & operations runbook
 
 How to run the operator tooling for the two Jarvis instances. Design rationale lives
-in [plans/STAGING_AND_DEPLOY.md](plans/STAGING_AND_DEPLOY.md); this is the how‑to.
+in [plans/archive/STAGING_AND_DEPLOY.md](plans/archive/STAGING_AND_DEPLOY.md); this is the how‑to.
 
 ## The two instances
 
@@ -149,11 +149,36 @@ venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
 
 ---
 
-## `scripts/jrestart.sh` — restart prod and show what booted
+## `scripts/jrestart.sh` / `jrestart-staging.sh` — restart and show what booted
 
-Restarts `jarvis.service` and prints **this boot's** `Running code:` provenance block
-(branch, sha, deploy tag, root, proactive toggles) — so you immediately see what came
-up. Owner‑run (needs root).
+Restart one instance and print **that boot's** `Running code:` provenance block (branch,
+sha, deploy tag, `root :`, proactive toggles) — so you immediately see what came up.
+Owner‑run (needs root); run them from inside the container.
+
+```bash
+scripts/jrestart.sh            # prod    → jarvis.service
+scripts/jrestart-staging.sh    # staging → jarvis-staging.service (also cold-starts it)
+```
+
+Read the printed block first. For staging the `root : /app/jarvis_staging` row is the
+isolation check — it confirms you booted against the staging trees, not prod (this is
+what replaces the single-writer lock the design dropped).
+
+### Quick aliases (run from the PVE host root shell)
+
+Restarts and deploys need root, which you have on the Proxmox host. Drop these in
+`/root/.bashrc` so the whole flow is one word each — each wraps the in-container script
+with `pct exec 106`:
+
+```bash
+alias jrestart='pct exec 106 -- /app/jarvis_code/scripts/jrestart.sh'
+alias jrestart-staging='pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh'
+alias jdeploy='pct exec 106 -- bash -lc "cd /app/jarvis_code && ./deploy/deploy.sh"'
+```
+
+`jdeploy` runs the fail‑closed `deploy.sh` (it never restarts); follow a green deploy
+with `jrestart` to bring the new code up. Keeping them two words is deliberate — a
+restart drops in‑flight turns, so it stays a conscious second step.
 
 ---
 

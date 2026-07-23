@@ -152,7 +152,7 @@ live in the private deployment config, not in this repo.
 Development happens in the **staging tree**, never in prod. Prod (`/app/jarvis_code`)
 is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooling is in
 [docs/DEPLOY.md](docs/DEPLOY.md); the two-instance layout and rationale in
-[docs/plans/STAGING_AND_DEPLOY.md](docs/plans/STAGING_AND_DEPLOY.md).
+[docs/plans/archive/STAGING_AND_DEPLOY.md](docs/plans/archive/STAGING_AND_DEPLOY.md).
 
 1. **Edit** in `/app/jarvis_staging/code` on a feature branch off `main`:
    ```bash
@@ -161,11 +161,12 @@ is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooli
    ```
 2. **Test against the staging bot** (its own root, inert by default):
    ```bash
-   pct exec 106 -- systemctl start jarvis-staging.service   # on demand; not enabled
-   # chat with the STAGING bot in Telegram. Add a JARVIS_*_ENABLED=true line to
+   pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh   # start + show boot block
+   # Read `root : /app/jarvis_staging` in the printed block, then chat with the
+   # STAGING bot in Telegram. Add a JARVIS_*_ENABLED=true line to
    # deploy/jarvis-staging.service only for a run that deliberately exercises
    # heartbeat / reminders / webhook.
-   pct exec 106 -- systemctl stop jarvis-staging.service
+   pct exec 106 -- systemctl stop jarvis-staging.service                  # inert again when done
    ```
    Type-checking doesn't catch LLM-behavior regressions — talk to the staging bot.
 3. **Ship** — push the branch, open a PR to `main` (CI runs `path-isolation`), merge:

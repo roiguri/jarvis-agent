@@ -11,16 +11,17 @@ of them start. Technical detail and findings live in the step documents.
 
 ## Steps
 
-| # | Step | Document | What it touches |
-|---|---|---|---|
-| 1 | Staging environment | [../STAGING_AND_DEPLOY.md](../STAGING_AND_DEPLOY.md) | `config.py`, `main.py`, path constants; a second service |
-| 2 | Multi-channel support | `02_MULTI_CHANNEL_SUPPORT.md` | **Existing** gateway/agent code — the owner-addressing seam |
-| 3 | Adding the new channel | `03_APP_CHANNEL.md` | **New** `gateway/channels/app/` |
+| # | Step | Status | Document | What it touches |
+|---|---|---|---|---|
+| 1 | Staging environment | ✅ **done 2026-07-23** | [../archive/STAGING_AND_DEPLOY.md](../archive/STAGING_AND_DEPLOY.md) | `config.py`, `main.py`, path constants; a second service |
+| 2 | Multi-channel support | planning | `02_MULTI_CHANNEL_SUPPORT.md` | **Existing** gateway/agent code — the owner-addressing seam |
+| 3 | Adding the new channel | planning | `03_APP_CHANNEL.md` | **New** `gateway/channels/app/` |
 
 Step 1 is **not owned by this plan.** Staging and deploy discipline are general infrastructure —
 the app channel is their first beneficiary, not their reason — so they live outside `app-plans/`
-and proceed on their own schedule. This plan consumes them as a dependency. Steps 2 and 3 are
-not written yet.
+and proceed on their own schedule. This plan consumed them as a dependency; **they are now
+complete and archived** (staging bot live, prod deploy-only via `deploy.sh`/`rollback.sh`). Steps
+2 and 3 are not written yet.
 
 **Dependencies.** 1 and 2 are independent and can proceed in either order — staging is about
 *where state lives*, step 2 is about *how the gateway addresses the owner*; they share no code.
@@ -88,12 +89,12 @@ useful — this table is how to read one in terms of the other.
 Track A's hub **exists and runs**, and per the app author B1, B1.5 and B3 are implementable now.
 What stands in the way:
 
-1. **Staging** — [../STAGING_AND_DEPLOY.md](../STAGING_AND_DEPLOY.md). The upstream plan
-   verifies every phase against the live agent (`original_app_plan.md` line 91). B3 is the phase
-   that starts pushing real heartbeat and reminder traffic to a new device. That plan's open
-   question 5 covers the hub-side consequence: the app channel is *outbound*, so it binds no
-   port and cannot collide the way the webhook does — but the hub is one-bot-one-user, so once
-   the channel is live in prod, a staging agent polling the same hub would fight over updates.
+1. ~~**Staging**~~ — ✅ **done** ([../archive/STAGING_AND_DEPLOY.md](../archive/STAGING_AND_DEPLOY.md), completed
+   2026-07-23). The staging bot is live against its own root, so every phase now verifies against
+   the live agent without touching prod state. One hub-side consequence still stands (that plan's
+   open question 5): the app channel is *outbound*, so it binds no port and cannot collide the way
+   the webhook does — but the hub is one-bot-one-user, so once the channel is live in prod, a
+   staging agent polling the same hub would fight over updates. Give staging its own hub bot token.
 2. **Three env vars** in `/app/secrets/.env` — `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`,
    `APP_OWNER_USER_ID`. Owner-supplied.
 
@@ -122,11 +123,11 @@ behavior-only — plan context goes in commit messages. Nothing commits without 
 
 ## Open questions
 
-1. **Build order** — staging first, or start step 2 in parallel? Step 2 touches production
-   gateway code, which is an argument for staging existing first.
-2. **Does deploy discipline ride with staging?** The stale `feat/staging-env` plan bundled prod
-   pinning + `deploy.sh`/`rollback.sh` with the staging work. Lean: split — staging blocks the
-   app work, deploy discipline does not.
+1. ~~**Build order** — staging first, or start step 2 in parallel?~~ **Resolved:** staging landed
+   first (2026-07-23), so step 2 can now start against the staging bot with no risk to prod.
+2. ~~**Does deploy discipline ride with staging?**~~ **Resolved:** they shipped together but as
+   separate slices — `deploy.sh`/`rollback.sh` (slice 4a) landed alongside the staging bot (slice 3)
+   under one plan, now archived. The split the lean called for held: each reverts on its own.
 3. **How do upstream deltas get maintained?** The step documents will record where
    `original_app_plan.md` is stale against current code. Annotating a frozen spec has an ongoing
    cost; the alternative is asking the app author to reissue it against current code.

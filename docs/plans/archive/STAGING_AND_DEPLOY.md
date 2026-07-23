@@ -1,6 +1,7 @@
 # Staging environment & deploy discipline
 
-**Status:** planning, uncommitted. **Date:** 2026-07-20.
+**Status:** ✅ **COMPLETE** — slices 0–4 landed and verified live 2026-07-23 (rollback rehearsed, both paths work); archived.
+**Date:** started 2026-07-20, completed 2026-07-23.
 **Supersedes:** `feat/staging-env` (e20a7a4, 2026-07-10) — stale, will not be merged. Much of the
 analysis below is imported from it; additions and corrections are marked **[new]**.
 **First beneficiary:** the app channel (`docs/plans/app-plans/APP_CHANNEL_PLAN.md`), but this is
@@ -40,7 +41,7 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 
 - [x] `bash deploy/backup_state.sh pre-slice2` → `/app/backups/state-pre-slice2-<ts>.tar.gz` of `/app/jarvis_memory` + `/app/jarvis_data` (see [Backup & rollback](#backup--rollback))
 - [x] Confirm the tarball lists SOUL/USER/MEMORY + `threads.sqlite` before proceeding
-- [ ] *Revert path for all of 2c–2d:* `git revert` the commit **and** `backup_state.sh --restore` if any write went to the wrong tree
+- [x] *Revert path for all of 2c–2d:* `git revert` the commit **and** `backup_state.sh --restore` if any write went to the wrong tree *(n/a — 2c/2d landed clean under `JARVIS_ROOT=/app`; no wrong-tree write, so no restore needed)*
 
 **2a — the unit declares the instance** *(ops only, no code)*
 
@@ -64,7 +65,7 @@ because under `JARVIS_ROOT=/app` every derived path equals the literal it replac
 **2d — the data tree** *(everything under `/app/jarvis_data`)*
 
 - [x] `tools/core/history.py:14` (+ **delete `:15`**), `tools/core/scheduling.py:15`, `heartbeat_state.py:32`, `tools/fitness/fitness_tools.py:12` *(+ `agent.py` inline chat/notif logs)*
-- [~] **Restart prod**, watch one heartbeat tick — `turns.jsonl` and `state.json` still update in place *(`turns.jsonl` verified appending in place; `state.json` stamp pending next hourly tick)*
+- [x] **Restart prod**, watch one heartbeat tick — `turns.jsonl` and `state.json` still update in place *(both verified appending in place under `/app/jarvis_data`; `state.json` stamping confirmed on the hourly ticks)*
 - [x] Run the scratch-root assertion by hand; it must now pass *(full-module scan: zero `/app/jarvis_memory`/`/app/jarvis_data` leak)*
 
 **2e — dev tooling and the regression net** *(touches no production runtime)*
@@ -96,19 +97,19 @@ the one-way cutover. Don't bundle them.
 **4a — the deploy scripts**
 
 - [x] `deploy/backup_state.sh` — `<label>` / `--restore <tarball>` / `--prune`; shared by 2·0, `deploy.sh`, and manual use (see [Backup & rollback](#backup--rollback)) *(built early in 2·0)*
-- [ ] `deploy/deploy.sh`: clean-tree check → **`backup_state.sh` keyed to the tag-to-be** → `fetch` → `pull --ff-only origin main` → **tag the incoming commit** `deploy-YYYY-MM-DD-N` (push it) → sync deps if `requirements.txt` moved → `JARVIS_ROOT=/app` smoke check → assert unit still declares `JARVIS_ROOT` → `backup_state.sh --prune` → print hand-off
-- [ ] `deploy/rollback.sh`: list `deploy-*` → checkout → **write a rollback marker** → if the target's commit flags a format change, `backup_state.sh --restore` its tarball → hand-off
-- [ ] `deploy.sh` refuses to run from a rolled-back/detached tree without `--force`
-- [ ] Provenance block gains a loud row when HEAD is detached or the tree is rolled back
-- [ ] Dry run: deploy on an already-current main = clean no-op, tag created once
-- [ ] **Rehearse a rollback before you need one** — both a code-only rollback and a `--restore`
-- [ ] **Regression gate (CI)** — `.githooks/pre-commit` (via `core.hooksPath`) + a GitHub Actions workflow running `scripts/ci/check_paths.py` + a branch-protection rule on `main` + fold the check into `deploy.sh`'s smoke check (see [Regression gate (CI)](#regression-gate-ci))
+- [x] `deploy/deploy.sh`: clean-tree check → **`backup_state.sh` keyed to the tag-to-be** → `fetch` → `pull --ff-only origin main` → **tag the incoming commit** `deploy-YYYY-MM-DD-N` (push it) → sync deps if `requirements.txt` moved → `JARVIS_ROOT=/app` smoke check → assert unit still declares `JARVIS_ROOT` → `backup_state.sh --prune` → print hand-off
+- [x] `deploy/rollback.sh`: list `deploy-*` → checkout → **write a rollback marker** → if the target's commit flags a format change, `backup_state.sh --restore` its tarball → hand-off
+- [x] `deploy.sh` refuses to run from a rolled-back/detached tree without `--force`
+- [x] Provenance block gains a loud row when HEAD is detached or the tree is rolled back
+- [x] Dry run: deploy on an already-current main = clean no-op, tag created once *(exercised live — `deploy-2026-07-23-{1,2,3}` tags + matching state snapshots)*
+- [x] **Rehearse a rollback before you need one** — both a code-only rollback and a `--restore` *(rehearsed 2026-07-23; both paths work)*
+- [x] **Regression gate (CI)** — `.githooks/pre-commit` (via `core.hooksPath`) + a GitHub Actions workflow running `scripts/ci/check_paths.py` + a branch-protection rule on `main` + fold the check into `deploy.sh`'s smoke check (see [Regression gate (CI)](#regression-gate-ci))
 
 **4b — development moves out of prod**
 
-- [ ] Migrate in-flight branches (`feat/context-handling`, `docs/app-channel-plan`) to `/app/jarvis_staging/code`
-- [ ] Copy `.claude/` and migrate the Claude Code project dir (see below); put `/app/jarvis_code` on `main`
-- [ ] Update `CLAUDE.md` (sessions start in staging) + `DEVELOPMENT.md` §Development Workflow 1
+- [x] Migrate in-flight branches (`feat/context-handling`, `docs/app-channel-plan`) to `/app/jarvis_staging/code` *(development now runs from the staging tree; prod checkout sits on `main`)*
+- [x] Copy `.claude/` and migrate the Claude Code project dir (see below); put `/app/jarvis_code` on `main` *(`.claude/` present under the staging tree)*
+- [x] Update `CLAUDE.md` (sessions start in staging) + `DEVELOPMENT.md` §Development Workflow 1 *(commit c7bb3b2, PR #39)*
 
 ---
 
