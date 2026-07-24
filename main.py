@@ -196,6 +196,22 @@ async def main() -> None:
         log_sink=async_append_notification_log,
     )
 
+    # Optional second channel: the jarvis-app hub, built only when APP_HUB_URL is
+    # set — an instance without it (prod today) constructs nothing and is
+    # byte-identical to before. A misconfigured app channel must never take down
+    # the primary channel, so a build failure logs and continues without it.
+    app_stack = None
+    if os.getenv("APP_HUB_URL"):
+        try:
+            app_stack = build_stack(
+                "jarvis-app",
+                on_message=process_inbound_message,
+                on_confirmation_outcome=on_confirmation_outcome,
+                log_sink=async_append_notification_log,
+            )
+        except Exception:
+            logger.exception("jarvis-app channel misconfigured — continuing without it")
+
     # Media notifications go through the stack's Outbox (send + log-on-success).
     async def _llm_format(prompt: str) -> str:
         return await asyncio.to_thread(ask_jarvis_once, prompt)
@@ -229,6 +245,12 @@ async def main() -> None:
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
     await stack.start()
+
+    # Second channel, if built: start its poll loop (a background task). The
+    # primary channel's start() already bound the shared outbox loop.
+    if app_stack is not None:
+        await app_stack.start()
+        logger.info("jarvis-app channel active (hub polling).")
 
     try:
         # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md).
@@ -281,6 +303,8 @@ async def main() -> None:
     finally:
         logger.info("Shutdown signal received. Stopping channel...")
         scheduler.shutdown(wait=False)
+        if app_stack is not None:
+            await app_stack.stop()
         await stack.stop()
 
     logger.info("Jarvis shut down cleanly.")
