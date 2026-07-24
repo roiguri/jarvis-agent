@@ -8,8 +8,9 @@ gateway importing back up into the agent) fails here instead of silently
 coupling the whole app to one channel again.
 
 Four static checks (pure source scan — no app import, no deps):
-  1. No domain module (nor a slash-command handler) imports gateway.channels.* —
-     they reach the gateway only through gateway.factory.
+  1. No module imports gateway.channels.* — everyone reaches the gateway through
+     gateway.factory. Scans the whole repo (deny-list), exempting only the two
+     legitimate importers: gateway/factory.py and the gateway/channels/ packages.
   2. No channel adapter or core-contract module in gateway/ imports the
      agent/tools/main/heartbeat layers — a channel is a thin adapter; the host
      injects the coupling. gateway/commands/ is exempt: slash-command handlers
@@ -32,12 +33,16 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Locations that must never import a concrete channel — they reach the gateway
-# only through gateway.factory. Includes gateway/commands/: handlers may import
-# agent/tools, but not a concrete channel. The factory (composition root) and
-# the channels themselves are deliberately absent.
-_NO_CONCRETE_CHANNEL = ("agent.py", "heartbeat.py", "heartbeat_state.py", "main.py", "tools", "gateway/commands")
+# Nobody imports a concrete channel (gateway.channels.*) — everyone reaches the
+# gateway through gateway.factory. Deny-list, not allow-list: scan the whole repo
+# and exempt only the two legitimate importers, so a newly added module is
+# covered by default instead of silently skipping the guard.
+#   - gateway/factory.py: the composition root, the one place that wires channels
+#   - gateway/channels/  : a channel's own package, importing its sibling modules
 _FORBIDDEN_IMPORT = "gateway.channels"
+# Repo-relative, matched against _rel(path) so os.walk's "/./" segments normalize.
+_CHANNEL_IMPORT_EXEMPT_FILE = os.path.join("gateway", "factory.py")
+_CHANNEL_IMPORT_EXEMPT_TREE = os.path.join("gateway", "channels") + os.sep
 
 # gateway/ is thin adapters + core contracts; it must not import back up into the
 # app — EXCEPT gateway/commands/ (the documented slash-command bridge).
@@ -85,9 +90,14 @@ def _rel(path):
 
 
 def check_domain_imports():
-    """#1 — no domain module (nor a slash-command handler) imports a channel."""
+    """#1 — nobody imports a concrete channel except the factory and the channel
+    packages themselves. Scans the whole repo (deny-list) so a new module can't
+    silently escape the guard."""
     leaks = []
-    for path in _py_files(*_NO_CONCRETE_CHANNEL):
+    for path in _py_files("."):
+        rel = _rel(path)
+        if rel == _CHANNEL_IMPORT_EXEMPT_FILE or rel.startswith(_CHANNEL_IMPORT_EXEMPT_TREE):
+            continue
         for mod, line in _imports(path):
             if mod == _FORBIDDEN_IMPORT or mod.startswith(_FORBIDDEN_IMPORT + "."):
                 leaks.append(f"{_rel(path)}:{line} imports {mod} — reach the gateway via gateway.factory")
