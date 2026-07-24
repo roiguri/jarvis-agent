@@ -351,10 +351,18 @@ def build_system_prompt(
     All files are read per turn (edits take effect next turn, no restart).
     """
     now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
-    envelope = (
-        f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]\n"
-        f"[Active scope: {scope}]"
-    )
+    lines = [
+        f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
+        f"[Active scope: {scope}]",
+    ]
+    # Origin channel, derived from the turn's thread-id prefix (the "<name>_<id>"
+    # convention every channel follows). A runtime value — no channel-name literal
+    # in this module — so it stays inform-only and channel-agnostic. Skipped for
+    # heartbeat, whose thread is not a channel.
+    thread_id = turn_context.current_thread_id()
+    if scope == "user" and thread_id:
+        lines.append(f"[Channel: {thread_id.split('_', 1)[0]}]")
+    envelope = "\n".join(lines)
     parts = [
         envelope,
         load_or_blank(_SOUL_PATH),
