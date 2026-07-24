@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -14,6 +15,18 @@ from tools.registry import tool_register
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 EVENTS_PATH = os.path.join(config.DATA_DIR, "scheduling", "scheduled_events.json")
+
+# Serializes read-modify-write of scheduled_events.json. Concurrent writers are a
+# user turn (manage_reminder) and the heartbeat turn (fire path removes fired
+# events, heartbeat.py) — both asyncio.to_thread(...) in the SAME process, plus a
+# second channel would just add another thread here. The lock is held across the
+# whole load->modify->save so each writer reads fresh state (an atomic os.replace
+# alone prevents a torn file, not a lost update). INVARIANT — one writer process
+# per instance root — is held PROCEDURALLY (one service unit per root); a
+# cross-process fcntl.flock is deliberately not used and would only be needed if
+# the heartbeat were split into its own process. Mirrors tools/core/memory.py's
+# _WRITE_LOCK; a general store-writer primitive is tracked as a follow-up.
+_LOCK = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +53,17 @@ def _save_events(data: dict) -> None:
 
 
 def _append_event(event: dict) -> None:
-    data = _load_events()
-    data["events"].append(event)
-    _save_events(data)
+    with _LOCK:
+        data = _load_events()
+        data["events"].append(event)
+        _save_events(data)
 
 
 def _remove_event(event_id: str) -> None:
-    data = _load_events()
-    data["events"] = [e for e in data["events"] if e.get("id") != event_id]
-    _save_events(data)
+    with _LOCK:
+        data = _load_events()
+        data["events"] = [e for e in data["events"] if e.get("id") != event_id]
+        _save_events(data)
 
 
 # ---------------------------------------------------------------------------
