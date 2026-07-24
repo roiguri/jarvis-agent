@@ -17,6 +17,7 @@ import contextlib
 import logging
 
 from gateway.base import InboundMessage, OnMessage
+from gateway.commands import list_commands
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
 from gateway.channels.jarvis_app.client import (
     HubClient,
@@ -48,6 +49,7 @@ class JarvisAppInboundRouter:
     async def run(self) -> None:
         """Poll and answer until request_stop(); then drain in-flight turns."""
         await self._check_contract()
+        await self._declare_commands()
         fetcher = asyncio.create_task(self._fetch_loop())
         consumer = asyncio.create_task(self._consume_loop())
 
@@ -62,6 +64,21 @@ class JarvisAppInboundRouter:
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
+
+    async def _declare_commands(self) -> None:
+        """Publish the shared slash-command list to the hub so the app's command
+        menu matches the gateway's commands (same source Telegram's menu uses).
+        Non-fatal — a hub that's down at startup just skips it; the poll loop's
+        degraded mode carries on."""
+        commands = [
+            {"name": c.name, "description": c.description} for c in list_commands()
+        ]
+        try:
+            await self._client.declare_commands(commands)
+        except Exception as exc:
+            logger.warning("jarvis-app command declaration skipped: %s", exc)
+        else:
+            logger.info("declared %d slash commands to the jarvis-app hub", len(commands))
 
     async def _check_contract(self) -> None:
         """Warn (never fail) if the hub's contract_version differs from the one

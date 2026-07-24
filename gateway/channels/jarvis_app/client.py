@@ -74,3 +74,9 @@ class HubClient:
         """POST an assistant message to the hub (text-only body for now)."""
         r = await self._client.post("/bot/v1/messages", json=body)
         r.raise_for_status()
+
+    async def declare_commands(self, commands: list[dict]) -> None:
+        """Publish the bot's slash-command list to the hub so the app can show a
+        command menu. Each entry is {"name", "description"}."""
+        r = await self._client.post("/bot/v1/commands", json=commands)
+        r.raise_for_status()
