@@ -47,14 +47,18 @@ stay in Stage D (still no phone renderer).
 **Stage C — app channel** (the deliverable; contract `3b3a48f330f09a39`, phone connected for real round-trip)
 - [x] **Owner:** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` in staging `secrets/.env` (staging-specific hub bot token); documented (commented) in `.env.example`
 - [x] Hub reachable from staging + contract pin re-validated via `GET /v1/health` (returned `3b3a48f330f09a39`)
-- [ ] Re-validate every agent-internal reference against current code + `jarvis-app/contract.md` before build
-- [ ] B0 — **no new doc.** Record `contract_version = 3b3a48f330f09a39` as a `HubClient` constant (warn-on-mismatch); app specifics (adapter map, poll-loop ack, degraded mode, unsupported-capability pattern) live in `gateway/channels/jarvis_app/` module docstrings, same as Telegram's. `GATEWAY.md` stays channel-agnostic — touched only for channel-agnostic registry rows (e.g. the media-cache table) as the step adding that artifact lands (C4)
-- [ ] C1 — text round-trip: `client.py` (`HubClient`) · `channel.py` (`JarvisAppChannel`, text) · `router.py` (fetch loop + single consumer) · degraded mode (log once, back off 1→60s) · SIGTERM drain (shared with #33) · `build_jarvis_app_stack()` + `main.py` gate on `APP_HUB_URL`. *Verify:* type on the phone → reply on the phone + a `jarvis-app_<owner>` row.
-- [ ] C2 — slash commands declared to the hub (`declare_commands`, non-fatal). *Verify:* slash menu on the phone.
-- [ ] C3 — outbound media: `send_media`/`send_to_owner_media` upload (`POST /bot/v1/attachments`) then send `attachment_ids`. *Verify:* a media notification's poster shows on the phone. Consumer: `notifier.py`.
-- [ ] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini. *Verify:* a photo from the phone gets described.
-- [ ] C5 — confirmation "unsupported" notice (safe floor): app `UnsupportedConfirmation` returns a text signal to the agent → **plain refusal**, no destructive action, **no cross-channel handoff**. If the app ships confirmation support (upstream B2) before we reach C5, build the real prompt instead and skip this. *Verify:* a destructive ask from the app → graceful text refusal.
-- [ ] **Restart staging** + Telegram regression + `code-review` skill
+- [x] Re-validate agent-internal references against current code + `jarvis-app/contract.md` (done during the C1 build — Channel ABC, factory, `main`, Outbox, poll-loop reference all re-checked)
+- [x] B0 — **no new doc.** Pin `3b3a48f330f09a39` recorded as the `HubClient` constant (warn-on-mismatch); app specifics + the Telegram-vs-app differences write-up live in `gateway/channels/jarvis_app/` module docstrings. `GATEWAY.md` untouched (stays channel-agnostic); its media-cache row lands with C4
+- [x] C1 — text round-trip (commit `3f4e7b0`). **Verified live on the phone** — `jarvis-app_<owner>` round-trip in `chat_history.jsonl`, both channels up, no crash, no degraded backoff
+- [x] C2 — slash commands declared to the hub (`declare_commands`, non-fatal) (commit `22b463a`). *Pending phone verify:* the `declared 8 slash commands…` log line + the app slash menu
+- [x] Commands polish — `/help` reformatted as a markdown list so it renders on all channels (bare-newline list collapsed on the app's CommonMark renderer) (commit `899fe67`)
+- [x] C6 — origin channel injected into the system-prompt envelope (`[Channel: <name>]`, user scope, gate-safe) (commit `c5309f3`); Phase 1 of #50 (capability descriptors deferred there)
+- [ ] C3 — outbound media: `send_media`/`send_to_owner_media` upload (`POST /bot/v1/attachments`) then send `attachment_ids`. *Verify:* a media notification's poster shows on the phone. Consumer: `notifier.py`. **Verify gated on the hub upgrading to `3b3a48…`** (see note)
+- [ ] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini. *Verify:* a photo from the phone gets described. **Verify gated on the hub upgrade** (see note)
+- [ ] C5 — confirmation "unsupported" notice (safe floor): app `UnsupportedConfirmation` returns a text signal to the agent → **plain refusal**, no destructive action, **no cross-channel handoff**. If the app ships confirmation support (upstream B2) before we reach C5, build the real prompt instead and skip this. *Verify:* a destructive ask from the app → graceful text refusal. **Verifiable against the current hub now**
+- [ ] **Restart staging** + Telegram regression + `code-review` skill, then PR `feat/stage-c-app-channel` → main
+
+> **Hub-skew note (2026-07-24):** the running hub still serves `contract_version = f1633277132cbedf`; the warn-on-mismatch fired as designed. C1/C2/C5 are unaffected (stable endpoints), but **C3/C4 verify waits for the hub to upgrade to the pinned `3b3a48f330f09a39`** (in progress, app-side). The contract is frozen, so C3/C4 are safe to *build* ahead of that; only the on-device verify is gated.
 
 **Stage D — rich rendering / blocks** (design deliberately OPEN — decide when a consumer exists)
 - [ ] Design the outbound seam against the real app renderer (`OutboundReply` is *one candidate*, not committed)
