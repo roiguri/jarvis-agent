@@ -241,10 +241,13 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     tasks instead of duplicating briefings.
 
     Reads chat_history.jsonl directly to avoid pulling in the tool import path.
-    Filters to thread_ids starting with 'telegram_' and timestamps >= start of
-    Israel-today. Truncates each message to keep the prompt bounded.
+    That log is shared by both threads, so this drops the heartbeat's own thread
+    (else the tick would read its own briefings back) and test rows, keeping
+    today's user-channel messages. Truncates each message to keep the prompt
+    bounded.
     """
     import json
+    from heartbeat import HEARTBEAT_THREAD_ID
     chat_log = os.path.join(config.DATA_DIR, "logs", "chat_history.jsonl")
     if not os.path.exists(chat_log):
         return ""
@@ -259,7 +262,7 @@ def _load_recent_user_chat(limit: int = 60) -> str:
                 try:
                     rec = json.loads(line)
                     tid = rec.get("thread_id", "")
-                    if not tid.startswith("telegram_") or tid == "telegram_test":
+                    if not tid or tid == HEARTBEAT_THREAD_ID or tid.endswith("_test"):
                         continue
                     ts = _dt.datetime.fromisoformat(rec["ts"])
                     if ts.tzinfo is None:
