@@ -21,18 +21,17 @@ dependency**, not by whether it touches existing or new code.
 - [x] Per-channel origin-scoped confirmations — prompt + ack on origin, no broadcast (PR #45)
 - [x] Channel-agnosticism CI gate — path-isolation + `channel-agnostic`, required on `main` (PR #46)
 
-**Stage A — free cleanups** (no deps; byte-identical / dead-code)
-- [ ] A1 — delete the dead `supports_streaming` flag (`base.py:52`)
-- [ ] A2 — generalize the `telegram_` thread-prefix filter (`agent.py:262`) to a channel-prefix set
-- [ ] A2 — extend the CI channel-agnostic gate to cover `agent.py` (currently exempted)
-- [ ] **Restart staging** + Telegram regression (GATEWAY.md step 9)
+**Stage A — free cleanups** (no deps; byte-identical / dead-code) — ✅ merged PR #47
+- [x] A1 — deleted the dead `supports_streaming` flag (`base.py`)
+- [x] A2 — the heartbeat chat filter (`agent.py`) now excludes the heartbeat thread *by identity* (`HEARTBEAT_THREAD_ID`) instead of a hardcoded `telegram_` prefix — chose the exclude-list over a registry allow-list as it states the real intent
+- [x] A2 — CI gate: added check #4 (no channel name in `agent.py`); also flipped check #1 allow-list → deny-list so a new module can't silently escape
+- [ ] Restart staging + Telegram regression — *not run; changes byte-identical/tooling-only, so this is regression smoke only*
 
-**Stage B — shared-state write safety** (resource-level; heartbeat covered, not exempt)
+**Stage B — shared-state write safety** (resource-level; heartbeat covered, not exempt) — ✅ PR #49
 - [x] Audit: memory (`_WRITE_LOCK`) + confirmation store (`_lock`) already resource-locked; `scheduled_events.json` the lone gap
-- [ ] B-lock — `threading.Lock` around the `scheduled_events.json` read-modify-write (whole load→modify→save), covering user turns + heartbeat + future channels
-- [ ] Follow-up filed: unify the three ad-hoc locks behind one store-writer primitive (issue #48)
-- [ ] **Restart** + verify: concurrent reminder writes lose no events; heartbeat fire-path unchanged
-- [ ] **Restart** + verify: a second user turn waits for the first; a heartbeat tick still runs concurrently
+- [x] B-lock — `threading.Lock` around the `scheduled_events.json` read-modify-write (whole load→modify→save), covering user turns + heartbeat + future channels. Differential test: lock-free loses 280/400 updates, locked 0
+- [x] Follow-up filed: unify the three ad-hoc locks behind one store-writer primitive (issue #48)
+- [ ] Restart staging + a reminder round-trip — *regression smoke only (the lock is a no-op single-threaded); not run*
 
 **Stage C — app channel, text round-trip** (the deliverable)
 - [ ] **Owner:** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` in `staging.env` (staging-specific hub bot token)
@@ -57,7 +56,7 @@ dependency**, not by whether it touches existing or new code.
 
 Steps 2 and 3 were split by *what code is touched* — existing gateway/agent code vs. the new
 channel package. That is a good conceptual map and a misleading run order: taken linearly it
-front-loads scaffolding (the render seam, sibling-thread context, the concurrency lock) **ahead of
+front-loads scaffolding (the render seam, sibling-thread context, the write-safety work) **ahead of
 the app channel that would give that scaffolding a consumer to verify against.** Several of those
 slices have no live consumer until the phone grows a capability it does not have yet, so building
 them first means writing code whose "verify" step cannot run.
@@ -82,9 +81,10 @@ So **the app channel (B0/B1) is the next real deliverable**, with one safety ite
 deliberately pulled in front of it.
 
 ```
-A. free cleanups ─► B. concurrency lock ─► C. app channel (B0/B1) ─► D. rich rendering (open)
-   (no deps)           (before any 2nd         (the deliverable)        (design when a real
-                        channel is live)                                 consumer exists)
+A. free cleanups ─► B. write safety ─► C. app channel (B0/B1) ─► D. rich rendering (open)
+   (no deps)           (resource-level     (the deliverable)        (design when a real
+                        lock; heartbeat                              consumer exists)
+                        covered)
 ```
 
 ---
@@ -187,8 +187,9 @@ API onto the `Channel` ABC, the degraded-mode contract, and the pinned
     `_consume_loop` that runs turns one at a time. The re-poll is what acks the previous batch, so
     it must go out *while* a turn is still running — a serial `poll → turn → poll` collapses the
     app's ✓✓ into the reply and hides a class of concurrency bug.
-  - **One consumer, not a task per update** — task-per-update would overlap same-user turns, the
-    exact failure mode Stage B locks against.
+  - **One consumer, not a task per update** — task-per-update would overlap same-user turns within
+    the app channel; a single consumer keeps them ordered, the same per-conversation serialization
+    the other transports provide (distinct from Stage B, which is resource-level write safety).
   - **Fetch errors don't kill the fetcher** — a dropped poll logs, backs off, continues.
   - **Drain on SIGTERM** — cancel the fetcher (anything fetched is already queued — the ack was the
     poll), `queue.join()` to finish in-flight turns, then exit. Same graceful-shutdown work as #33.
