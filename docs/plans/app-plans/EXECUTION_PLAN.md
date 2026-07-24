@@ -27,8 +27,11 @@ dependency**, not by whether it touches existing or new code.
 - [ ] A2 — extend the CI channel-agnostic gate to cover `agent.py` (currently exempted)
 - [ ] **Restart staging** + Telegram regression (GATEWAY.md step 9)
 
-**Stage B — concurrent-turn safety** (before any second channel is live)
-- [ ] B-lock — keyed lock serializing *user* turns; heartbeat exempt
+**Stage B — shared-state write safety** (resource-level; heartbeat covered, not exempt)
+- [x] Audit: memory (`_WRITE_LOCK`) + confirmation store (`_lock`) already resource-locked; `scheduled_events.json` the lone gap
+- [ ] B-lock — `threading.Lock` around the `scheduled_events.json` read-modify-write (whole load→modify→save), covering user turns + heartbeat + future channels
+- [ ] Follow-up filed: unify the three ad-hoc locks behind one store-writer primitive (issue #48)
+- [ ] **Restart** + verify: concurrent reminder writes lose no events; heartbeat fire-path unchanged
 - [ ] **Restart** + verify: a second user turn waits for the first; a heartbeat tick still runs concurrently
 
 **Stage C — app channel, text round-trip** (the deliverable)
@@ -68,11 +71,12 @@ code 2026-07-23):
    "write against the seam to avoid a second edit at every send site" concern is empty.
    `OutboundReply` / `send_rich` matter only when something *emits blocks* — upstream B4, deferred
    behind the phone renderer regardless.
-2. **The concurrency lock gates the *prod flip*, not building B1.** B1's own poll loop (single
-   consumer, one turn at a time) prevents user↔user overlap *within* the app channel. The lock
-   matters for **cross-channel** overlap — a Telegram turn and an app turn at the same instant —
-   which is unreachable while B1 is built and validated in staging (one channel at a time), and
-   becomes reachable only when both channels serve the owner concurrently in prod.
+2. **Write safety is a small resource-level fix, not a turn lock that gates B1.** The original
+   plan imagined a keyed lock serializing whole user turns (heartbeat exempt). The audit + the
+   Hermes/OpenClaw research (Stage B) overturned that: the hazard is interleaved read-modify-write
+   of shared state, closed by per-resource locks the heartbeat also passes through — not by
+   serializing turns. B1 needs nothing from it; per-conversation ordering is already handled by the
+   channel transports.
 
 So **the app channel (B0/B1) is the next real deliverable**, with one safety item (Stage B)
 deliberately pulled in front of it.
@@ -104,29 +108,47 @@ name still lives in domain code.
 
 ---
 
-## Stage B — concurrent-turn safety (the keyed lock)
+## Stage B — shared-state write safety (resource-level, heartbeat covered)
 
-A keyed lock serializes **user** turns against each other; **heartbeat stays exempt** — not a
-global `ask_jarvis` lock, which would make a chat message wait behind a ~90s tick. User threads
-share one lock; heartbeat holds none.
+The hazard is interleaved **read-modify-write of shared state**, not concurrent turns as such.
+Turns already run in parallel worker threads (`asyncio.to_thread(ask_jarvis, …)`), and a second
+channel widens that — but the thing that actually corrupts is two writers loading the same file,
+each mutating, each saving back (a lost update). An atomic `os.replace` prevents a *torn* file, not
+a lost update. This supersedes the original plan's "keyed user-turn lock, heartbeat exempt."
 
-**Placed before the app channel on purpose.** Landing it while only one channel exists means B1
-arrives into an already-safe world — there is never a window in which two live channels share the
-unlocked write surfaces (`scheduled_events.json`, memory files, the confirmation store) with no
-lock. Cheaper to land the safety property first than to land the channel and the property together.
+**Audit (2026-07-24).** Of the three shared surfaces, two are already protected at the **resource**
+level, both covering the heartbeat:
+- **Memory files** — `tools/core/memory.py` `_WRITE_LOCK` (its comment already names the user turn
+  *and* the heartbeat as the racing writers, and a second channel as "just another thread here").
+- **Confirmation store** — `InMemoryConfirmationStore._lock` guards every `_pending` access.
+- **`scheduled_events.json`** — the lone gap: `_append_event`/`_remove_event` did an unguarded
+  load→mutate→save. And it's a **live** race today, not hypothetical: `heartbeat.py:201,211` removes
+  fired events in a worker thread while a user `manage_reminder` can append/delete concurrently.
 
-**Honest note on present-day exposure** (verified 2026-07-23, so the rationale is not oversold):
-with a single Telegram channel the overlap is *mostly latent*. PTB runs with `concurrent_updates`
-off (`host.py:56`) and serializes its update queue, so two fast text messages do **not** overlap
-despite `ask_jarvis` running in a worker thread (`main.py:64`). The only real single-channel
-overlap paths today are the media-group flush detach (`router.py:91`) and heartbeat↔user — and the
-lock leaves heartbeat exempt by design. So Stage B's real payoff is **cross-channel**; doing it
-first is a safety-ordering choice, not a fix for a bug firing today. The interleaved-write exposure
-is latent, not new — the second channel widens it.
+**The fix.** A module `threading.Lock` in `scheduling.py` held across the whole load→modify→save, so
+each writer reads fresh committed state (locking only the save would keep the lost update). Covers
+user turns, the heartbeat, and a future app channel *by construction* — a resource lock doesn't care
+which thread you are. **No turn-level lock, no heartbeat exemption, no chat waiting behind a tick.**
 
-*Verify:* a second user turn waits for the first to finish; a heartbeat tick still runs
-concurrently with a user turn (the behavior that must **not** regress). **Restart** + two fast
-messages reply in order, tick unaffected.
+**Why resource-level, not a turn lock (research-backed, 2026-07-24).** Both reference assistants —
+**Hermes** (`NousResearch/hermes-agent`) and **OpenClaw** (`openclaw/openclaw`) — do exactly this:
+shared writes are protected by **per-resource** locks held across the full read-modify-write with a
+fresh in-lock read; the background scheduler is **not** turn-serialized and **not** exempt — it
+funnels through the same resource locks. Both reserve turn-level serialization for *per-conversation
+ordering* only, which Jarvis's channels already provide (PTB serializes Telegram; the app router is
+single-consumer). OpenClaw's own review even flagged that *it* lacks a memory-file lock — a gap
+Jarvis's `_WRITE_LOCK` already closes.
+
+**Deferred (documented, not built).** Both references add a cross-process `flock`/DB lock because
+*multiple processes* touch their stores. Jarvis's `scheduled_events.json` is single-process (one
+service unit per instance root), so an in-process lock is correct and sufficient — the same
+reasoning `memory.py` documents. The escalation trigger is identical: only if the heartbeat is ever
+split into its own process. Tracked, together with the broader "one general store-writer primitive
+instead of three ad-hoc locks" cleanup, in **issue #48**.
+
+*Verify:* concurrent appends/removes lose no events (thread-stress test — done: 400 concurrent
+appends → 400, no lost updates); `manage_reminder` and the heartbeat fire-path behave unchanged
+single-threaded. **Restart** + a reminder round-trip.
 
 ---
 
