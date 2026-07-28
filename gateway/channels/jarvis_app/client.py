@@ -71,9 +71,31 @@ class HubClient:
         return r.json()
 
     async def send_message(self, body: dict) -> None:
-        """POST an assistant message to the hub (text-only body for now)."""
+        """POST an assistant message to the hub. `body` carries any of text /
+        attachment_ids (the hub requires at least one)."""
         r = await self._client.post("/bot/v1/messages", json=body)
         r.raise_for_status()
+
+    async def upload_attachment(
+        self, payload: bytes, *, filename: str, mime_type: str
+    ) -> str:
+        """Upload one blob and return its `att_…` id, to be referenced by a later
+        send_message(attachment_ids=[…]). The hub infers kind from the mime type.
+        Raises HubUnavailable on a server error or transport failure so a proactive
+        media send degrades to a failed send rather than crashing the caller."""
+        try:
+            r = await self._client.post(
+                "/bot/v1/attachments",
+                files={"file": (filename, payload, mime_type)},
+            )
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                raise HubUnavailable(f"hub returned {e.response.status_code}") from e
+            raise
+        except httpx.HTTPError as e:
+            raise HubUnavailable(str(e)) from e
+        return r.json()["id"]
 
     async def declare_commands(self, commands: list[dict]) -> None:
         """Publish the bot's slash-command list to the hub so the app can show a

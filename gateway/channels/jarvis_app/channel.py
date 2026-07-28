@@ -3,8 +3,10 @@ JarvisAppChannel — the jarvis-app implementation of the Channel contract.
 
 A thin adapter over HubClient. The hub is one-bot-one-owner: there is a single
 conversation, so `chat_id` carries no routing and every send addresses the owner.
-Text only for now; media sends raise NotImplementedError (the Outbox reports that
-as a failed send) until the media step lands.
+Media rides the attachment model: upload the bytes, then send a message that
+references the returned id. The hub's kinds are image | audio | file; a kind this
+channel can't represent raises NotImplementedError, which the Outbox reports as a
+failed send (base.Channel.send_media contract) rather than mislabeling the blob.
 """
 
 from __future__ import annotations
@@ -21,6 +23,21 @@ logger = logging.getLogger(__name__)
 # The channel name contains no underscore, so the prefix stays unambiguous.
 def thread_id_for(owner_id: str) -> str:
     return f"jarvis-app_{owner_id}"
+
+
+# The kinds this channel can represent, mapped to the (filename, mime_type) the
+# upload needs. The hub infers its Attachment.kind from the mime type, and its own
+# enum is image | audio | file — Telegram's "video" has no equivalent here, so it
+# (and any other kind) falls through to NotImplementedError rather than being
+# mislabeled. Images sniff PNG vs JPEG since posters arrive as either.
+def _upload_meta(kind: str, payload: bytes) -> tuple[str, str]:
+    if kind == "image":
+        if payload[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image.png", "image/png"
+        return "image.jpg", "image/jpeg"
+    if kind == "audio":
+        return "audio.ogg", "audio/ogg"
+    raise NotImplementedError(f"jarvis-app cannot send media kind={kind!r}")
 
 
 class JarvisAppChannel(Channel):
@@ -41,7 +58,8 @@ class JarvisAppChannel(Channel):
     async def send_media(
         self, chat_id: str, kind: str, payload: bytes, caption: str | None = None
     ) -> None:
-        raise NotImplementedError(f"jarvis-app cannot send media kind={kind!r} yet")
+        # One owner, one conversation — chat_id is not a routing key here.
+        await self._upload_and_send(kind, payload, caption)
 
     async def send_to_owner(self, text: str) -> None:
         await self._client.send_message({"text": text})
@@ -49,7 +67,21 @@ class JarvisAppChannel(Channel):
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None
     ) -> None:
-        raise NotImplementedError(f"jarvis-app cannot send media kind={kind!r} yet")
+        await self._upload_and_send(kind, payload, caption)
+
+    async def _upload_and_send(
+        self, kind: str, payload: bytes, caption: str | None
+    ) -> None:
+        # Raises NotImplementedError for an unrepresentable kind — before any
+        # upload — so the Outbox reports a failed send with nothing half-sent.
+        filename, mime_type = _upload_meta(kind, payload)
+        att_id = await self._client.upload_attachment(
+            payload, filename=filename, mime_type=mime_type
+        )
+        body: dict = {"attachment_ids": [att_id]}
+        if caption:
+            body["text"] = caption
+        await self._client.send_message(body)
 
     def authorize(self, raw_user_id: str) -> bool:
         # The bot token scopes the hub to the single owner, so inbound updates are
