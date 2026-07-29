@@ -11,12 +11,27 @@ failed send (base.Channel.send_media contract) rather than mislabeling the blob.
 
 from __future__ import annotations
 
+import base64
 import logging
+from io import BytesIO
+
+try:
+    from PIL import Image
+except ImportError:
+    # Pillow only powers optional upload metadata (dimensions + blur-up
+    # placeholder). The factory imports this module unconditionally, so a deploy
+    # without Pillow must still import cleanly — metadata just degrades to none.
+    Image = None
 
 from gateway.base import Channel
 from gateway.channels.jarvis_app.client import HubClient
 
 logger = logging.getLogger(__name__)
+
+# Longest edge of the blur-up placeholder thumbnail, matching the app's own
+# outbound encoder (AttachmentBlurEncoder): ~24px, JPEG quality 60.
+_BLUR_EDGE = 24
+_BLUR_QUALITY = 60
 
 
 # thread_id mirrors telegram's "<channel>_<id>", parsed on the first underscore.
@@ -38,6 +53,33 @@ def _upload_meta(kind: str, payload: bytes) -> tuple[str, str]:
     if kind == "audio":
         return "audio.ogg", "audio/ogg"
     raise NotImplementedError(f"jarvis-app cannot send media kind={kind!r}")
+
+
+# Pixel dimensions + a tiny base64 blur-up thumbnail for an image, so the app
+# reserves the right aspect ratio (no thread reflow) and shows a placeholder
+# while the full image loads. Best-effort: any decode/encode failure returns
+# empty metadata and the upload proceeds without it (the hub treats every field
+# as optional and the app degrades to a plain placeholder). blur_preview is not a
+# perceptual hash — it is base64 of a real ~24px thumbnail the app just decodes.
+def _image_metadata(payload: bytes) -> dict:
+    if Image is None:
+        return {}
+    try:
+        with Image.open(BytesIO(payload)) as im:
+            im.load()
+            width, height = im.size
+            thumb = im.copy()
+            thumb.thumbnail((_BLUR_EDGE, _BLUR_EDGE))
+            # JPEG has no alpha/palette — normalize so the thumbnail always saves.
+            if thumb.mode not in ("RGB", "L"):
+                thumb = thumb.convert("RGB")
+            buf = BytesIO()
+            thumb.save(buf, "JPEG", quality=_BLUR_QUALITY)
+        blur = base64.b64encode(buf.getvalue()).decode("ascii")
+        return {"width": width, "height": height, "blur_preview": blur}
+    except Exception as exc:
+        logger.warning("jarvis-app image metadata skipped: %s", exc)
+        return {}
 
 
 class JarvisAppChannel(Channel):
@@ -75,8 +117,10 @@ class JarvisAppChannel(Channel):
         # Raises NotImplementedError for an unrepresentable kind — before any
         # upload — so the Outbox reports a failed send with nothing half-sent.
         filename, mime_type = _upload_meta(kind, payload)
+        # Images carry dimensions + a blur-up placeholder; other kinds carry none.
+        meta = _image_metadata(payload) if kind == "image" else {}
         att_id = await self._client.upload_attachment(
-            payload, filename=filename, mime_type=mime_type
+            payload, filename=filename, mime_type=mime_type, **meta
         )
         body: dict = {"attachment_ids": [att_id]}
         if caption:

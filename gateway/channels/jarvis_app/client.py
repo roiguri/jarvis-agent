@@ -77,16 +77,36 @@ class HubClient:
         r.raise_for_status()
 
     async def upload_attachment(
-        self, payload: bytes, *, filename: str, mime_type: str
+        self,
+        payload: bytes,
+        *,
+        filename: str,
+        mime_type: str,
+        width: int | None = None,
+        height: int | None = None,
+        blur_preview: str | None = None,
     ) -> str:
         """Upload one blob and return its `att_…` id, to be referenced by a later
         send_message(attachment_ids=[…]). The hub infers kind from the mime type.
-        Raises HubUnavailable on a server error or transport failure so a proactive
-        media send degrades to a failed send rather than crashing the caller."""
+        Optional metadata lets the app render without reflow (width/height reserve
+        the aspect ratio) and show a blur-up placeholder (blur_preview); all are
+        omitted when absent and the hub does not validate them. Raises
+        HubUnavailable on a server error or transport failure so a proactive media
+        send degrades to a failed send rather than crashing the caller."""
+        # Numeric metadata rides the multipart body as decimal strings (FastAPI
+        # coerces them back to int); blur_preview is passed through verbatim.
+        data: dict[str, str] = {}
+        if width is not None:
+            data["width"] = str(width)
+        if height is not None:
+            data["height"] = str(height)
+        if blur_preview:
+            data["blur_preview"] = blur_preview
         try:
             r = await self._client.post(
                 "/bot/v1/attachments",
                 files={"file": (filename, payload, mime_type)},
+                data=data or None,
             )
             r.raise_for_status()
         except httpx.HTTPStatusError as e:

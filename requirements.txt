@@ -40,6 +40,7 @@ langsmith==0.9.7
 orjson==3.11.7
 ormsgpack==1.12.2
 packaging==26.0
+Pillow==12.3.0
 proto-plus==1.27.2
 protobuf==6.33.6
 pyasn1==0.6.3
