@@ -611,6 +611,18 @@ def ask_jarvis(
                     if not media_type or not media_path:
                         continue
 
+                    # A media kind this build can't feed to the model (e.g. a
+                    # "file" — documents today, video later). Surface it as text so
+                    # the reply is honest rather than silently ignoring the
+                    # attachment, and skip reading bytes we have no way to use.
+                    if media_type not in ("image", "audio", "video"):
+                        label = f"{media_type} ({mime_type})" if mime_type else media_type
+                        content.append({
+                            "type": "text",
+                            "text": f"\n[Received a {label} attachment I can't read yet.]"
+                        })
+                        continue
+
                     abs_path = media_path
 
                     with open(abs_path, "rb") as f:
