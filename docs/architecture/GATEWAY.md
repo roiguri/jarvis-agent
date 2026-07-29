@@ -377,6 +377,7 @@ Each channel owns its media cache module **and** directory. **Filenames encode t
 | Channel | Cache module | Cache directory |
 |---|---|---|
 | Telegram | `gateway/channels/telegram/media_cache.py` (`save`/`trim`) | `gateway/channels/telegram/media_cache/` |
+| jarvis-app | `gateway/channels/jarvis_app/media_cache.py` (`save`/`trim`) | `gateway/channels/jarvis_app/media_cache/` |
 | Email (future) | `gateway/email/media_cache.py` | `gateway/email/media_cache/` |
 
 `save(bytes, kind, file_id) -> absolute path`; the router imports and calls its own channel's `media_cache.save` directly (no injection). Retention: `trim()` deletes blobs older than 90 days (mtime) and runs once at module import (process start) — channel-owned, no cross-layer call. Cache dirs are gitignored (`gateway/channels/*/media_cache/`).
