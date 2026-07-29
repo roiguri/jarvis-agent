@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 
 from gateway.base import InboundMessage, OnMessage
 from gateway.commands import list_commands
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # outage neither spins nor logs a line per attempt.
 _BACKOFF_START_S = 1.0
 _BACKOFF_MAX_S = 60.0
+
+# The hub pins attachment ids to this shape. The id names the cache file, so a
+# value that doesn't match is rejected before it can reach a filesystem path.
+_ATT_ID_RE = re.compile(r"^att_[0-9A-HJKMNP-TV-Z]{26}$")
 
 
 class JarvisAppInboundRouter:
@@ -143,12 +148,16 @@ class JarvisAppInboundRouter:
             return
         text = message.get("text") or ""
 
-        attachments = await self._download_attachments(message.get("attachments") or [])
-        # An attachment-only message still needs text for the turn; mirror the
-        # Telegram router's placeholder so the model knows something arrived.
-        if not text and attachments:
-            kinds = ", ".join(a["kind"] for a in attachments)
-            text = f"[attachments: {kinds}]"
+        raw_attachments = message.get("attachments") or []
+        attachments = await self._download_attachments(raw_attachments)
+        # An attachment-only message still needs text so the model knows something
+        # arrived. If every download failed, say that rather than run an empty turn.
+        if not text:
+            if attachments:
+                kinds = ", ".join(a["kind"] for a in attachments)
+                text = f"[attachments: {kinds}]"
+            elif raw_attachments:
+                text = "[an attachment was sent but could not be retrieved]"
 
         # The hub carries no per-message user id (the bot token scopes the single
         # owner), so user_id/chat_id are placeholders — nothing downstream reads
@@ -175,12 +184,15 @@ class JarvisAppInboundRouter:
             kind = att.get("kind")
             if not att_id or not kind:
                 continue
+            if not _ATT_ID_RE.match(att_id):
+                logger.warning("jarvis-app skipping attachment with malformed id %r", att_id)
+                continue
             try:
                 data = await self._client.download_attachment(att_id)
+                path = await asyncio.to_thread(media_cache.save, data, kind, att_id)
             except Exception as exc:
                 logger.warning("jarvis-app attachment %s download failed: %s", att_id, exc)
                 continue
-            path = await asyncio.to_thread(media_cache.save, data, kind, att_id)
             out.append(
                 {
                     "kind": kind,

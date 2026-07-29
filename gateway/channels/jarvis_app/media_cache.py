@@ -26,10 +26,11 @@ _EXT = {"image": ".jpg", "audio": ".ogg", "file": ""}
 def save(data: bytes, kind: str, attachment_id: str) -> str:
     """Persist an inbound blob; return its **absolute** path.
 
-    The filename embeds the hub's `att_…` id (already unique and filename-safe),
-    so the same media re-resolves across turns without re-download.
+    The filename embeds the hub's `att_…` id (unique per blob). `basename`
+    strips any path separators as defense in depth — the caller already
+    validates the id shape, so nothing untrusted should reach here.
     """
-    filename = f"{kind}_{attachment_id}{_EXT.get(kind, '')}"
+    filename = os.path.basename(f"{kind}_{attachment_id}{_EXT.get(kind, '')}")
     abs_path = os.path.join(_CACHE_DIR, filename)
     with open(abs_path, "wb") as f:
         f.write(data)
