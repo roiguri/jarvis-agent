@@ -18,6 +18,7 @@ import logging
 
 from gateway.base import InboundMessage, OnMessage
 from gateway.commands import list_commands
+from gateway.channels.jarvis_app import media_cache
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
 from gateway.channels.jarvis_app.client import (
     HubClient,
@@ -142,6 +143,13 @@ class JarvisAppInboundRouter:
             return
         text = message.get("text") or ""
 
+        attachments = await self._download_attachments(message.get("attachments") or [])
+        # An attachment-only message still needs text for the turn; mirror the
+        # Telegram router's placeholder so the model knows something arrived.
+        if not text and attachments:
+            kinds = ", ".join(a["kind"] for a in attachments)
+            text = f"[attachments: {kinds}]"
+
         # The hub carries no per-message user id (the bot token scopes the single
         # owner), so user_id/chat_id are placeholders — nothing downstream reads
         # them; the thread id is what namespaces the conversation.
@@ -150,7 +158,35 @@ class JarvisAppInboundRouter:
             chat_id=0,
             thread_id=self._channel.owner_thread_id,
             user_text=text,
+            attachments=attachments,
         )
         reply = await self._on_message(inbound)
         if reply:
             await self._channel.send(self._channel.owner_thread_id, reply)
+
+    async def _download_attachments(self, raw: list[dict]) -> list[dict]:
+        """Download each inbound attachment to the channel-owned cache and return
+        the neutral dicts the agent reads (kind, path, mime_type, source). A blob
+        that fails to download is logged and skipped — one bad attachment must not
+        sink the whole turn."""
+        out: list[dict] = []
+        for att in raw:
+            att_id = att.get("id")
+            kind = att.get("kind")
+            if not att_id or not kind:
+                continue
+            try:
+                data = await self._client.download_attachment(att_id)
+            except Exception as exc:
+                logger.warning("jarvis-app attachment %s download failed: %s", att_id, exc)
+                continue
+            path = await asyncio.to_thread(media_cache.save, data, kind, att_id)
+            out.append(
+                {
+                    "kind": kind,
+                    "path": path,
+                    "mime_type": att.get("mime_type") or "",
+                    "source": "jarvis-app",
+                }
+            )
+        return out

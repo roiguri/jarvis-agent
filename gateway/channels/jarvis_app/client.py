@@ -97,6 +97,21 @@ class HubClient:
             raise HubUnavailable(str(e)) from e
         return r.json()["id"]
 
+    async def download_attachment(self, attachment_id: str) -> bytes:
+        """Fetch an inbound attachment's bytes by id. Raises HubUnavailable on a
+        server error or transport failure so the router can skip that one
+        attachment without taking the turn down."""
+        try:
+            r = await self._client.get(f"/bot/v1/attachments/{attachment_id}")
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                raise HubUnavailable(f"hub returned {e.response.status_code}") from e
+            raise
+        except httpx.HTTPError as e:
+            raise HubUnavailable(str(e)) from e
+        return r.content
+
     async def declare_commands(self, commands: list[dict]) -> None:
         """Publish the bot's slash-command list to the hub so the app can show a
         command menu. Each entry is {"name", "description"}."""
