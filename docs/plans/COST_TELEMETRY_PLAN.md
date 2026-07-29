@@ -111,6 +111,29 @@ takes Telegram voice notes. `MODEL_PRICES` is single-rate per model and cannot e
 this, so audio-heavy days under-report slightly. Document it in the module docstring;
 do not build modality tiering for a rounding error.
 
+### A5 — `/usage` rendering (added 2026-07-29, not in the original plan)
+
+Folded in while the file was open. Presentation, not correctness — but one part
+*was* a latent bug: `_row_line` emitted a **literal `•`**, which is not a markdown
+list item. Telegram's converter only rewrites `^[-*+]\s`, so the literal bullet
+passed through fine there — but a CommonMark client (the app channel) treats the
+bare newlines between rows as soft breaks and flows every row onto one line. This
+is the identical defect fixed for `/help` in `899fe67`.
+
+- Rows become real `- ` list items; blank line after the title and around the
+  breakdown, so both renderers keep the blocks apart.
+- `**bold**` throughout. `*group*` was hitting `_inline`'s *italic* rule
+  (`markdown_to_html.py:103`), not bold — inconsistent with the `**` title the
+  handler passes in.
+- The eight-field totals line splits into one metric family per line; it was
+  wrapping mid-metric on a phone.
+- `_usd()` replaces `:.4f`: cents at or above $0.01, 4dp below. `$21.1543` was
+  noise on a monthly total, while a sub-cent day still needs the precision.
+- Thousands separators on turn/call counts.
+
+Verified by rendering through the real `markdown_to_html.convert()`, plus an
+assertion that no emitted line is anything but a list item or a header.
+
 ### A4 — doc sync
 
 | file | change |
@@ -327,11 +350,12 @@ A ──► B ──► C
 
 ## Checklist
 
-- [ ] A1 — corrected `MODEL_PRICES` + dated source comment
-- [ ] A2 — unpriced-model marker through `_empty_bucket` / `summarize_usage` / `format_usage_table`
-- [ ] A3 — audio-rate limitation documented in the module docstring
-- [ ] A4 — `CONTEXT_HANDLING_PLAN.md:41` figure corrected
-- [ ] A — restart + `/usage week` verified live
+- [x] A1 — corrected `MODEL_PRICES` (6 models priced) + source dated 2026-07-29
+- [x] A2 — unpriced-model marker through `_empty_bucket` / `summarize_usage` / `_row_line` / `format_usage_table`; rendered on the totals line too, since single-bucket rollups skip the per-row breakdown
+- [x] A3 — audio-rate limitation documented above `MODEL_PRICES` (adjacent to the table it constrains) rather than the module docstring
+- [x] A4 — `CONTEXT_HANDLING_PLAN.md` baseline restated: the whole dollar block was wrong, not just the `:41` monthly figure
+- [x] A5 — `/usage` rendering: real `- ` list items (fixes app-channel line collapse), `**bold**`, split totals block, magnitude-aware `_usd()`
+- [ ] A — **restart + `/usage week` verified live** (needs the owner)
 - [ ] B1 — `reasoning_tokens` captured in `record_turn_start` / `record_llm_call`
 - [ ] B2 — rolled up + conditionally rendered in `usage.py`
 - [ ] B3 — `OBSERVABILITY.md` schema block + prose paragraph

@@ -33,12 +33,18 @@
 
 From `observability.usage` over `turns.jsonl`:
 
-- **Total:** 408 turns, 1,461 LLM calls, 2,777 tool calls, 27.1M input (34% cache-read), 682.6k output, $1.72.
-- **Heartbeat scope:** 335 turns, 22.8M input, $1.44 (84% of spend), 296 `[NO_ACTION]` (88%). No-op tick ≈ 66.3k input / 3.7 LLM calls; acting tick ≈ 79.5k / 4.3.
-- **User scope:** 73 turns, 4.3M input, $0.28, ~59k input per turn, 25% cache-read.
+> **Dollar figures restated 2026-07-29.** The originals were computed with a
+> `MODEL_PRICES` table that priced `gemini-3-flash-preview` 6.5x too low (see
+> [COST_TELEMETRY_PLAN.md](COST_TELEMETRY_PLAN.md) slice A). Token and turn counts
+> below are unchanged and were always correct; only the costs moved. Recomputed
+> over `2026-06-26..2026-07-10`, the window that reproduces the counts below.
+
+- **Total:** 408 turns, 1,461 LLM calls, 2,777 tool calls, 27.1M input (34% cache-read), 682.6k output, **$11.47** (was reported as $1.72).
+- **Heartbeat scope:** 335 turns, 22.8M input, **$9.57** (83% of spend), 296 `[NO_ACTION]` (88%). No-op tick ≈ 66.3k input / 3.7 LLM calls; acting tick ≈ 79.5k / 4.3.
+- **User scope:** 73 turns, 4.3M input, **$1.90**, ~59k input per turn, 25% cache-read.
 - **Cache interpretation:** the `[Current time: … HH:MM …]` envelope is the first line of every system prompt (`agent.py:336-339`) and changes per minute, so no cross-turn prefix survives; the measured 25–40% cache reads are consecutive calls *within* one turn sharing a same-minute prompt.
 
-Absolute cost is small (~$3.7/month on `gemini-3-flash-preview`) — the point is structural: the same architecture on a stronger model, or with more heartbeat tasks, scales linearly with the waste. Latency and answer quality (less noise in context) benefit too.
+Absolute cost is modest (~$25/month on `gemini-3-flash-preview`; originally stated as ~$3.7 under the wrong price table) but the point is structural: the same architecture on a stronger model, or with more heartbeat tasks, scales linearly with the waste. At the corrected rate the stronger-model case is no longer hypothetical — `gemini-3.6-flash` would put this workload near $75/month before any growth. Latency and answer quality (less noise in context) benefit too.
 
 ---
 
