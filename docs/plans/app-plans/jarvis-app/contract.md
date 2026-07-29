@@ -6,19 +6,23 @@
 JSON Schema plus the endpoint list, generated from the Pydantic models and
 the mounted routes under `backend/jarvis_app_backend`.
 
-`contract_version`: `f1633277132cbedf`
+`contract_version`: `3b3a48f330f09a39`
 
 ## Endpoints
 
+- `GET /bot/v1/attachments/{attachment_id}` — Bot Download Attachment
 - `GET /bot/v1/updates` — Get Updates
+- `GET /v1/attachments/{attachment_id}` — Download Attachment
 - `GET /v1/commands` — Get Commands
 - `GET /v1/events` — Events
 - `GET /v1/health` — Health
 - `GET /v1/messages` — Get Messages
 - `PATCH /bot/v1/messages/{message_id}` — Bot Patch
+- `POST /bot/v1/attachments` — Bot Upload Attachment
 - `POST /bot/v1/commands` — Declare Commands
 - `POST /bot/v1/events` — Bot Event
 - `POST /bot/v1/messages` — Bot Send
+- `POST /v1/attachments` — Upload Attachment
 - `POST /v1/auth/login` — Login
 - `POST /v1/auth/logout` — Logout
 - `POST /v1/messages` — Send Message
@@ -85,6 +89,107 @@ the mounted routes under `backend/jarvis_app_backend`.
     "error"
   ],
   "title": "ApiError",
+  "type": "object"
+}
+```
+
+### Attachment
+
+```json
+{
+  "additionalProperties": false,
+  "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
+  "properties": {
+    "blur_preview": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blur Preview"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration Ms"
+    },
+    "filename": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Filename"
+    },
+    "height": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height"
+    },
+    "id": {
+      "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "image",
+        "audio",
+        "file"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "mime_type": {
+      "title": "Mime Type",
+      "type": "string"
+    },
+    "size": {
+      "title": "Size",
+      "type": "integer"
+    },
+    "width": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Width"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "mime_type",
+    "size"
+  ],
+  "title": "Attachment",
   "type": "object"
 }
 ```
@@ -675,6 +780,14 @@ the mounted routes under `backend/jarvis_app_backend`.
   },
   "additionalProperties": false,
   "properties": {
+    "attachment_ids": {
+      "items": {
+        "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "title": "Attachment Ids",
+      "type": "array"
+    },
     "blocks": {
       "anyOf": [
         {
@@ -756,6 +869,102 @@ the mounted routes under `backend/jarvis_app_backend`.
         "label"
       ],
       "title": "Action",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
+      "properties": {
+        "blur_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blur Preview"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "audio",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "mime_type",
+        "size"
+      ],
+      "title": "Attachment",
       "type": "object"
     },
     "ButtonsBlock": {
@@ -969,6 +1178,13 @@ the mounted routes under `backend/jarvis_app_backend`.
     "Message": {
       "description": "The persistent unit; `id` is the sync cursor (architecture \u00a75).",
       "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
         "blocks": {
           "anyOf": [
             {
@@ -1079,6 +1295,7 @@ the mounted routes under `backend/jarvis_app_backend`.
         "role",
         "text",
         "blocks",
+        "attachments",
         "meta",
         "client_ts",
         "delivered_at",
@@ -1559,6 +1776,102 @@ the mounted routes under `backend/jarvis_app_backend`.
       "title": "Action",
       "type": "object"
     },
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
+      "properties": {
+        "blur_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blur Preview"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "audio",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "mime_type",
+        "size"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
     "ButtonsBlock": {
       "additionalProperties": false,
       "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
@@ -1792,6 +2105,13 @@ the mounted routes under `backend/jarvis_app_backend`.
   },
   "description": "The persistent unit; `id` is the sync cursor (architecture \u00a75).",
   "properties": {
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/Attachment"
+      },
+      "title": "Attachments",
+      "type": "array"
+    },
     "blocks": {
       "anyOf": [
         {
@@ -1902,6 +2222,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     "role",
     "text",
     "blocks",
+    "attachments",
     "meta",
     "client_ts",
     "delivered_at",
@@ -1963,6 +2284,102 @@ the mounted routes under `backend/jarvis_app_backend`.
         "label"
       ],
       "title": "Action",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
+      "properties": {
+        "blur_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blur Preview"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "audio",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "mime_type",
+        "size"
+      ],
+      "title": "Attachment",
       "type": "object"
     },
     "ButtonsBlock": {
@@ -2176,6 +2593,13 @@ the mounted routes under `backend/jarvis_app_backend`.
     "Message": {
       "description": "The persistent unit; `id` is the sync cursor (architecture \u00a75).",
       "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
         "blocks": {
           "anyOf": [
             {
@@ -2286,6 +2710,7 @@ the mounted routes under `backend/jarvis_app_backend`.
         "role",
         "text",
         "blocks",
+        "attachments",
         "meta",
         "client_ts",
         "delivered_at",
@@ -2578,6 +3003,14 @@ the mounted routes under `backend/jarvis_app_backend`.
   "additionalProperties": false,
   "description": "`POST /v1/messages`'s body. `client_msg_id` is the idempotency key \u2014\na replay returns the row it already produced rather than a new one.",
   "properties": {
+    "attachment_ids": {
+      "items": {
+        "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "title": "Attachment Ids",
+      "type": "array"
+    },
     "blocks": {
       "anyOf": [
         {

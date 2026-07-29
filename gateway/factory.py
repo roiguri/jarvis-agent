@@ -12,9 +12,10 @@ owner-config value (ALLOWED_USER_ID for Telegram) are read here and nowhere
 else — the host process never sees channel-specific configuration.
 """
 
+import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typing import Awaitable, Callable, Protocol
 
@@ -28,6 +29,9 @@ from gateway.channels.telegram.channel import TelegramChannel
 from gateway.channels.telegram.confirmation import TelegramConfirmationUI
 from gateway.channels.telegram.host import TelegramHost
 from gateway.channels.telegram.router import TelegramInboundRouter
+from gateway.channels.jarvis_app.channel import JarvisAppChannel
+from gateway.channels.jarvis_app.client import HubClient
+from gateway.channels.jarvis_app.router import JarvisAppInboundRouter
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,26 @@ class TelegramStack:
 
     async def stop(self) -> None:
         await self.host.stop()
+
+
+@dataclass
+class JarvisAppStack:
+    channel: JarvisAppChannel
+    client: HubClient
+    router: JarvisAppInboundRouter
+    outbox: Outbox
+    _task: "asyncio.Task | None" = field(default=None, init=False)
+
+    async def start(self) -> None:
+        """Launch the poll-loop router as a background task; returns immediately."""
+        self._task = asyncio.create_task(self.router.run())
+
+    async def stop(self) -> None:
+        """Signal the router to drain in-flight turns, await it, close the client."""
+        self.router.request_stop()
+        if self._task is not None:
+            await self._task
+        await self.client.aclose()
 
 
 # Runtime channel registry for proactive routing. Populated when a stack is
@@ -192,8 +216,42 @@ def _build_telegram_stack(
     )
 
 
+def _build_jarvis_app_stack(
+    on_message: OnMessage,
+    on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
+    log_sink: LogSink | None = None,
+) -> JarvisAppStack:
+    """Construct and wire the jarvis-app channel — HubClient, channel, outbox, and
+    the poll-loop router — and register the channel for proactive routing. Reads
+    APP_HUB_URL / APP_HUB_BOT_TOKEN / APP_OWNER_USER_ID from the environment.
+
+    No confirmation store is registered yet: a destructive tool on an app-origin
+    turn currently falls back to the default channel's store (a later step gives
+    the app its own handling), so on_confirmation_outcome is accepted for
+    signature parity but unused here."""
+    base_url = os.getenv("APP_HUB_URL")
+    if not base_url:
+        raise ValueError("APP_HUB_URL not set in the environment")
+    token = os.getenv("APP_HUB_BOT_TOKEN")
+    if not token:
+        raise ValueError("APP_HUB_BOT_TOKEN not set in the environment")
+    owner = os.getenv("APP_OWNER_USER_ID")
+    if not owner:
+        raise ValueError("APP_OWNER_USER_ID not set in the environment")
+
+    client = HubClient(base_url, token)
+    channel = JarvisAppChannel(client, owner)
+    outbox = Outbox(channel, log_sink)
+    router = JarvisAppInboundRouter(channel, client, on_message)
+
+    register_channel(channel, outbox)
+    logger.info("jarvis-app stack built (owner=%s)", owner)
+    return JarvisAppStack(channel=channel, client=client, router=router, outbox=outbox)
+
+
 _STACK_BUILDERS: dict[str, Callable[..., Stack]] = {
     "telegram": _build_telegram_stack,
+    "jarvis-app": _build_jarvis_app_stack,
 }
 
 

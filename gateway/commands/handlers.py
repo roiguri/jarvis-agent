@@ -19,9 +19,13 @@ logger = logging.getLogger(__name__)
 
 @command("help", "List available slash commands")
 async def _help(inbound: InboundMessage, args: list[str]) -> str:
-    lines = ["**Available commands:**"]
+    # A markdown bullet list (blank line after the header) so both renderers keep
+    # the commands on separate lines: a CommonMark client (the app) treats a bare
+    # newline as a soft break and would otherwise flow them onto one line, while
+    # Telegram's converter renders "- " as "• ".
+    lines = ["**Available commands:**", ""]
     for c in list_commands():
-        lines.append(f"/{c.name} — {c.description}")
+        lines.append(f"- `/{c.name}` — {c.description}")
     return "\n".join(lines)
 
 

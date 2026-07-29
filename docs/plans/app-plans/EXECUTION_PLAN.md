@@ -1,6 +1,14 @@
 # App channel — execution plan
 
-**Status:** planning, uncommitted. **Date:** 2026-07-23.
+**Status (2026-07-29):** Stage C on branch `feat/stage-c-app-channel`. **Landed & committed:** C1
+(text round-trip, verified live), C2 (slash commands), C6 (channel identity — #50 Phase 1), `/help`
+list fix, **C3 (outbound media), C4 (inbound media)** + its review follow-ups, and **§4 (image upload
+metadata — width/height + blur-up placeholder)**. The hub **upgraded to the pinned
+`3b3a48f330f09a39`** (skew resolved), and an independent audit confirmed we are **in sync with
+`roiguri/jarvis-app-v2@main`** (no re-pin). **Remaining:** restart staging → on-device verify pass →
+Telegram regression + `code-review` → PR to main. **Deferred:** C5 → B2; real `file`-kind ingestion
+(PDF/video) → **#51** (interim: an honest "can't read yet" note, never a silent drop). Stages A + B
+merged (#47, #49).
 **Single source of truth.** Absorbs and replaces the former `APP_CHANNEL_PLAN.md` (index),
 `02_MULTI_CHANNEL_SUPPORT.md`, and `03_APP_CHANNEL.md` (now in `archive/`). The only other live
 material is the app author's pinned handover under `jarvis-app/` — **imported verbatim, not ours
@@ -9,6 +17,17 @@ to edit.**
 **Goal:** ship the custom app as a second channel beside Telegram, without the Telegram loop — the
 owner's day-to-day assistant — ever being the test surface. Work is sequenced by **real
 dependency**, not by whether it touches existing or new code.
+
+**Revision 2026-07-24.** Two facts changed Stage C since the first draft. (1) The hub contract
+advanced to `contract_version = 3b3a48f330f09a39` (from `f1633277132cbedf`), adding an
+**attachments** model — upload-then-reference (`POST /bot/v1/attachments` → `attachment_ids`),
+kinds `image|audio|file`, and `Message.attachments[]` inbound. (2) The **phone is now connected to
+the hub**, so every step verifies as a real device round-trip, not a phone-less curl. Consequently
+media (in *and* out) now has a live consumer on both sides — `notifier.py` posters outbound, phone
+photos → Gemini inbound — so it joins Stage C as **isolated additive steps (C3/C4)** rather than
+deferring to Stage D. Stage C thus grows from "text round-trip" to **B0 (doc) + C1 text · C2 slash
+commands · C3 outbound media · C4 inbound media · C5 (unsupported-confirmation notice — since deferred → B2)**; rich *blocks*
+stay in Stage D (still no phone renderer).
 
 ---
 
@@ -25,30 +44,43 @@ dependency**, not by whether it touches existing or new code.
 - [x] A1 — deleted the dead `supports_streaming` flag (`base.py`)
 - [x] A2 — the heartbeat chat filter (`agent.py`) now excludes the heartbeat thread *by identity* (`HEARTBEAT_THREAD_ID`) instead of a hardcoded `telegram_` prefix — chose the exclude-list over a registry allow-list as it states the real intent
 - [x] A2 — CI gate: added check #4 (no channel name in `agent.py`); also flipped check #1 allow-list → deny-list so a new module can't silently escape
-- [ ] Restart staging + Telegram regression — *not run; changes byte-identical/tooling-only, so this is regression smoke only*
+- [x] Restart staging + Telegram regression — verified fine (byte-identical/tooling-only)
 
 **Stage B — shared-state write safety** (resource-level; heartbeat covered, not exempt) — ✅ PR #49
 - [x] Audit: memory (`_WRITE_LOCK`) + confirmation store (`_lock`) already resource-locked; `scheduled_events.json` the lone gap
 - [x] B-lock — `threading.Lock` around the `scheduled_events.json` read-modify-write (whole load→modify→save), covering user turns + heartbeat + future channels. Differential test: lock-free loses 280/400 updates, locked 0
 - [x] Follow-up filed: unify the three ad-hoc locks behind one store-writer primitive (issue #48)
-- [ ] Restart staging + a reminder round-trip — *regression smoke only (the lock is a no-op single-threaded); not run*
+- [x] Restart staging + a reminder round-trip — verified fine (lock is a no-op single-threaded)
 
-**Stage C — app channel, text round-trip** (the deliverable)
-- [ ] **Owner:** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` in `staging.env` (staging-specific hub bot token)
-- [ ] Re-validate every agent-internal reference against current code + `jarvis-app/contract.md` before B1
-- [ ] B0 — `docs/architecture/APP_CHANNEL.md` (adapter map, degraded mode, pin `f1633277132cbedf`) + GATEWAY.md channel tables
-- [ ] B1 — `client.py` (`HubClient`) · `channel.py` (`JarvisAppChannel`, text-only sends) · `router.py` (fetch loop + single consumer)
-- [ ] B1 — hub-down: log once, back off 1→60s; SIGTERM drain (shared with #33)
-- [ ] B1 — `build_jarvis_app_stack()` in factory; `main.py` builds it **only if `APP_HUB_URL` is set**
-- [ ] **Start staging with `APP_HUB_URL` set**; curl the hub as "the app", confirm a reply + a `jarvis-app_<owner>` row in `chat_history.jsonl`
-- [ ] **Restart staging** + Telegram regression
+**Stage C — app channel** (the deliverable; contract `3b3a48f330f09a39`, phone connected for real round-trip)
+- [x] **Owner:** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` in staging `secrets/.env` (staging-specific hub bot token); documented (commented) in `.env.example`
+- [x] Hub reachable from staging + contract pin re-validated via `GET /v1/health` (returned `3b3a48f330f09a39`)
+- [x] Re-validate agent-internal references against current code + `jarvis-app/contract.md` (done during the C1 build — Channel ABC, factory, `main`, Outbox, poll-loop reference all re-checked)
+- [x] B0 — **no new doc.** Pin `3b3a48f330f09a39` recorded as the `HubClient` constant (warn-on-mismatch); app specifics + the Telegram-vs-app differences write-up live in `gateway/channels/jarvis_app/` module docstrings. `GATEWAY.md` untouched (stays channel-agnostic); its media-cache row lands with C4
+- [x] C1 — text round-trip (commit `3f4e7b0`). **Verified live on the phone** — `jarvis-app_<owner>` round-trip in `chat_history.jsonl`, both channels up, no crash, no degraded backoff
+- [x] C2 — slash commands declared to the hub (`declare_commands`, non-fatal) (commit `22b463a`). *Pending phone verify:* the `declared 8 slash commands…` log line + the app slash menu
+- [x] Commands polish — `/help` reformatted as a markdown list so it renders on all channels (bare-newline list collapsed on the app's CommonMark renderer) (commit `899fe67`)
+- [x] C6 — origin channel injected into the system-prompt envelope (`[Channel: <name>]`, user scope, gate-safe) (commit `c5309f3`); Phase 1 of #50 (capability descriptors deferred there)
+- [x] C3 — outbound media: `send_media`/`send_to_owner_media` upload (`POST /bot/v1/attachments`) then send `attachment_ids` (commit `55a987a`). image/audio pass through (image sniffs PNG/JPEG); any other kind raises `NotImplementedError` (Outbox reports a failed send). Consumer: `notifier.py`. *Verified* via the real channel code round-tripping an image to the hub; *pending* on-device render after restart
+- [x] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini (commit `d3e986e`). *Verified* upload→download byte-exact + `_handle` cases; *pending* an on-device photo→describe after restart
+- [x] C4 review follow-ups (commit `bee778c`): reject malformed `att_` ids before a filesystem path + basename guard; `media_cache.save` inside the per-attachment try; retrieval note instead of an empty turn when every download fails
+- [x] §4 — image upload metadata (commit `0783aeb`): `upload_attachment` sends optional `width`/`height`/`blur_preview`; the channel computes them for images via Pillow (`Pillow==12.3.0` added, import guarded). App reserves aspect ratio (no reflow) + shows a blur-up placeholder. `duration_ms` omitted (no outbound-audio producer). *Verified* the hub stored `w/h/blur_preview`
+- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**
+- [ ] C5 — **DEFERRED → B2** (decided 2026-07-24). An interim `UnsupportedConfirmation` is throwaway: the real `AppConfirmationUI` (upstream B2) replaces it, and its registration seam already exists. Interim behavior is **safe** — app-origin destructive tools fall back to the default channel's (Telegram) confirmation; nothing fires silently. Build the real UI when the app ships confirmation; don't build the placeholder.
+- [ ] **Restart staging** + Telegram regression + `code-review` skill, then PR `feat/stage-c-app-channel` → main
+
+> **Hub-skew note — RESOLVED (2026-07-29):** the hub now serves `contract_version =
+> 3b3a48f330f09a39`, the pinned version (`GET /v1/health`), so the warn-on-mismatch no longer fires
+> and C3/C4 are unblocked. An independent audit of `roiguri/jarvis-app-v2@main` confirmed the
+> contract has not advanced past the pin (verified against its CI drift test) — **no re-pin needed.**
+> One low-impact upstream note it surfaced, now closed: our upload omitted the optional
+> `width/height/blur_preview` metadata → landed as §4.
 
 **Stage D — rich rendering / blocks** (design deliberately OPEN — decide when a consumer exists)
 - [ ] Design the outbound seam against the real app renderer (`OutboundReply` is *one candidate*, not committed)
-- [ ] 3c — media→caption fallback (fold in with the seam it hardens)
 - [ ] 4b — sibling-thread chat injection (needs a second live user thread)
 - [ ] 4c — durable cross-channel context (open question — not app-specific)
-- [ ] Upstream deferrals: B1.6 media inbound · B2 app `AppConfirmationUI` · B5 chips · B6 apps
+- [ ] Upstream deferrals: B2 app `AppConfirmationUI` — the app's real confirm/cancel UI (this is the successor to the deferred C5; until it lands, app-origin confirmations fall back to Telegram — safe) · B5 chips · B6 apps
 
 ---
 
@@ -64,26 +96,30 @@ them first means writing code whose "verify" step cannot run.
 Two dependencies the old step docs asserted **do not hold on inspection** (verified against current
 code 2026-07-23):
 
-1. **The render seam does *not* gate B1.** B1 is text-only: `JarvisAppChannel.send(chat_id, text)`
-   implements the *existing* abstract `send(str)`, and the reply rides the existing
-   `on_message → return str → channel.send(str)` path. B1 adds **zero new send call-sites**, so the
+1. **The *block* render seam does *not* gate C1.** C1's text reply rides the existing
+   `on_message → return str → channel.send(str)` path and adds **zero new send call-sites**, so the
    "write against the seam to avoid a second edit at every send site" concern is empty.
    `OutboundReply` / `send_rich` matter only when something *emits blocks* — upstream B4, deferred
-   behind the phone renderer regardless.
-2. **Write safety is a small resource-level fix, not a turn lock that gates B1.** The original
-   plan imagined a keyed lock serializing whole user turns (heartbeat exempt). The audit + the
-   Hermes/OpenClaw research (Stage B) overturned that: the hazard is interleaved read-modify-write
+   behind the phone renderer regardless. Media (C3) does add send work, but it rides the *existing*
+   `send_media(kind, bytes)` primitive and the attachment endpoints — not the block seam — so the
+   point stands for the whole of Stage C.
+2. **Write safety is a small resource-level fix, not a turn lock that gates the channel.** The
+   original plan imagined a keyed lock serializing whole user turns (heartbeat exempt). The audit +
+   the Hermes/OpenClaw research (Stage B) overturned that: the hazard is interleaved read-modify-write
    of shared state, closed by per-resource locks the heartbeat also passes through — not by
-   serializing turns. B1 needs nothing from it; per-conversation ordering is already handled by the
-   channel transports.
+   serializing turns. C1 needs nothing from it; per-conversation ordering is already handled by the
+   channel transports (the single-consumer loop).
 
-So **the app channel (B0/B1) is the next real deliverable**, with one safety item (Stage B)
-deliberately pulled in front of it.
+So **the app channel is the next real deliverable**, with one safety item (Stage B) deliberately
+pulled in front of it. Neither dependency point weakens with the contract update: media (C3/C4)
+rides the *attachment* endpoints and the existing `send_media` primitive, not the block seam, so
+the render seam still does not gate it; and per-conversation ordering is still the single-consumer
+loop's job, not Stage B's.
 
 ```
-A. free cleanups ─► B. write safety ─► C. app channel (B0/B1) ─► D. rich rendering (open)
-   (no deps)           (resource-level     (the deliverable)        (design when a real
-                        lock; heartbeat                              consumer exists)
+A. free cleanups ─► B. write safety ─► C. app channel ──────────────► D. rich blocks (open)
+   (no deps)           (resource-level     C1 text · C2 commands ·       (design when the
+                        lock; heartbeat     C3/C4 media · C5 → B2         phone renders blocks)
                         covered)
 ```
 
@@ -152,34 +188,51 @@ single-threaded. **Restart** + a reminder round-trip.
 
 ---
 
-## Stage C — the app channel, text round-trip (B0 + B1)
+## Stage C — the app channel (B0 + C1–C4; C5 deferred → B2)
 
 The deliverable. Prereqs (generic factory, channel registry) are merged; the lock (Stage B) is in
-place; the render seam is **not needed** (text-only).
+place; the block render seam is **not needed** (blocks stay in Stage D). Build order: **B0** (doc),
+then **C1** (text round-trip — the old "B1"), then the additive steps **C2** (slash commands) and
+**C3/C4** (media, unlocked by the `3b3a48f330f09a39` attachments model + the connected phone).
+**C5** (an interim unsupported-confirmation notice) was **deferred to B2** (see below). C1 is the
+foundation; the rest are independent and may land in any order (or Stage C may stop after C1 to
+prove text first).
 
 **Channel identity.** `Channel.name = "jarvis-app"`; thread ids `jarvis-app_<owner>`. The Python
 package is `gateway/channels/jarvis_app/` (packages cannot contain a hyphen — the one place dir and
-name differ). Env vars keep the handover names (`APP_HUB_URL`, `APP_HUB_BOT_TOKEN`,
-`APP_OWNER_USER_ID`) unless we prefix them `JARVIS_APP_*` — small open choice below.
+name differ). Env vars use the handover names `APP_HUB_URL` / `APP_HUB_BOT_TOKEN` /
+`APP_OWNER_USER_ID` (settled — see Decisions; already in `.env.example`).
 
-**Scope is B0 + B1 only.** The hub validates blocks, chips, attachments and apps, but the phone
-renders none of them yet; building those adapters now means code unexercisable when written.
+**Scope.** Text + media. (The interim unsupported-confirmation notice, C5, was deferred to B2; the
+app-origin confirmation gap is covered by a safe Telegram fallback meanwhile.) The hub also validates blocks, chips
+and apps, but the phone renders none of *those* yet, so their adapters still wait (Stage D) —
+building them now means code unexercisable when written. Attachments graduated *out* of that list:
+the contract now carries them and the phone renders them, so media has a live consumer both ways.
 
-**B0 — contract pin + doc.** New `docs/architecture/APP_CHANNEL.md`: how the adapter maps the bot
-API onto the `Channel` ABC, the degraded-mode contract, and the pinned
-`contract_version = f1633277132cbedf` (the hub reports it on `GET /v1/health`, so `HubClient`
-**warns**, never hard-fails, on mismatch — the hub already 422s a bad payload, so this only gives a
-*silent* skew a voice). Update GATEWAY.md's channel tables to list the app beside Telegram.
+**B0 — contract pin + in-code docs (no new doc file).** The app's specifics live where Telegram's
+do — in the channel package, not the architecture layer. `client.py` holds the pinned
+`contract_version = 3b3a48f330f09a39` as a constant and **warns** (never hard-fails) on mismatch —
+the hub reports it on `GET /v1/health`, and already 422s a bad payload, so this only gives a
+*silent* skew a voice. The adapter map (bot API → `Channel` ABC), the poll-loop ack semantics, and
+degraded mode are documented in the package's module
+docstrings (`client.py` / `channel.py` / `router.py`), mirroring how `host.py` / `channel.py`
+self-document Telegram and how `fake_agent.py` documents its loop. `GATEWAY.md` stays
+**channel-agnostic** — it is *not* the home for app specifics; its channel-agnostic registry tables
+(e.g. the per-channel media-cache table) pick up an app row when the step that adds that artifact
+lands (C4), a byproduct rather than a doc-writing phase.
 
-**B1 — text round-trip.** New `gateway/channels/jarvis_app/`, three modules:
+**C1 — text round-trip.** New `gateway/channels/jarvis_app/`, three modules:
 
-- **`client.py` — `HubClient` (httpx).** `get_updates(offset, timeout)`, `send_message(body)`,
-  `set_commands(...)`; raises `HubUnavailable` on 5xx so the router can enter degraded mode.
-  Bearer-token auth from `APP_HUB_BOT_TOKEN`. The wider surface (attachments, events, PATCH) waits
-  for the phases that use it.
+- **`client.py` — `HubClient` (httpx).** C1 needs `get_updates(offset, timeout)` and
+  `send_message(body)`; raises `HubUnavailable` on 5xx/network error so the router can enter
+  degraded mode. Bearer-token auth from `APP_HUB_BOT_TOKEN`. Later steps grow it in place:
+  `declare_commands` (C2), `upload_attachment`/`download_attachment` (C3/C4). Events/PATCH (chips,
+  block resolution) wait for Stage D.
 - **`channel.py` — `JarvisAppChannel(Channel)`.** `name = "jarvis-app"`,
-  `owner_thread_id = f"jarvis-app_{owner}"`. Implements the abstract **string/bytes** sends by
-  POSTing to the hub. **No `OutboundReply` here** — its rich-render story is Stage D.
+  `owner_thread_id = f"jarvis-app_{owner}"`. C1 implements the **text** sends by POSTing to the hub;
+  `send_media`/`send_to_owner_media` raise `NotImplementedError` per the ABC (the `Outbox` already
+  reports that as a failed send, no crash) until C3 makes them real uploads. **No `OutboundReply`
+  here** — the rich-block render story is Stage D.
 - **`router.py` — the poll loop.** The load-bearing part; shape is not negotiable —
   `jarvis-app/fake_agent.py:366-417` is the working reference:
   - **Two tasks over a queue.** A `_fetch_loop` that long-polls and, per update, advances the
@@ -195,11 +248,16 @@ API onto the `Channel` ABC, the degraded-mode contract, and the pinned
     poll), `queue.join()` to finish in-flight turns, then exit. Same graceful-shutdown work as #33.
 
 Each inbound update becomes an `InboundMessage(thread_id=f"jarvis-app_{owner}")` and flows through
-the existing shared `on_message` — slash commands, history logging, and confirmations work with no
-app-specific code (already channel-agnostic).
+the existing shared `on_message` — slash commands and history logging work with no app-specific
+code (already channel-agnostic). Confirmations are the one interaction that needs an app-specific
+piece, because the hub has no confirm/cancel widget the phone renders yet — deferred to B2 (interim:
+app-origin confirmations fall back to Telegram, safe). The app
+wire carries no per-message user id (the bot token scopes the single owner), so the router stamps
+the configured owner's thread id and passes benign placeholders for the `InboundMessage`
+`user_id`/`chat_id` ints — nothing downstream reads them (verified: only Telegram's own routing does).
 
 **Degraded mode.** Hub unreachable → log **once** (not per failed poll) and back off 1→60s forever.
-Telegram and heartbeat unaffected; the agent never crashes on a missing hub. This is what makes B1
+Telegram and heartbeat unaffected; the agent never crashes on a missing hub. This is what makes C1
 safe to carry in prod behind the `APP_HUB_URL` gate before the channel is "done".
 
 **Wiring.** `build_jarvis_app_stack()` joins the factory beside the Telegram builder (both thin
@@ -207,13 +265,46 @@ wrappers over `build_stack`). `main.py` builds the app stack **only when `APP_HU
 starts its router with `create_task(router.run())` — so prod, with the var unset, constructs
 nothing and is byte-identical to today.
 
-**Owner prereq.** Add `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` to `staging.env`,
-with a **staging-specific hub bot token** — the hub is one-bot-one-user, so once the channel is
-live in prod a staging agent polling the same hub would fight over updates.
+**C2 — slash commands.** `HubClient.declare_commands` posts the gateway's shared command list
+(`gateway/commands`) to `POST /bot/v1/commands` at router startup, mirroring Telegram's
+`register_command_menu`. Non-fatal: a hub that's down at startup just skips it (the degraded loop
+carries on), so it never blocks C1. Isolated step with its own verify (the slash menu on the phone).
 
-*Verify (staging):* with `APP_HUB_URL` pointed at the hub, curl the hub's client API as "the app";
-confirm the live agent long-polls, replies, and writes a `jarvis-app_<owner>` row to
-`chat_history.jsonl` — a phone-less end-to-end test. Then the Telegram regression, unchanged.
+**C3 — outbound media.** The attachments model makes `send_media`/`send_to_owner_media` real: a
+two-step **upload-then-reference** — `POST /bot/v1/attachments` returns an `att_…` id, then
+`send_message(attachment_ids=[…], text=caption)`. Kinds are `image|audio|file`; `notifier.py`'s
+posters are `image`, the live consumer. An unrepresentable kind raises `NotImplementedError`, which the Outbox reports as a failed send (a graceful caption fallback can come with the capability work in #50).
+*Verify:* trigger a media notification → the poster renders on the phone.
+
+**C4 — inbound media.** `Message.attachments[]` on an inbound update → the router downloads each via
+`GET /bot/v1/attachments/{id}` → saves to an **app-owned `media_cache.py`** (absolute paths, the
+same channel-owns-storage rule as Telegram's) → `InboundMessage.attachments=[{kind, path, mime_type,
+source}]`, which the existing `process_inbound_message` already forwards to Gemini. Mirrors
+Telegram's `_download_and_store`. *Verify:* send a photo from the phone → Jarvis describes it.
+
+**C5 — the unsupported-capability notice — DEFERRED to B2 (decided 2026-07-24).** Building an
+app-scoped `UnsupportedConfirmation` now is throwaway: the real `AppConfirmationUI` (upstream B2)
+replaces it the moment the app can render a confirm/cancel widget, and the per-channel registration
+seam it would plug into (`register_confirmation` / `_confirmation_stores` in the factory) already
+exists. So we skip the placeholder and build the real UI when the app ships confirmation.
+
+**Interim behavior (safe, documented).** Until B2, no confirmation store is registered for the app,
+so `get_confirmation()` on an app-origin turn falls back to the **default channel's store
+(Telegram)**: a destructive tool triggered from the app renders its confirm/cancel prompt on
+Telegram, and the action fires **only** if the owner taps Confirm there — nothing destructive
+happens silently. It is a cross-device wrinkle (a dead-end if the owner isn't on Telegram), not a
+hazard. The general principle still stands and is realized by B2: a channel that can't render a rich
+interaction has the gap surfaced to the agent, which phrases the human explanation.
+
+**Owner prereq (done).** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` are in staging's
+`secrets/.env` with a **staging-specific hub bot token** — the hub is one-bot-one-user, so a
+staging agent sharing prod's token would fight over the update queue. Documented (commented) in
+`.env.example`.
+
+*Verify (staging, real device).* The phone is connected to the hub, so each step above verifies as
+a real round-trip on the device (not the phone-less curl the first draft assumed — that remains a
+fallback). C1: type on the phone, get a reply, see a `jarvis-app_<owner>` row in
+`chat_history.jsonl`. Then the Telegram regression, unchanged, plus the `code-review` skill.
 
 ---
 
@@ -236,11 +327,15 @@ defaulting to `send(text)` is **one candidate** — not a committed choice. Deci
 Everything whose only consumer is a phone capability lands here, on the same "has a real consumer
 now" gate:
 
-- **3c — media→caption fallback.** Today no outbound path sends a non-image kind
-  (`notifier.py:292` passes `"image"`), so the `NotImplementedError` in `channel.py:108,118` is
-  unreachable; it becomes real when the app or a media feature first emits another kind. An
-  unsendable kind should render as its caption (or a `[kind]` placeholder — the convention
-  `Outbox._log` already uses at `outbox.py:115`). Fold in with the seam it hardens.
+- **Media kind fallback.** C3 makes `image` real; an outbound kind the app can't represent raises
+  `NotImplementedError` (the Outbox reports a failed send). A graceful caption / `[kind]`-placeholder
+  degradation (the convention `Outbox._log` uses at `outbox.py:115`) can land with the capability
+  work (#50).
+- **Inbound `file`-kind ingestion (#51).** C4 downloads `file`-kind attachments (the hub's `file`
+  bundles PDF + video by mime), but the agent can't yet feed them to the model — it emits an honest
+  "can't read yet" note. Real ingestion routes `file` by `mime_type` (`application/pdf` / `video/*` →
+  media block) with an inline-size guard (Gemini ~20 MB vs the hub's 50 MB → Files API or cap-and-note).
+  Gated on the app composer being able to *send* a file/video (video is owner-confirmed future work).
 - **4b — sibling-thread chat injection.** User-scope prompts additionally inject today's chat from
   the *other* user thread (bounded by the same start-of-Israel-day window and per-entry cap as the
   existing slices). Needs a second *live* user thread to be meaningful — telegram↔app is the same
@@ -249,9 +344,10 @@ now" gate:
   sibling chat; beyond that, continuity depends on the daily log or a memory write. Not
   app-specific — the same time-bound governs heartbeat↔user today — so treat it on its own terms,
   alongside `../CONTEXT_HANDLING_PLAN.md` (a wider window costs tokens).
-- **Upstream honest-boundary deferrals:** B1.6 media inbound (+ app `media_cache.py`), B2 app
-  `AppConfirmationUI`, B5 streaming chips, B6 apps. Each is real and specified in
-  `jarvis-app/original_app_plan.md`; none is end-to-end testable today.
+- **Upstream honest-boundary deferrals:** B2 app `AppConfirmationUI` (the confirm/cancel UI; the
+  successor to the deferred C5), B5 streaming chips, B6 apps. Each is real and specified in
+  `jarvis-app/original_app_plan.md`; none is end-to-end testable today. (B1.6 media inbound
+  graduated to **Stage C4** — the phone sends attachments now.)
 
 *Verify:* per slice, when each acquires its consumer.
 
@@ -284,6 +380,11 @@ is everything before the first `_`; neither channel name contains a `_`). Migrat
 separator would rewrite live conversation-state keys in `threads.sqlite` for a hypothetical
 collision — don't.
 
+**Env var names are `APP_*`, settled.** `APP_HUB_URL` / `APP_HUB_BOT_TOKEN` / `APP_OWNER_USER_ID`,
+matching the app author's handover — no `JARVIS_APP_*` prefix. Already written (commented) into
+`.env.example`; the value in staging's `secrets/.env` uses a staging-specific hub bot token so
+staging and prod never fight over the one-bot-one-user update queue.
+
 **Proactive reliability (deferred).** A single default is a single point of failure; once the
 default is `app`, a hub outage stops briefings and reminders reaching the owner, and the heartbeat
 stamping rule (advance `state.json` only on successful delivery) turns a long outage into a growing
@@ -311,14 +412,16 @@ channels. **Deferred cleanups** (tracked, not blocking): loop-bridge misfiled in
 
 | File | What it is |
 |---|---|
-| `contract.md` | The wire contract, **generated from the hub's Pydantic models** — the single source of truth for payload *shape*. Pinned at `contract_version = f1633277132cbedf`, which the live hub reports on `GET /v1/health`. B0 records the pin; `HubClient` warns (not hard-fail) on mismatch |
+| `contract.md` | The wire contract, **generated from the hub's Pydantic models** — the single source of truth for payload *shape*. Pinned at `contract_version = 3b3a48f330f09a39` (bumped 2026-07-24, adds the attachments model), which the live hub reports on `GET /v1/health`. B0 records the pin; `HubClient` warns (not hard-fail) on mismatch |
 | `fake_agent.py` | A fake **agent** (not a fake hub) — it long-polls a *running* hub. Its value is as the reference poll loop B1 must write (`:366-417`) |
 | `original_app_plan.md` | The approved Track B plan (2026-07-12), phases B0–B6. Upstream's *capability* sequencing |
 
 **The honest boundary — don't build ahead of the phone.** The hub validates more than the phone
 renders: `blocks` have no renderer or action path (B2/B4 wait), chips fan out with no consumer (B5
-waits), no attachment/apps endpoints yet (B1.6/B6 wait). **Buildable and verifiable now: B0, B1**
-(this plan's Stage C), plus B1.5/B3 which are folded into the landed multi-channel work and Stage D.
+waits), no apps endpoints yet (B6 waits). **Attachments crossed the boundary on 2026-07-24** — the
+contract added them and the phone renders them, so media is now buildable/verifiable (Stage C3/C4).
+**Buildable and verifiable now: B0, C1–C4** (C5 deferred → B2; this plan's Stage C), plus B1.5/B3 which are folded
+into the landed multi-channel work and Stage D.
 
 **Re-validation duty.** The handover cannot see this repo, so it asks that every agent-internal
 reference in `original_app_plan.md` (`store.py:211`, `main.py:102`, the `Channel` ABC, `ask_jarvis`,
@@ -353,6 +456,5 @@ work, tracked nowhere yet.
 
 | Choice | Decide by |
 |---|---|
-| Env prefix `APP_*` vs `JARVIS_APP_*` | Stage C — before the names are written into `staging.env` (avoid renaming twice) |
 | Queue-epoch hub signal | Raise with the app author. Hazard: if the hub's queue is wiped and re-sequenced while the agent holds a higher offset, the next poll acks updates it never fetched → ✓✓ with no reply. Agent-side detection is **provably unreliable** (the ack is implicit in `GET /updates?offset=N`). Needs a hub-side queue epoch. Until then: **restart the agent alongside any hub wipe** |
 | Blocks mechanism (`OutboundReply` or otherwise) | Stage D — kept open by this plan |

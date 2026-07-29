@@ -83,6 +83,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
                                                  #   absolute paths from gateway/channels/telegram/media_cache.py)
+/app/jarvis_code/gateway/channels/jarvis_app/media_cache/ # jarvis-app channel's own media blobs (gitignored;
+                                                 #   same channel-owned pattern, filenames embed the att_ id)
 
 /app/secrets/.env          # API keys and tokens — DO NOT READ THIS FILE
 ```

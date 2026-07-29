@@ -351,10 +351,18 @@ def build_system_prompt(
     All files are read per turn (edits take effect next turn, no restart).
     """
     now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
-    envelope = (
-        f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]\n"
-        f"[Active scope: {scope}]"
-    )
+    lines = [
+        f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
+        f"[Active scope: {scope}]",
+    ]
+    # Origin channel, derived from the turn's thread-id prefix (the "<name>_<id>"
+    # convention every channel follows). A runtime value — no channel-name literal
+    # in this module — so it stays inform-only and channel-agnostic. Skipped for
+    # heartbeat, whose thread is not a channel.
+    thread_id = turn_context.current_thread_id()
+    if scope == "user" and thread_id:
+        lines.append(f"[Channel: {thread_id.split('_', 1)[0]}]")
+    envelope = "\n".join(lines)
     parts = [
         envelope,
         load_or_blank(_SOUL_PATH),
@@ -601,6 +609,18 @@ def ask_jarvis(
                     media_path = str(attachment.get("path", "")).strip()
                     mime_type = str(attachment.get("mime_type", "")).strip()
                     if not media_type or not media_path:
+                        continue
+
+                    # A media kind this build can't feed to the model (e.g. a
+                    # "file" — documents today, video later). Surface it as text so
+                    # the reply is honest rather than silently ignoring the
+                    # attachment, and skip reading bytes we have no way to use.
+                    if media_type not in ("image", "audio", "video"):
+                        label = f"{media_type} ({mime_type})" if mime_type else media_type
+                        content.append({
+                            "type": "text",
+                            "text": f"\n[Received a {label} attachment I can't read yet.]"
+                        })
                         continue
 
                     abs_path = media_path
