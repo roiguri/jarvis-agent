@@ -1,11 +1,14 @@
 # App channel — execution plan
 
-**Status (2026-07-24):** Stage C in progress on branch `feat/stage-c-app-channel`. **Landed &
-committed:** C1 (text round-trip, verified live), C2 (slash commands), C6 (channel identity in the
-prompt — #50 Phase 1), `/help` list fix — all pending a phone-verify restart. **Remaining:**
-C3/C4 (media — code buildable now against the frozen contract, but on-device verify is gated on the
-hub upgrading from `f1633277132cbedf` to the pinned `3b3a48f330f09a39`); then the closing regression
-+ `code-review` + PR to main. **C5 deferred to B2** (see below). Stages A + B merged (#47, #49).
+**Status (2026-07-29):** Stage C on branch `feat/stage-c-app-channel`. **Landed & committed:** C1
+(text round-trip, verified live), C2 (slash commands), C6 (channel identity — #50 Phase 1), `/help`
+list fix, **C3 (outbound media), C4 (inbound media)** + its review follow-ups, and **§4 (image upload
+metadata — width/height + blur-up placeholder)**. The hub **upgraded to the pinned
+`3b3a48f330f09a39`** (skew resolved), and an independent audit confirmed we are **in sync with
+`roiguri/jarvis-app-v2@main`** (no re-pin). **Remaining:** restart staging → on-device verify pass →
+Telegram regression + `code-review` → PR to main. **Deferred:** C5 → B2; real `file`-kind ingestion
+(PDF/video) → **#51** (interim: an honest "can't read yet" note, never a silent drop). Stages A + B
+merged (#47, #49).
 **Single source of truth.** Absorbs and replaces the former `APP_CHANNEL_PLAN.md` (index),
 `02_MULTI_CHANNEL_SUPPORT.md`, and `03_APP_CHANNEL.md` (now in `archive/`). The only other live
 material is the app author's pinned handover under `jarvis-app/` — **imported verbatim, not ours
@@ -58,12 +61,20 @@ stay in Stage D (still no phone renderer).
 - [x] C2 — slash commands declared to the hub (`declare_commands`, non-fatal) (commit `22b463a`). *Pending phone verify:* the `declared 8 slash commands…` log line + the app slash menu
 - [x] Commands polish — `/help` reformatted as a markdown list so it renders on all channels (bare-newline list collapsed on the app's CommonMark renderer) (commit `899fe67`)
 - [x] C6 — origin channel injected into the system-prompt envelope (`[Channel: <name>]`, user scope, gate-safe) (commit `c5309f3`); Phase 1 of #50 (capability descriptors deferred there)
-- [ ] C3 — outbound media: `send_media`/`send_to_owner_media` upload (`POST /bot/v1/attachments`) then send `attachment_ids`. *Verify:* a media notification's poster shows on the phone. Consumer: `notifier.py`. **Verify gated on the hub upgrading to `3b3a48…`** (see note)
-- [ ] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini. *Verify:* a photo from the phone gets described. **Verify gated on the hub upgrade** (see note)
+- [x] C3 — outbound media: `send_media`/`send_to_owner_media` upload (`POST /bot/v1/attachments`) then send `attachment_ids` (commit `55a987a`). image/audio pass through (image sniffs PNG/JPEG); any other kind raises `NotImplementedError` (Outbox reports a failed send). Consumer: `notifier.py`. *Verified* via the real channel code round-tripping an image to the hub; *pending* on-device render after restart
+- [x] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini (commit `d3e986e`). *Verified* upload→download byte-exact + `_handle` cases; *pending* an on-device photo→describe after restart
+- [x] C4 review follow-ups (commit `bee778c`): reject malformed `att_` ids before a filesystem path + basename guard; `media_cache.save` inside the per-attachment try; retrieval note instead of an empty turn when every download fails
+- [x] §4 — image upload metadata (commit `0783aeb`): `upload_attachment` sends optional `width`/`height`/`blur_preview`; the channel computes them for images via Pillow (`Pillow==12.3.0` added, import guarded). App reserves aspect ratio (no reflow) + shows a blur-up placeholder. `duration_ms` omitted (no outbound-audio producer). *Verified* the hub stored `w/h/blur_preview`
+- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**
 - [ ] C5 — **DEFERRED → B2** (decided 2026-07-24). An interim `UnsupportedConfirmation` is throwaway: the real `AppConfirmationUI` (upstream B2) replaces it, and its registration seam already exists. Interim behavior is **safe** — app-origin destructive tools fall back to the default channel's (Telegram) confirmation; nothing fires silently. Build the real UI when the app ships confirmation; don't build the placeholder.
 - [ ] **Restart staging** + Telegram regression + `code-review` skill, then PR `feat/stage-c-app-channel` → main
 
-> **Hub-skew note (2026-07-24):** the running hub still serves `contract_version = f1633277132cbedf`; the warn-on-mismatch fired as designed. C1/C2 are unaffected (stable endpoints), but **C3/C4 verify waits for the hub to upgrade to the pinned `3b3a48f330f09a39`** (in progress, app-side). The contract is frozen, so C3/C4 are safe to *build* ahead of that; only the on-device verify is gated.
+> **Hub-skew note — RESOLVED (2026-07-29):** the hub now serves `contract_version =
+> 3b3a48f330f09a39`, the pinned version (`GET /v1/health`), so the warn-on-mismatch no longer fires
+> and C3/C4 are unblocked. An independent audit of `roiguri/jarvis-app-v2@main` confirmed the
+> contract has not advanced past the pin (verified against its CI drift test) — **no re-pin needed.**
+> One low-impact upstream note it surfaced, now closed: our upload omitted the optional
+> `width/height/blur_preview` metadata → landed as §4.
 
 **Stage D — rich rendering / blocks** (design deliberately OPEN — decide when a consumer exists)
 - [ ] Design the outbound seam against the real app renderer (`OutboundReply` is *one candidate*, not committed)
@@ -320,6 +331,11 @@ now" gate:
   `NotImplementedError` (the Outbox reports a failed send). A graceful caption / `[kind]`-placeholder
   degradation (the convention `Outbox._log` uses at `outbox.py:115`) can land with the capability
   work (#50).
+- **Inbound `file`-kind ingestion (#51).** C4 downloads `file`-kind attachments (the hub's `file`
+  bundles PDF + video by mime), but the agent can't yet feed them to the model — it emits an honest
+  "can't read yet" note. Real ingestion routes `file` by `mime_type` (`application/pdf` / `video/*` →
+  media block) with an inline-size guard (Gemini ~20 MB vs the hub's 50 MB → Files API or cap-and-note).
+  Gated on the app composer being able to *send* a file/video (video is owner-confirmed future work).
 - **4b — sibling-thread chat injection.** User-scope prompts additionally inject today's chat from
   the *other* user thread (bounded by the same start-of-Israel-day window and per-entry cap as the
   existing slices). Needs a second *live* user thread to be meaningful — telegram↔app is the same
