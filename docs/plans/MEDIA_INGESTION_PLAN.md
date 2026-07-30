@@ -37,7 +37,7 @@ Capping the hub was never the right fix regardless: it pushes a model constraint
 a model swap would need a hub deploy plus an app-version skew window, and an oversized send would
 fail as a composer upload error instead of something Jarvis can answer conversationally.
 
-**Plan.** Five shippable slices plus a gated sixth, split along one principle: **channels translate
+**Plan.** Five shippable slices (a sixth was reframed and moved to #61), split along one principle: **channels translate
 into the neutral vocabulary; the model boundary owns model limits.** Each slice is one topic — the
 size backstop, the `document` branch and the mime allowlist all live in `agent.py`'s media loop, but
 they answer different questions (*how much may I send?* / *what kinds can I read?* / *which formats
@@ -50,7 +50,7 @@ of that kind?*), so they ship and revert separately.
 | 3 | `document` branch in `agent.py` | model boundary | small | PDFs ingested rather than described as unreadable |
 | 4 | Per-kind mime allowlist in `agent.py` | model boundary | small | An unsupported format meets an honest note, not an opaque API error — **fixes `image/gif` too** |
 | 5 | Telegram document handler | channel-owned | small | Closes a **silent drop**: a PDF sent over Telegram currently reaches nothing at all |
-| 6 | Files API for oversized media | model boundary | medium | **Gated** — no known trigger; see the measurement above |
+| 6 | ~~Files API for oversized media~~ | — | — | **Moved to #61** — reframed as multi-turn media access, not a size workaround |
 
 **What slice 2 is, after the measurement.** It was scoped as an urgent hole: Telegram has *no* size
 handling anywhere (`gateway/channels/telegram/router.py:133` downloads and stores unconditionally),
@@ -62,7 +62,8 @@ a sentence Jarvis can say. It is no longer urgent, and no longer blocks anything
 
 **Risk posture.** Slices 1–5 are additive — new kinds, a backstop, two new branches, and a handler
 on paths that currently terminate in a text note or in nothing. Each is independently revertable.
-Slice 6 carries a real latent hazard (see below) and is deliberately separated.
+The one change carrying a real latent hazard is the `file_uri` work, which is why it left this plan
+for #61 rather than sitting here as a slice someone might pick up.
 
 **Ordering.** The original ordering constraint — *land the guard before anything that makes new
 bytes reachable* — is void: slice 1 shipped, a 42 MB video went through it unguarded, and the model
@@ -225,16 +226,17 @@ downloads at 20 MB, comfortably under the inline ceiling.
 files, as opposed to voice notes), animations, and video notes. All are silently dropped today for
 the same reason — a handler that was never registered.
 
-## Slice 6 — Files API (gated)
+## Slice 6 — Files API (gated → moved to #61)
 
-**No known trigger.** This slice existed to rescue media above a ceiling that turned out not to
-exist at the size any channel can produce; the honest reading is that it should stay unbuilt unless
-something concrete demands it — a channel without an upload cap, video past the <1 min inline
-guideline, or a measured failure. Kept on record because the analysis below is worth not repeating.
+**No known trigger, and no longer this plan's business.** This slice existed to rescue media above a
+ceiling that turned out not to exist at the size any channel can produce. What survives is not a size
+workaround but a capability — media is single-turn today, and a `file_uri` is one way to let the
+model look at it again. That framing, the alternatives to it (re-reading the 90-day channel cache is
+cheaper and has no expiry), and the hazards below now live in **issue #61**.
 
-If it is ever built, it is cheaper than the issue assumed:
+Nothing here is planned work. The analysis is kept because it is worth not repeating:
 `google-genai==1.68.0` is already installed, and the LangChain adapter accepts `file_uri` in the
-*same* media block shape the agent already emits (`chat_models.py:493-496` branches on `data` vs
+*same* media block shape the agent already emits (`chat_models.py:493-495` branches on `data` vs
 `file_uri`). So it is a swap inside the existing branch, not a new path.
 
 Two hard requirements before it ships:
