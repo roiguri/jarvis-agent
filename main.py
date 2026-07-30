@@ -6,13 +6,14 @@ import subprocess
 import uvicorn
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 # Instance paths — first project import (validates JARVIS_ROOT, derives every path).
 import config
 
 from agent import ask_jarvis, ask_jarvis_once
+import heartbeat_state
 from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
@@ -228,18 +229,27 @@ async def main() -> None:
             uvicorn.Config(fastapi_app, host="0.0.0.0", port=config.WEBHOOK_PORT, log_level="warning")
         )
 
-    # Init APScheduler and register the heartbeat interval job before the
-    # channel comes up, so an inbound turn can never observe a missing
-    # scheduler. Jobs don't run until scheduler.start() below.
-    HEARTBEAT_INTERVAL_HOURS = 1
+    # Init APScheduler and register the heartbeat job before the channel comes
+    # up, so an inbound turn can never observe a missing scheduler. Jobs don't
+    # run until scheduler.start() below.
+    #
+    # Cron, not interval: an interval trigger anchors its first run at scheduler
+    # start, so every restart re-phased the schedule to whatever minute the
+    # process booted at. UTC keeps it 24 ticks a day across DST.
     scheduler = init_scheduler()
     if config.HEARTBEAT_ENABLED:
         scheduler.add_job(
             run_heartbeat,
-            IntervalTrigger(hours=HEARTBEAT_INTERVAL_HOURS),
+            CronTrigger(
+                hour=f"*/{heartbeat_state.TICK_INTERVAL_HOURS}",
+                minute=0,
+                timezone=timezone.utc,
+            ),
             id="heartbeat",
             replace_existing=True,
-            misfire_grace_time=3600,
+            # Held to the gate's grace: a tick delayed past this is dropped
+            # rather than fired off-lattice, and comes due again next hour.
+            misfire_grace_time=int(heartbeat_state.CADENCE_GRACE.total_seconds()),
         )
 
     # Channel up: binds the outbox loop and starts inbound handling, so
@@ -278,7 +288,14 @@ async def main() -> None:
 
         scheduler.start()
         if config.HEARTBEAT_ENABLED:
-            logger.info("Scheduler started. Heartbeat interval: %dh.", HEARTBEAT_INTERVAL_HOURS)
+            # Next fire time in the boot block: makes the phase checkable at a
+            # glance instead of waiting for the first tick to hit the journal.
+            next_run = getattr(scheduler.get_job("heartbeat"), "next_run_time", None)
+            logger.info(
+                "Scheduler started. Heartbeat every %dh on the hour (UTC); next tick %s.",
+                heartbeat_state.TICK_INTERVAL_HOURS,
+                next_run.isoformat() if next_run else "unknown",
+            )
         else:
             logger.info("Scheduler started. Heartbeat disabled.")
         if webhook_server is not None:

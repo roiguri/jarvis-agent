@@ -1,6 +1,8 @@
 # Heartbeat — Gated Background Ticks
 
-APScheduler fires `run_heartbeat()` hourly (`main.py`, `IntervalTrigger(hours=1)`).
+APScheduler fires `run_heartbeat()` at the top of every hour (`main.py`,
+`CronTrigger(hour="*/1", minute=0)` in UTC). The phase is fixed and survives
+restarts by design — see [The gate](#the-gate-heartbeat_stateany_due).
 **Code decides *when* the model runs; the model decides *what* to do.** A tick
 only becomes an LLM turn when at least one task is due per code-owned state,
 and that turn sees only the due tasks. Everything else about a heartbeat turn
@@ -12,7 +14,7 @@ and that turn sees only the due tasks. Everything else about a heartbeat turn
 ## The tick pipeline
 
 ```
-APScheduler (hourly)
+APScheduler (top of every hour, UTC)
         │
         ▼
 run_heartbeat()                                  heartbeat.py
@@ -100,11 +102,46 @@ only input to the gate).
 
 A task is due when **cadence elapsed AND window open**, where cadence elapsed
 means: never stamped, stamp unreadable, cadence unparseable, or
-`now − last_run ≥ cadence`. Empty/unreadable `HEARTBEAT.md` → `(True, None)`:
-run the model with the *full* file rather than skip. Any exception in the gate
-itself → run the model. A 30s min-spacing guard protects against back-to-back
-ticks. Stamps advance **only** for tasks the agent listed in `acted_tasks` —
-a task the model checked but skipped stays due and re-fires next tick.
+`now − last_run ≥ cadence` (less `CADENCE_GRACE`). Empty/unreadable
+`HEARTBEAT.md` → `(True, None)`: run the model with the *full* file rather than
+skip. Any exception in the gate itself → run the model. A 30s min-spacing guard
+protects against back-to-back ticks. Stamps advance **only** for tasks the agent
+listed in `acted_tasks` — a task the model checked but skipped stays due and
+re-fires next tick.
+
+**The tick lattice.** Elapsed time is measured raw first. If that comes up
+short, and the task's cadence is longer than one tick, it is measured again with
+both ends rounded down to the lattice (`TICK_INTERVAL_HOURS`); either result can
+make the task due. The floored pass exists because a stamp that lands *off* the
+lattice reads a few minutes short at every remaining tick in that task's window,
+which silently costs a daily task its run for the day.
+
+Two constraints on that pass, both load-bearing:
+
+- **It may only ever pull a task earlier, never later.** Flooring can shrink a
+  gap as easily as grow it — a `:00` stamp checked at `:59` floors to zero — so
+  it is an extra chance to be due, never a replacement for the raw comparison.
+- **It does not apply to single-tick cadences.** Flooring discards up to a whole
+  tick, so for an `every 1h` task it would call an eight-minute-old stamp an
+  hour old and re-run it. Such a task is due from the raw comparison at every
+  tick anyway, so it needs no rescue and must not get one.
+
+The trigger is built from `TICK_INTERVAL_HOURS`, so the lattice the gate rounds
+to and the lattice the scheduler fires on cannot drift apart; holding the
+scheduler's misfire grace to `CADENCE_GRACE` bounds how far off-lattice a *tick*
+can stamp. Stamps written by anything else (a hand edit, a migration, a state
+reset) carry no such bound — which is why the single-tick exclusion is a rule
+and not an optimization.
+
+**Known gap: DST.** Windows are evaluated in Israel time while cadences count
+absolute hours, so when the offset shifts, a window moves an hour in UTC and a
+task pinned to its last in-window tick reads one hour short at every tick of the
+shifted window. Flooring does not help (the floored gap is short too). Twice a
+year, self-healing the next day. The durable fix is to stop measuring elapsed
+time at all and compare window *occurrences* instead — due iff the window is
+open and `occurrence_start(now) − occurrence_start(last_run) ≥ cadence`, with
+the occurrence starts taken in Israel local days. `DueWindow.is_open` already
+computes that start internally.
 
 ## Prompt injection (`heartbeat_state.filter_heartbeat_md`)
 
