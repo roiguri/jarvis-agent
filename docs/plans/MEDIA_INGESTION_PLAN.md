@@ -37,18 +37,20 @@ Capping the hub was never the right fix regardless: it pushes a model constraint
 a model swap would need a hub deploy plus an app-version skew window, and an oversized send would
 fail as a composer upload error instead of something Jarvis can answer conversationally.
 
-**Plan.** Four shippable slices plus a gated fifth, split along one principle: **channels translate
+**Plan.** Five shippable slices plus a gated sixth, split along one principle: **channels translate
 into the neutral vocabulary; the model boundary owns model limits.** Each slice is one topic — the
-size guard and the `document` branch both live in `agent.py`'s media loop, but they answer different
-questions (*how much may I send?* vs *what can I read?*), so they ship and revert separately.
+size backstop, the `document` branch and the mime allowlist all live in `agent.py`'s media loop, but
+they answer different questions (*how much may I send?* / *what kinds can I read?* / *which formats
+of that kind?*), so they ship and revert separately.
 
 | # | Slice | Layer | Size | Effect |
 |---|---|---|---|---|
 | 1 | Neutral `document` kind + app-router kind mapping | channel-owned | small | `file`+mime resolves to a real kind at the boundary, as Telegram already does |
 | 2 | Inline size backstop in `agent.py` | model boundary | small | Unreachable ceiling made honest instead of opaque — **for every channel** |
 | 3 | `document` branch in `agent.py` | model boundary | small | PDFs ingested rather than described as unreadable |
-| 4 | Telegram document handler | channel-owned | small | Closes a **silent drop**: a PDF sent over Telegram currently reaches nothing at all |
-| 5 | Files API for oversized media | model boundary | medium | **Gated** — no known trigger; see the measurement above |
+| 4 | Per-kind mime allowlist in `agent.py` | model boundary | small | An unsupported format meets an honest note, not an opaque API error — **fixes `image/gif` too** |
+| 5 | Telegram document handler | channel-owned | small | Closes a **silent drop**: a PDF sent over Telegram currently reaches nothing at all |
+| 6 | Files API for oversized media | model boundary | medium | **Gated** — no known trigger; see the measurement above |
 
 **What slice 2 is, after the measurement.** It was scoped as an urgent hole: Telegram has *no* size
 handling anywhere (`gateway/channels/telegram/router.py:133` downloads and stores unconditionally),
@@ -58,13 +60,14 @@ today. It is kept, at the documented ceiling, for two reasons: a future channel 
 — see *Not in scope*) inherits it for free, and the failure it converts is an opaque API error into
 a sentence Jarvis can say. It is no longer urgent, and no longer blocks anything.
 
-**Risk posture.** Slices 1–4 are additive — new kinds, a backstop, a new branch, and a handler on
-paths that currently terminate in a text note or in nothing. Each is independently revertable. Slice
-5 carries a real latent hazard (see below) and is deliberately separated.
+**Risk posture.** Slices 1–5 are additive — new kinds, a backstop, two new branches, and a handler
+on paths that currently terminate in a text note or in nothing. Each is independently revertable.
+Slice 6 carries a real latent hazard (see below) and is deliberately separated.
 
 **Ordering.** The original ordering constraint — *land the guard before anything that makes new
 bytes reachable* — is void: slice 1 shipped, a 42 MB video went through it unguarded, and the model
-read it. The slices are now order-free.
+read it. One soft dependency remains: slice 5 classifies broadly by mime prefix, so it wants slice 4
+to have landed, or an unsupported format reaches the model as an opaque error instead of a note.
 
 ---
 
@@ -83,6 +86,7 @@ block's `mime_type`, as it is today.
 |---|---|---|
 | Which wire format means which kind | channel router | Only the channel knows its source's vocabulary |
 | Which kinds the model can read | `agent.py` | Model capability, not transport |
+| Which *formats* of a kind it can read | `agent.py` | Same table the API publishes; one copy, not one per channel |
 | How large an inline blob may be | `agent.py` | Model limit, not transport |
 | How large an upload may be | hub | Storage/bandwidth policy, independent of any model |
 
@@ -147,7 +151,34 @@ and either should be revertable without the other.
 
 2. Add `"document"` to the readable-kinds tuple at `:618`.
 
-## Slice 4 — Telegram document handler (channel-owned)
+## Slice 4 — Per-kind mime allowlist (model boundary, channel-agnostic)
+
+**Why it exists.** `document` is the third kind whose readability depends on the *format*, not just
+the kind — the API supports exactly one document mime (`application/pdf`), five image mimes, six
+audio, nine video. Today `agent.py` checks the kind and never looks at the mime, so an unsupported
+format is inlined and fails as an opaque API error. That defect is already live: `image/gif` is
+allowlisted by the hub and would inline as an `image`, and the API does not accept GIF. It was
+previously recorded under *Not in scope*; this slice absorbs it.
+
+It is also what lets slice 5 classify broadly. If channels enumerated the model's supported formats
+themselves, the model's capability table would be copied into every channel and go stale on every
+model swap — the exact layering this plan exists to avoid. Channels answer *what kind of thing is
+this?*; the model boundary answers *can I read this format?*
+
+Two constants near `INLINE_MEDIA_MAX_BYTES`, then one check in the media loop after the size
+backstop and before the branches:
+
+- **`SUPPORTED_MEDIA_MIMES`** — `{kind: {mime, …}}`, transcribed from the API's format lists.
+- **`MEDIA_MIME_ALIASES`** — the API names some formats differently from what clients emit (`.mov`
+  arrives as `video/quicktime`, `.mp3` as `audio/mpeg`). Normalize to the documented spelling before
+  the check *and* before the blob is sent, so the media block carries a mime the API recognizes.
+
+An empty mime skips the check — the existing per-branch defaults (`image/jpeg` guessed from the
+filename, `audio/ogg`, `video/mp4`) already handle that case and predate this slice. Outside the
+allowlist → the honest note, naming the format: `[Received an image (image/gif) — I can't read that
+format.]`
+
+## Slice 5 — Telegram document handler (channel-owned)
 
 **The defect.** `gateway/channels/telegram/host.py:60-63` registers exactly four handlers — `TEXT`,
 `PHOTO`, `VIDEO`, `VOICE`. A PDF arrives as `msg.document`, matches none of them, and is **dropped
@@ -155,14 +186,28 @@ before any gateway code runs**: no `InboundMessage`, no turn, no reply. Worse th
 pre-slice-1 state, which at least produced an honest note. Same for a video the sender attached as a
 file rather than as a video — Telegram delivers that as a document too.
 
+**A document is a container, not a type.** It is how Telegram delivers anything that is not a
+compressed photo, a video, or a voice note — so the handler's job is to look at the mime and let
+most of it land on kinds that already work:
+
+| Sent as a document | mime | kind |
+|---|---|---|
+| PDF | `application/pdf` | `document` |
+| Video | `video/*` | `video` |
+| Music, audio clip | `audio/*` | `audio` |
+| Photo "sent as file" (original quality, HEIC off an iPhone) | `image/*` | `image` |
+| Everything else — archives, Office formats, text | — | `file` (honest note) |
+
 **`gateway/channels/telegram/host.py`** — register
 `MessageHandler(filters.Document.ALL, self._router.handle_document)` alongside the other four.
 
 **`gateway/channels/telegram/router.py`** — `handle_document`, mirroring `handle_video` (`:95`):
-read `msg.document.mime_type`, resolve it to a neutral kind, `_download_and_store`, dispatch with
-`msg.caption or "[DOCUMENT attachment]"`. The mapping is `application/pdf`→`document`,
-`video/*`-allowlisted→`video`, anything else→`file` (honest note — still a strict improvement on the
-silent drop).
+read `msg.document.mime_type`, resolve it by prefix per the table above, `_download_and_store`,
+dispatch with `msg.caption or "[DOCUMENT attachment]"`. A missing mime falls back to
+`mimetypes.guess_type` on the filename — the field is client-supplied and not guaranteed.
+
+**Classification is by prefix, deliberately.** The channel does not know which `video/*` the model
+accepts and must not — slice 4 owns that, once, for every channel.
 
 **Each channel owns its own mapping.** Do **not** import the app router's `_neutral_kind`: channels
 never import each other, and the inputs differ — PTB exposes a mime directly on the message, where
@@ -172,15 +217,15 @@ centralizing.
 
 **`gateway/channels/telegram/media_cache.py:20`** — `_EXT` gains `"document": ".pdf"`.
 
-**Depends on slice 3** for PDFs to be *read* rather than noted; independent of slice 2. The Bot API
-caps downloads at 20 MB, comfortably under the inline ceiling, so nothing Telegram can deliver needs
-the backstop.
+**Depends on slice 3** for PDFs to be *read* rather than noted, and wants slice 4 so a format the
+model rejects becomes a note rather than an error. Independent of slice 2: the Bot API caps
+downloads at 20 MB, comfortably under the inline ceiling.
 
 **Still unhandled after this slice** (each a distinct defect, not folded in): `filters.AUDIO` (music
-files, as opposed to voice notes), animations/GIFs, and video notes. All are silently dropped today
-for the same reason.
+files, as opposed to voice notes), animations, and video notes. All are silently dropped today for
+the same reason — a handler that was never registered.
 
-## Slice 5 — Files API (gated)
+## Slice 6 — Files API (gated)
 
 **No known trigger.** This slice existed to rescue media above a ceiling that turned out not to
 exist at the size any channel can produce; the honest reading is that it should stay unbuilt unless
@@ -198,12 +243,12 @@ Two hard requirements before it ships:
   (`agent.py:71`), so a `file_uri` block *survives* into thread history — and Files API URIs expire
   after 48h. A stale URI re-sent on a later turn errors, and because the whole window is re-sent it
   can brick that thread for its 50-message life. Change to
-  `"data" in block or "file_uri" in block`. Landing slice 5 without this is a latent thread-breaker.
+  `"data" in block or "file_uri" in block`. Landing slice 6 without this is a latent thread-breaker.
 - **Latency has no seam.** Upload plus Gemini's PROCESSING poll blocks the turn for tens of seconds
   with no intermediate ack in the current flow. Decide that UX before building.
 
-**Recommendation:** ship 1–3 (+4 for channel parity). #51's size question is answered by measurement
-rather than by design: a 40 MB video needs no special handling at all — it just works.
+**Recommendation:** ship 1–5. #51's size question is answered by measurement rather than by design:
+a 40 MB video needs no special handling at all — it just works.
 
 ---
 
@@ -225,18 +270,23 @@ against logs and a live round-trip.
    video still ingest normally.
 4. Cache filenames land as `video_att_….mp4` / `document_att_….pdf` in the app channel's
    `media_cache/`.
-5. **Slice 4, after restart:** a PDF over Telegram → Jarvis answers about its contents (today: no
-   reply at all). A `.mp4` sent as a file over Telegram → described as a video. A `.zip` → the
-   honest note, no traceback. Cache filename `document_<file_id>.pdf`.
+5. **Slice 4, synthetic:** each kind × a supported mime, an unsupported one (`image/gif`), an
+   aliased one (`video/quicktime`, `audio/mpeg`), and an empty mime.
+6. **Slice 5, after restart:** a PDF over Telegram → Jarvis answers about its contents (today: no
+   reply at all). A `.mp4` sent as a file over Telegram → described as a video. A photo sent as a
+   file → described. A `.zip` → the honest note, no traceback. Cache filename
+   `document_<file_id>.pdf`.
 
 ## Not in scope
 
 - **Outbound video/document.** `gateway/channels/jarvis_app/channel.py:_upload_meta` (`:49`) still
   raises `NotImplementedError` for any kind but image/audio, and the Outbox reports that as a failed
   send. No producer needs it — the notifier sends images.
-- **`image/gif`.** The hub allowlists it and this plan would inline it as an image, but Gemini's
-  supported image set is png/jpeg/webp/heic/heif. Likely a one-line addition to the readable check,
-  but it is a distinct defect from `file`-kind ingestion — recorded here rather than folded in.
+- **Text and code files** (`.txt`, `.md`, `.csv`, `.json`, source). Worth supporting, but not as a
+  `document`: the API extracts them as pure text with no layout understanding, so the better shape is
+  to read the file and inline it as a text block with a length cap. Split out as **issue #60**.
+- **Office formats** (`.docx`, `.xlsx`, `.pptx`). Not supported by the model at all; they would need
+  a conversion step. They reach the honest note via the `file` catch-all.
 - **Raising the hub's 50 MB cap.** Now known to have headroom under the model — the inline ceiling
   is 100 MB — but it is a storage/bandwidth policy on the hub's side, decided there, not here.
 - **Inline video duration.** The API's <1 min guideline for inline video is unmeasured; the 42 MB
