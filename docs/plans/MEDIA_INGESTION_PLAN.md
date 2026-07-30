@@ -26,14 +26,18 @@ wrong on layering too: it pushes a model constraint into transport, so a model s
 hub deploy plus an app-version skew window, and an oversized send would fail as a composer upload
 error instead of something Jarvis can answer conversationally.
 
-**Plan.** Two shippable slices plus a gated third, split along one principle: **channels translate
-into the neutral vocabulary; the model boundary owns model limits.**
+**Plan.** Four shippable slices plus a gated fifth, split along one principle: **channels translate
+into the neutral vocabulary; the model boundary owns model limits.** Each slice is one topic — the
+size guard and the `document` branch both live in `agent.py`'s media loop, but they answer different
+questions (*how much may I send?* vs *what can I read?*), so they ship and revert separately.
 
 | # | Slice | Layer | Size | Effect |
 |---|---|---|---|---|
 | 1 | Neutral `document` kind + app-router kind mapping | channel-owned | small | `file`+mime resolves to a real kind at the boundary, as Telegram already does |
-| 2 | Size guard + `document` branch in `agent.py` | model boundary | small | PDFs/videos ingested; oversized media refused honestly — **for every channel** |
-| 3 | Files API for >15 MB media | model boundary | medium | **Gated** — only if oversized sends prove to matter |
+| 2 | Inline size guard in `agent.py` | model boundary | small | Oversized media refused honestly — **for every channel**, including Telegram's existing hole |
+| 3 | `document` branch in `agent.py` | model boundary | small | PDFs ingested rather than described as unreadable |
+| 4 | Telegram document handler | channel-owned | small | Closes a **silent drop**: a PDF sent over Telegram currently reaches nothing at all |
+| 5 | Files API for >15 MB media | model boundary | medium | **Gated** — only if oversized sends prove to matter |
 
 **Why slice 2 is worth doing on its own merits.** The size guard is not app-channel work. Telegram
 has *no* size handling anywhere (`gateway/channels/telegram/router.py:133` downloads and stores
@@ -41,10 +45,17 @@ unconditionally), and the Bot API permits downloads up to 20 MB — which base64
 exceed the request cap today. The hole already exists on the older channel; it has never fired only
 because the single video that has ever flowed through production was 1 MB. Slice 2 closes it once,
 at the one place that knows what is being fed to the model, and every future channel inherits it.
+It stands alone: it is worth shipping even if no other slice here ever lands.
 
-**Risk posture.** Slices 1 and 2 are additive — new kinds and a new guard on a path that currently
-terminates in a text note. Both are independently revertable. Slice 3 carries a real latent hazard
-(see below) and is deliberately separated.
+**Risk posture.** Slices 1–4 are additive — new kinds, a new guard, a new branch, and a handler on
+paths that currently terminate in a text note or in nothing. Each is independently revertable. Slice
+5 carries a real latent hazard (see below) and is deliberately separated.
+
+**Ordering constraint.** Slice 1 makes app videos *reachable* by `agent.py`'s existing `video`
+branch, and slice 4 makes Telegram documents reachable — both inline bytes with no ceiling until the
+guard lands. Ship those before slice 2 and an oversized send trades an honest note (or, on Telegram,
+a silent drop) for a failed turn. **Slice 2 should land no later than the first of the other two**;
+everything after it is order-free.
 
 ---
 
@@ -92,31 +103,71 @@ keeps the cache dir legible.
 **`docs/architecture/GATEWAY.md:346`** — vocabulary gains `document`; add a line stating that `file`
 means "unidentified — surfaced to the agent as text, never fed to the model".
 
-## Slice 2 — Model boundary (channel-agnostic)
+## Slice 2 — Inline size guard (model boundary, channel-agnostic)
 
-All in `agent.py`, media loop at `:604-670`:
+One question: *how much may I send the model?* Independent of which kinds are readable — it applies
+to the image, audio and video branches that exist today, and to `document` whenever slice 3 lands.
 
-1. **Size guard**, between the kind check (`:618`) and the read (`:628`). Use `os.path.getsize`
-   *before* `open()`, so a 50 MB blob is never pulled into memory only to be refused. Constant near
-   `MAX_MESSAGES`:
+In `agent.py`, media loop at `:604-670`: a size check between the kind check (`:618`) and the read
+(`:628`). Use `os.path.getsize` *before* `open()`, so a 50 MB blob is never pulled into memory only
+to be refused. Constant near `MAX_MESSAGES`:
 
-   ```python
-   # Gemini caps the whole request at ~20 MB. Inline media is base64 in JSON
-   # (+33%), so the raw-bytes ceiling is ~15 MB, leaving headroom for the prompt.
-   INLINE_MEDIA_MAX_BYTES = 15 * 1024 * 1024
-   ```
+```python
+# Gemini caps the whole request at ~20 MB. Inline media is base64 in JSON
+# (+33%), so the raw-bytes ceiling is ~15 MB, leaving headroom for the prompt.
+INLINE_MEDIA_MAX_BYTES = 15 * 1024 * 1024
+```
 
-   Over the limit → the same honest-note shape as `:618`, sized and channel-neutral:
-   `[Received a video (38 MB) — too large for me to read.]` No channel, hub, or cap is named.
+Over the limit → the same honest-note shape as `:618`, sized and channel-neutral:
+`[Received a video (38 MB) — too large for me to read.]` No channel, hub, or cap is named.
 
-2. **`document` branch** alongside `video` (`:657`): a `{"type": "media", "mime_type": …,
+## Slice 3 — `document` branch (model boundary, channel-agnostic)
+
+The other question: *what can I read?* Also in `agent.py`'s media loop, and deliberately not bundled
+with the guard — a readable-kind regression and a size-ceiling regression have nothing in common,
+and either should be revertable without the other.
+
+1. **`document` branch** alongside `video` (`:657`): a `{"type": "media", "mime_type": …,
    "data": b64}` block plus the lightweight text hint, identical in shape to the audio and video
    branches. `_strip_media_blobs` (`:71`) already drops `media` blocks carrying `data`, so nothing
    new accumulates in thread state.
 
-3. Add `"document"` to the readable-kinds tuple at `:618`.
+2. Add `"document"` to the readable-kinds tuple at `:618`.
 
-## Slice 3 — Files API (gated)
+## Slice 4 — Telegram document handler (channel-owned)
+
+**The defect.** `gateway/channels/telegram/host.py:60-63` registers exactly four handlers — `TEXT`,
+`PHOTO`, `VIDEO`, `VOICE`. A PDF arrives as `msg.document`, matches none of them, and is **dropped
+before any gateway code runs**: no `InboundMessage`, no turn, no reply. Worse than the app channel's
+pre-slice-1 state, which at least produced an honest note. Same for a video the sender attached as a
+file rather than as a video — Telegram delivers that as a document too.
+
+**`gateway/channels/telegram/host.py`** — register
+`MessageHandler(filters.Document.ALL, self._router.handle_document)` alongside the other four.
+
+**`gateway/channels/telegram/router.py`** — `handle_document`, mirroring `handle_video` (`:95`):
+read `msg.document.mime_type`, resolve it to a neutral kind, `_download_and_store`, dispatch with
+`msg.caption or "[DOCUMENT attachment]"`. The mapping is `application/pdf`→`document`,
+`video/*`-allowlisted→`video`, anything else→`file` (honest note — still a strict improvement on the
+silent drop).
+
+**Each channel owns its own mapping.** Do **not** import the app router's `_neutral_kind`: channels
+never import each other, and the inputs differ — PTB exposes a mime directly on the message, where
+the hub supplies a coarse kind *plus* a mime. Shared vocabulary, separate translations. If a third
+channel ever repeats it, promote the table to `gateway/base.py`; two is not yet duplication worth
+centralizing.
+
+**`gateway/channels/telegram/media_cache.py:20`** — `_EXT` gains `"document": ".pdf"`.
+
+**Depends on slice 2** (the guard), and on slice 3 for PDFs to be *read* rather than noted. The Bot
+API permits downloads up to 20 MB, which base64s to ~27 MB and exceeds the request cap on its own;
+without the guard this slice converts a silent drop into a failed turn.
+
+**Still unhandled after this slice** (each a distinct defect, not folded in): `filters.AUDIO` (music
+files, as opposed to voice notes), animations/GIFs, and video notes. All are silently dropped today
+for the same reason.
+
+## Slice 5 — Files API (gated)
 
 Only if oversized media proves to matter in practice. Cheaper than the issue assumed:
 `google-genai==1.68.0` is already installed, and the LangChain adapter accepts `file_uri` in the
@@ -129,12 +180,12 @@ Two hard requirements before it ships:
   (`agent.py:71`), so a `file_uri` block *survives* into thread history — and Files API URIs expire
   after 48h. A stale URI re-sent on a later turn errors, and because the whole window is re-sent it
   can brick that thread for its 50-message life. Change to
-  `"data" in block or "file_uri" in block`. Landing slice 3 without this is a latent thread-breaker.
+  `"data" in block or "file_uri" in block`. Landing slice 5 without this is a latent thread-breaker.
 - **Latency has no seam.** Upload plus Gemini's PROCESSING poll blocks the turn for tens of seconds
   with no intermediate ack in the current flow. Decide that UX before building.
 
-**Recommendation:** ship 1+2 and leave #51's size question answered as **cap-and-note**. An honest
-"too large to read" is a fine terminal state for a 40 MB video.
+**Recommendation:** ship 1–3 (+4 for channel parity) and leave #51's size question answered as
+**cap-and-note**. An honest "too large to read" is a fine terminal state for a 40 MB video.
 
 ---
 
@@ -150,10 +201,13 @@ against logs and a live round-trip.
    - PDF from the app → Jarvis answers about its contents, not a "can't read" note.
    - Video sent as a file from the app → Jarvis describes it.
    - Oversized video → the sized honest note; no traceback in `journalctl -u jarvis-staging`.
-3. **Telegram regression** (slice 2 touches the shared path): photo, voice note, and a small video
-   still ingest normally.
+3. **Telegram regression** (slices 2 and 3 touch the shared path): photo, voice note, and a small
+   video still ingest normally.
 4. Cache filenames land as `video_att_….mp4` / `document_att_….pdf` in the app channel's
    `media_cache/`.
+5. **Slice 4, after restart:** a PDF over Telegram → Jarvis answers about its contents (today: no
+   reply at all). A `.mp4` sent as a file over Telegram → described as a video. A `.zip` → the
+   honest note, no traceback. Cache filename `document_<file_id>.pdf`.
 
 ## Not in scope
 
@@ -163,4 +217,4 @@ against logs and a live round-trip.
 - **`image/gif`.** The hub allowlists it and this plan would inline it as an image, but Gemini's
   supported image set is png/jpeg/webp/heic/heif. Likely a one-line addition to the readable check,
   but it is a distinct defect from `file`-kind ingestion — recorded here rather than folded in.
-- **Raising the hub's 50 MB cap.** Only becomes interesting if slice 3 ever lands.
+- **Raising the hub's 50 MB cap.** Only becomes interesting if slice 5 ever lands.
