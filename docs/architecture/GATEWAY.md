@@ -167,6 +167,7 @@ The store is **channel-agnostic**. The UI plug-in is the only Telegram-specific 
 gateway/commands/
 ├── router.py     # @command decorator + registry + try_handle_command(inbound) entry point
 ├── handlers.py   # built-in handlers — must import only `agent`, `tools`, neutral gateway code
+├── format.py     # reply-layout helpers + check_reply (the contract below, executable)
 └── __init__.py   # imports handlers so @command side-effects register before first dispatch
 ```
 
@@ -193,6 +194,38 @@ async def try_handle_command(inbound) -> str | None
 ```
 
 `process_inbound_message` (`main.py`) calls `try_handle_command(inbound)` **first**. A non-`None` result short-circuits: it is logged to `chat_history.jsonl` just like an agent reply (so subsequent turns see the command/reply exchange) and sent via the channel's normal reply path.
+
+### Reply formatting — one layout, two renderers
+
+A handler returns **neutral markdown**; the channel it came from renders it. The channels disagree about a bare newline, and that disagreement is the single most repeated bug in this module:
+
+| | renderer | bare `\n` between two plain lines |
+|---|---|---|
+| Telegram | `markdown_to_html.convert()` — line-based | preserved; renders as a line break |
+| jarvis-app | CommonMark | **soft break — the lines flow into one paragraph** |
+
+So a reply that looks correct in the Telegram client can silently collapse on the app. Any layout relying on a bare newline to separate lines is a latent app-channel bug.
+
+**The contract** — the shape that satisfies both:
+
+- A **bold header**, a **blank line**, then real `- ` list items. Telegram rewrites `^[-*+]\s` into `• `; CommonMark keeps genuine list items on their own lines.
+- **Never a literal `•`** — Telegram's converter only rewrites the markdown marker, so a hand-typed bullet passes there and stays inert prose in the app.
+- Emphasis is `**bold**`. A single `*` is *italic* in both, which is not what a header wants.
+- Blocks are separated by a **blank line**, never a single newline.
+- Two leading spaces nest a list item one level (clears the parent's content column for CommonMark; Telegram indents to match).
+
+**Do not hand-roll it.** `gateway/commands/format.py` owns the layout:
+
+```python
+section("Available commands", items)      # **header**, blank line, "- item" per entry
+kv_section("Jarvis status", pairs)        # same, rendered "- **key**: value"
+document("HEARTBEAT.md", body)            # a header above raw file content
+join(block_a, block_b)                    # blank-line-separated blocks
+```
+
+`check_reply(text)` in the same module is the executable half of the contract, and `scripts/ci/check_command_replies.py` runs it over every registered command's reply as its own CI job. Replies that are **verbatim file content** (`/memory <file>`, `/logs`, `/heartbeat <task>`) are exempt — the handler doesn't own that layout — and the guard reports them as skipped rather than silently passing them.
+
+> Length is a separate concern: Telegram truncates the source markdown at 4096/1024 chars (`gateway/channels/telegram/channel.py`); the app channel has no equivalent cap. Handlers that return whole files (`/memory <file>`, `/logs`, `/heartbeat`) can exceed either. Tracked in #23 (paginate rather than truncate) — the app-side gap is unfixed there.
 
 ### Channel discoverability — optional but encouraged
 

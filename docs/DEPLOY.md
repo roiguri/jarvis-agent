@@ -143,11 +143,11 @@ venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
   ```
   Fast local feedback; bypassable with `git commit --no-verify`.
 - **Merge** — `.github/workflows/ci.yml` runs the guards on every PR and push to `main`, as
-  two independent jobs (`path-isolation`, `channel-agnostic`). Make each unbypassable by
-  enabling a **branch-protection rule** on `main` (GitHub → Settings → Branches) requiring its
-  check to pass. This is the real gate. (`path-isolation` is already required; add
-  `channel-agnostic` to the required set to enforce it too — until then it runs and reports but
-  does not block.)
+  three independent jobs (`path-isolation`, `channel-agnostic`, `command-replies`). Make each
+  unbypassable by enabling a **branch-protection rule** on `main` (GitHub → Settings → Branches)
+  requiring its check to pass. This is the real gate. (`path-isolation` is already required; add
+  the other two to the required set to enforce them too — until then they run and report but
+  do not block.)
 - **Deploy** — `deploy/deploy.sh` runs the path check before the restart hand-off.
 
 ## `scripts/ci/check_channel_agnostic.py` — channel-agnostic guard
@@ -165,6 +165,25 @@ venv/bin/python scripts/ci/check_channel_agnostic.py   # exit 0 clean, 1 on a le
 Runs at **commit** (pre-commit hook) and **merge** (its own `channel-agnostic` CI job) — the
 same first two layers as the path guard. It is **not** run at deploy: it is architecture
 hygiene, not runtime-state safety, and `main` has already passed it.
+
+## `scripts/ci/check_command_replies.py` — slash-command reply-layout guard
+
+Runs every registered slash command against a seeded scratch `JARVIS_ROOT` (same dummy-secret
+trick as the path guard — no real secrets, no network call) and checks each reply against the
+layout contract in [architecture/GATEWAY.md](architecture/GATEWAY.md) § Reply formatting: bold
+header, blank line, real `- ` list items, no literal `•`. Handler markdown crosses two
+renderers with different newline semantics, and the same collapse defect was fixed three times
+in isolation before this existed. A command registered without a case in `CASES` fails the
+guard, so a new command can't join without a decision about its layout.
+
+```bash
+venv/bin/python scripts/ci/check_command_replies.py   # exit 0 clean, 1 on a defect
+```
+
+**Merge** only — its own `command-replies` CI job. Not in the pre-commit hook (it boots
+the whole app to render each reply, ~1.5s, too slow for a commit-time guard) and not at
+deploy (layout hygiene, not runtime-state safety). Run it by hand when touching
+`gateway/commands/`.
 
 ---
 

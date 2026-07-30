@@ -4,6 +4,37 @@ the user; the router (`gateway/commands/router.py`) drives dispatch.
 Handlers reach into `agent` for the LangGraph executor and the shared sqlite
 connection — that's the gateway↔agent boundary, not the channel↔gateway
 boundary, so it's fine. No handler may import a concrete channel module.
+
+Adding a handler
+----------------
+An `async def` taking `(inbound, args)` and returning the reply text, decorated
+with `@command(name, description)`. The router auto-discovers it.
+
+**Build the reply with `gateway.commands.format` — never hand-rolled markdown.**
+A reply crosses two renderers that disagree about a bare newline: Telegram's
+converter is line-based, CommonMark (the app) treats it as a soft break and
+flows the lines into one paragraph. The same collapse was fixed three times in
+isolation before the helpers existed. They are:
+
+    section("Available commands", items)   # **header**, blank line, "- item" each
+    kv_section("Jarvis status", pairs)     # same, rendered "- **key**: value"
+    document("HEARTBEAT.md", body)         # a header above raw file content
+    join(block_a, block_b)                 # blank-line-separated blocks
+
+    @command("things", "List the things")
+    async def _things(inbound: InboundMessage, args: list[str]) -> str:
+        return section("Things", [f"`{t.name}` — {t.detail}" for t in things()])
+
+A one-line reply ("Conversation reset.") needs no helper — the rules only bite
+once a reply has two lines. Never emit a literal `•`: Telegram's converter only
+rewrites the `- ` marker, so a hand-typed bullet passes there and stays inert
+prose in the app.
+
+Then add a case to `scripts/ci/check_command_replies.py` — it fails on any
+command registered without one, so the layout decision is made explicitly
+(`strict`, or `raw` when the reply is verbatim file content the handler doesn't
+own). Full contract: `gateway/commands/format.py` and
+docs/architecture/GATEWAY.md § Reply formatting.
 """
 
 from __future__ import annotations
@@ -12,6 +43,7 @@ import asyncio
 import logging
 
 from gateway.base import InboundMessage
+from gateway.commands.format import document, join, kv_section, section
 from gateway.commands.router import command, list_commands
 
 logger = logging.getLogger(__name__)
@@ -19,14 +51,10 @@ logger = logging.getLogger(__name__)
 
 @command("help", "List available slash commands")
 async def _help(inbound: InboundMessage, args: list[str]) -> str:
-    # A markdown bullet list (blank line after the header) so both renderers keep
-    # the commands on separate lines: a CommonMark client (the app) treats a bare
-    # newline as a soft break and would otherwise flow them onto one line, while
-    # Telegram's converter renders "- " as "• ".
-    lines = ["**Available commands:**", ""]
-    for c in list_commands():
-        lines.append(f"- `/{c.name}` — {c.description}")
-    return "\n".join(lines)
+    return section(
+        "Available commands",
+        [f"`/{c.name}` — {c.description}" for c in list_commands()],
+    )
 
 
 @command("clear", "Reset this conversation (wipe agent memory for this thread)")
@@ -79,7 +107,7 @@ async def _skills(inbound: InboundMessage, args: list[str]) -> str:
 
     def _line(ns: str, indent: int = 0) -> str:
         desc, _ = registry._skill_meta(ns)
-        return f"{'  ' * indent}- {ns}: {desc or '(no description)'}"
+        return f"{'  ' * indent}**{ns}**: {desc or '(no description)'}"
 
     # Active section — every active namespace must appear here.
     active_lines: list[str] = []
@@ -101,19 +129,17 @@ async def _skills(inbound: InboundMessage, args: list[str]) -> str:
     available_lines: list[str] = []
     for ns in top:
         if ns in active:
-            available_lines.append(f"- {ns} (active — see above)")
+            available_lines.append(f"**{ns}** (active — see above)")
             for child in children.get(ns, []):
                 if child not in active:
                     available_lines.append(_line(child, indent=1))
         else:
             available_lines.append(_line(ns))
 
-    parts = ["**Active skills:**"]
-    parts.append("\n".join(active_lines) if active_lines else "(none)")
-    parts.append("")
-    parts.append("**Available skills:**")
-    parts.append("\n".join(available_lines) if available_lines else "(none)")
-    return "\n".join(parts)
+    return join(
+        section("Active skills", active_lines),
+        section("Available skills", available_lines),
+    )
 
 
 @command("status", "Show runtime status (model, scope, active skills, tools)")
@@ -124,15 +150,19 @@ async def _status(inbound: InboundMessage, args: list[str]) -> str:
     core_n, skill_n, ns_n = registry.registered_counts()
     active = _active_skills(inbound.thread_id)
     model_name = getattr(agent.llm, "model", "unknown")
-    lines = [
-        "**Jarvis status:**",
-        f"- model: {model_name}",
-        f"- scope: user",
-        f"- thread: {inbound.thread_id}",
-        f"- active skills: {', '.join(sorted(active)) if active else 'none'}",
-        f"- tools registered: {core_n} core + {skill_n} skill across {ns_n} namespace(s)",
-    ]
-    return "\n".join(lines)
+    return kv_section(
+        "Jarvis status",
+        [
+            ("model", model_name),
+            ("scope", "user"),
+            ("thread", inbound.thread_id),
+            ("active skills", ", ".join(sorted(active)) if active else "none"),
+            (
+                "tools registered",
+                f"{core_n} core + {skill_n} skill across {ns_n} namespace(s)",
+            ),
+        ],
+    )
 
 
 def _memory_list_top_level() -> str:
@@ -151,7 +181,7 @@ def _memory_list_top_level() -> str:
         return f"Error listing memory: {e}"
     if not entries:
         return "No top-level memory files."
-    return "**Memory files:**\n" + "\n".join(f"- {e}" for e in entries)
+    return section("Memory files", entries)
 
 
 @command(
@@ -186,7 +216,7 @@ def _heartbeat_list_tasks() -> str:
         return f"Error listing heartbeat tasks: {e}"
     if not entries:
         return "No heartbeat task state files yet."
-    return "**Heartbeat task state files:**\n" + "\n".join(f"- {e}" for e in entries)
+    return section("Heartbeat task state files", entries)
 
 
 @command(
@@ -210,7 +240,7 @@ async def _heartbeat(inbound: InboundMessage, args: list[str]) -> str:
     body = await asyncio.to_thread(agent.load_or_blank, agent._HEARTBEAT_MD_PATH)
     if not body:
         return "HEARTBEAT.md is empty or unreadable."
-    return f"**HEARTBEAT.md:**\n{body}"
+    return document("HEARTBEAT.md", body)
 
 
 def _parse_log_date(arg: str) -> str | None:
@@ -265,6 +295,16 @@ def _parse_log_date(arg: str) -> str | None:
     return None
 
 
+_LOGS_USAGE = section(
+    "Usage",
+    [
+        "`/logs [today|yesterday|D[.M[.Y]]]` — `.` or `/` as the date separator",
+        "Examples: `/logs`, `/logs yesterday`, `/logs 21` (this month), "
+        "`/logs 21.5`, `/logs 21.5.2026`",
+    ],
+)
+
+
 @command(
     "logs",
     "Show today's daily log. Sub: /logs today|yesterday|D[.M[.Y]]",
@@ -277,20 +317,20 @@ async def _logs(inbound: InboundMessage, args: list[str]) -> str:
     else:
         iso = _parse_log_date(" ".join(args).strip())
         if iso is None:
-            return (
-                "Invalid date. Try /logs, /logs today, /logs yesterday, "
-                "/logs 21 (this month), /logs 21.5, or /logs 21.5.2026 "
-                "(also accepts '/' as the separator)."
-            )
+            return join("Invalid date.", _LOGS_USAGE)
 
     return await asyncio.to_thread(
         read_memory.invoke, {"filename": f"daily/daily_{iso}.md"}
     )
 
 
-_USAGE_USAGE = (
-    "Usage: /usage [today|yesterday|week|D[.M[.Y]]] [user|heartbeat]\n"
-    "Examples: /usage, /usage yesterday, /usage week, /usage week user, /usage 21.5"
+_USAGE_USAGE = section(
+    "Usage",
+    [
+        "`/usage [today|yesterday|week|D[.M[.Y]]] [user|heartbeat]`",
+        "Examples: `/usage`, `/usage yesterday`, `/usage week`, "
+        "`/usage week user`, `/usage 21.5`",
+    ],
 )
 
 
@@ -325,7 +365,7 @@ async def _usage(inbound: InboundMessage, args: list[str]) -> str:
     else:
         iso = _parse_log_date(range_token)
         if iso is None:
-            return f"Invalid date.\n{_USAGE_USAGE}"
+            return join("Invalid date.", _USAGE_USAGE)
         since, until = israel_day_range(iso)
         group_by = "day" if scope_filter else "scope"
         title = f"**Usage — {iso}**" + (f" ({scope_filter})" if scope_filter else "")

@@ -30,7 +30,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │   ├── confirmation/          # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
 │   ├── commands/              # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
 │   │   ├── router.py          #   @command decorator + try_handle_command(inbound) entry point
-│   │   └── handlers.py        #   built-in handlers (/help, /clear, /skills, /status, /memory, /heartbeat, /logs)
+│   │   ├── handlers.py        #   built-in handlers (/help, /clear, /skills, /status, /memory, /heartbeat, /logs)
+│   │   └── format.py          #   reply-layout helpers (section/kv_section/document/join) + check_reply
 │   ├── channels/              # Concrete channels, one dir each
 │   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py, host.py (PTB lifecycle)
 │   └── webhook/               # Channel-agnostic: server.py (FastAPI), notifier.py (media aggregator)
@@ -210,7 +211,7 @@ message. Never infer or fake service state.
 |------|------|
 | Add a new tool | Add it under `tools/core/` (always-on) or `tools/<skill>/` (activatable skill); decorate `@tool_register(namespace=..., destructive=...)` above `@tool`. Nothing else — the registry auto-discovers it. New skill = new `tools/<name>/` dir + a `tools/<name>/SKILL.md` (YAML frontmatter `name`/`description` + optional rules body). **Sub-skill** = a `tools/<parent>/<child>/` subpackage (`__init__.py` importing its module + its own `SKILL.md`) with `namespace="<parent>/<child>"`; the parent's `__init__.py` imports the subpackage, and a parent may own zero tools (pure discovery index — children stay hidden until the parent is activated). |
 | Add a new channel (email, etc.) | New dir `gateway/channels/<channel>/` implementing `Channel`; register in `gateway/factory.py`. No tool/agent edits. See docs/architecture/GATEWAY.md |
-| Add a slash command | Add an `async def` handler in `gateway/commands/handlers.py` decorated with `@command(name, description)`. The router auto-discovers it; `/help` and each channel's command-menu (e.g. Telegram autocomplete via `register_command_menu()`) pick it up next start. Handlers receive `(InboundMessage, args: list[str])` and return reply text — they may import `agent`/`tools` but **not** any concrete channel. See docs/architecture/GATEWAY.md (Plane 1 — Slash-Command Dispatch). |
+| Add a slash command | Add an `async def` handler in `gateway/commands/handlers.py` decorated with `@command(name, description)`. The router auto-discovers it; `/help` and each channel's command-menu (e.g. Telegram autocomplete via `register_command_menu()`) pick it up next start. Handlers receive `(InboundMessage, args: list[str])` and return reply text — they may import `agent`/`tools` but **not** any concrete channel. Build the reply with `gateway/commands/format.py` (`section`/`kv_section`/`document`/`join`), never hand-rolled markdown, and add a case to `scripts/ci/check_command_replies.py` (the guard fails on an uncovered command). See docs/architecture/GATEWAY.md (Plane 1 — Slash-Command Dispatch + Reply formatting). |
 | Change Jarvis's personality | Edit `/app/jarvis_memory/SOUL.md` directly |
 | Change behavioral rules | `/app/jarvis_code/prompts/AGENTS.md` (always-on) or `prompts/heartbeat.md` (heartbeat-scope only); a skill's own rules go in `tools/<ns>/SKILL.md`. Tool usage is driven by tool docstrings, not prompt prose. |
 | Add a heartbeat task | Ask Jarvis (it uses `manage_heartbeat_task`, validated before write), or hand-edit `/app/jarvis_memory/HEARTBEAT.md` following the grammar in docs/architecture/HEARTBEAT.md (a malformed hand edit degrades to always-due, never a silent drop) |
