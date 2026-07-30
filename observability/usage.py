@@ -23,16 +23,56 @@ _IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 GroupBy = Literal["day", "week", "scope", "day+scope"]
 
-# USD per million tokens. Update from https://ai.google.dev/pricing when the
-# model changes. Cache-reads are billed separately at a discounted rate; the
-# rate below is a best-effort estimate (Gemini Flash family historically
-# ~25% of the normal input price) — verify against the live pricing page
-# before reading dollar figures literally.
+# USD per million tokens, read from https://ai.google.dev/gemini-api/docs/pricing
+# and verified 2026-07-29. Re-verify on the same page before trusting any dollar
+# figure — these are transcribed constants, not a live feed, and a stale entry
+# silently corrupts every rollup rather than failing. The `cost-review` skill
+# exists to diff this table against the page on demand.
+#
+# Every model we might plausibly switch to is priced here, not just the one in
+# use: an unknown model falls back to _ZERO_PRICE, so a one-line model swap in
+# agent.py would otherwise report $0.00 forever. summarize_usage flags that case
+# via `unpriced_models`, but a present entry is better than a caught mistake.
+#
+# Known limitation: audio input bills at roughly 2x text on these models (e.g.
+# $1.00/M vs $0.50/M for gemini-3-flash-preview), and Telegram voice notes do
+# reach the model. One rate per model cannot express that, so audio-heavy days
+# under-report slightly. Deliberately not modelled — modality tiering is a lot
+# of machinery for a rounding error at current volumes.
 MODEL_PRICES: dict[str, dict[str, float]] = {
     "gemini-3-flash-preview": {
-        "input_per_m": 0.075,
-        "cache_read_per_m": 0.01875,
-        "output_per_m": 0.30,
+        "input_per_m": 0.50,
+        "cache_read_per_m": 0.05,
+        "output_per_m": 3.00,
+    },
+    "gemini-3.6-flash": {
+        "input_per_m": 1.50,
+        "cache_read_per_m": 0.15,
+        "output_per_m": 7.50,
+    },
+    "gemini-3.5-flash": {
+        "input_per_m": 1.50,
+        "cache_read_per_m": 0.15,
+        "output_per_m": 9.00,
+    },
+    "gemini-3.5-flash-lite": {
+        "input_per_m": 0.30,
+        # No context caching on the standard tier for this model. Pricing cache
+        # reads at the full input rate keeps estimate_usd's subtract-then-reprice
+        # arithmetic correct; a lower number here would invent a discount that
+        # the bill does not give us.
+        "cache_read_per_m": 0.30,
+        "output_per_m": 2.50,
+    },
+    "gemini-3.1-flash-lite": {
+        "input_per_m": 0.25,
+        "cache_read_per_m": 0.025,
+        "output_per_m": 1.50,
+    },
+    "gemini-2.5-flash": {
+        "input_per_m": 0.30,
+        "cache_read_per_m": 0.03,
+        "output_per_m": 2.50,
     },
 }
 _ZERO_PRICE = {"input_per_m": 0.0, "cache_read_per_m": 0.0, "output_per_m": 0.0}
@@ -133,10 +173,19 @@ def _empty_bucket(key: str) -> dict:
         "input_tokens": 0,
         "cache_read_tokens": 0,
         "output_tokens": 0,
+        # Thinking-token slice of output_tokens. Diagnostic only — billed at the
+        # ordinary output rate, so it never enters estimate_usd. Reads 0 for
+        # records written before the field existed, and for non-thinking models.
+        "reasoning_tokens": 0,
         "total_tokens": 0,
         "no_action_count": 0,
         "errors": 0,
         "usd_cost": 0.0,
+        # Models seen in this bucket that MODEL_PRICES has no entry for, so their
+        # tokens contributed $0.00 to usd_cost. A set while accumulating;
+        # summarize_usage converts it to a sorted list before returning so rows
+        # stay JSON-serializable.
+        "unpriced_models": set(),
     }
 
 
@@ -148,6 +197,15 @@ def summarize_usage(
 ) -> list[dict]:
     """Group + roll up turns in [since, until). Returns rows sorted ascending
     by group key. Each row also carries ``no_action_rate`` for convenience.
+
+    Rows carry ``unpriced_models`` (sorted list): models whose tokens fell
+    through to _ZERO_PRICE and so contributed nothing to ``usd_cost``. A
+    zero-dollar row is indistinguishable from a free one otherwise, which is
+    how a wrong price table stays hidden — callers should surface it.
+
+    ``reasoning_tokens`` is the thinking slice of ``output_tokens``, not an
+    addition to it, and carries no separate price — do not add it to usd_cost.
+    Reads 0 for turns recorded before the field existed.
 
     Pure: no I/O beyond load_turns; no global state. Suitable for REPL use:
         >>> from tools.core.usage import summarize_usage
@@ -166,20 +224,27 @@ def summarize_usage(
         b["input_tokens"] += int(t.get("input_tokens") or 0)
         b["cache_read_tokens"] += int(t.get("cache_read_tokens") or 0)
         b["output_tokens"] += int(t.get("output_tokens") or 0)
+        b["reasoning_tokens"] += int(t.get("reasoning_tokens") or 0)
         b["total_tokens"] += int(t.get("total_tokens") or 0)
         if t.get("no_action"):
             b["no_action_count"] += 1
         if t.get("error"):
             b["errors"] += 1
+        model = t.get("model")
+        # A null model means the turn made no LLM call (nothing to price), which
+        # is not a pricing gap — only a named model we cannot price is.
+        if model and model not in MODEL_PRICES:
+            b["unpriced_models"].add(model)
         b["usd_cost"] += estimate_usd(
             int(t.get("input_tokens") or 0),
             int(t.get("cache_read_tokens") or 0),
             int(t.get("output_tokens") or 0),
-            t.get("model"),
+            model,
         )
     rows = sorted(buckets.values(), key=lambda r: r["group"])
     for r in rows:
         r["no_action_rate"] = (r["no_action_count"] / r["turns"]) if r["turns"] else 0.0
+        r["unpriced_models"] = sorted(r["unpriced_models"])
     return rows
 
 
@@ -199,41 +264,114 @@ def _human_tokens(n: int) -> str:
 
 
 def _cache_pct(input_tokens: int, cache_read_tokens: int) -> str:
-    """Render '23% cached' or just '' when there's nothing meaningful to show."""
+    """Render ' (23% cached)' or just '' when there's nothing meaningful to show."""
     if input_tokens <= 0 or cache_read_tokens <= 0:
         return ""
-    return f", {cache_read_tokens / input_tokens:.0%} cached"
+    return f" ({cache_read_tokens / input_tokens:.0%} cached)"
+
+
+def _reasoning_pct(output_tokens: int, reasoning_tokens: int) -> str:
+    """Render ' (61% thinking)' or ''. Conditional for the same reason as
+    _cache_pct, plus one of its own: records written before reasoning_tokens
+    existed carry no such key, so a bucket containing only those must stay
+    silent rather than claim a measured '0% thinking'.
+
+    A bucket that *mixes* pre- and post-field turns still dilutes the ratio —
+    unmeasured output sits in the denominator. Inherent to introducing a metric
+    mid-stream; per-day rows isolate it, and it resolves once the window clears
+    the deploy. Don't read a boundary-spanning aggregate as a trend."""
+    if output_tokens <= 0 or reasoning_tokens <= 0:
+        return ""
+    return f" ({reasoning_tokens / output_tokens:.0%} thinking)"
+
+
+def _usd(amount: float) -> str:
+    """Money at a precision that suits the magnitude. A 30-day total wants
+    '$21.15', not '$21.1543'; a single cheap turn genuinely needs '$0.0008'.
+
+    Two tiers, not three: cents everywhere they carry information, and 4dp only
+    below a cent. A middle tier reads as inconsistent when sibling rows in one
+    breakdown land on either side of it ('$3.24' next to '$0.784')."""
+    if amount >= 0.01:
+        return f"${amount:,.2f}"
+    return f"${amount:.4f}"
+
+
+def _unpriced_note(models: list[str]) -> str:
+    """Render '⚠ unpriced: gemini-x' or '' — the marker that keeps a $0.00 from
+    reading as free. Rendered on the totals block as well as per-row, because
+    single-bucket rollups skip the per-row breakdown entirely."""
+    if not models:
+        return ""
+    return f"⚠ unpriced: {', '.join(models)}"
+
+
+def _extras(no_action: int, errors: int, unpriced: list[str]) -> list[str]:
+    """The optional trailing annotations shared by the totals block and each
+    row. Returned as parts so callers choose their own separator — the totals
+    block renders them as a standalone line, a row appends them inline."""
+    parts = []
+    if no_action:
+        parts.append(f"{no_action} NO_ACTION")
+    if errors:
+        parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    note = _unpriced_note(unpriced)
+    if note:
+        parts.append(note)
+    return parts
 
 
 def _row_line(r: dict) -> str:
-    """One bullet for a group row: key — turns, tokens, cost, extras."""
-    extras = []
-    if r.get("no_action_count"):
-        extras.append(f"{r['no_action_count']} NO_ACTION")
-    if r.get("errors"):
-        extras.append(f"{r['errors']} error{'s' if r['errors'] != 1 else ''}")
-    extras_str = f" · {' · '.join(extras)}" if extras else ""
+    """One markdown list item for a group row: key — turns, tokens, cost, extras.
+
+    A real '- ' list item, not a literal '•': Telegram's converter renders '- '
+    as '• ', while a CommonMark client (the app) needs genuine list syntax —
+    given bare newlines it treats them as soft breaks and flows every row onto
+    one line. Same reasoning as the /help handler.
+    """
+    parts = _extras(
+        r.get("no_action_count", 0), r.get("errors", 0), r.get("unpriced_models") or []
+    )
     return (
-        f"• *{r['group']}* — {r['turns']} turn{'s' if r['turns'] != 1 else ''}, "
+        f"- **{r['group']}** — {r['turns']:,} turn{'s' if r['turns'] != 1 else ''} · "
         f"{_human_tokens(r['input_tokens'])} in"
         f"{_cache_pct(r['input_tokens'], r['cache_read_tokens'])}"
         f" → {_human_tokens(r['output_tokens'])} out"
-        f", ${r['usd_cost']:.4f}{extras_str}"
+        f"{_reasoning_pct(r['output_tokens'], r.get('reasoning_tokens', 0))} · "
+        f"{_usd(r['usd_cost'])}"
+        + (f" · {' · '.join(parts)}" if parts else "")
     )
 
 
 def format_usage_table(rows: list[dict], title: str = "") -> str:
-    """Render rollup rows as a compact text summary:
+    """Render rollup rows as a markdown summary:
 
-        *Title*
-        Total: N turns · IN → OUT tokens · $USD [· extras]
+        **Title**
 
-        • *group key* — N turns, IN in [, P% cached] → OUT out, $USD [· extras]
+        - **N** turns · N LLM calls · N tool calls
+        - **IN** in (P% cached) → **OUT** out (P% thinking)
+        - **$USD** total
+        - N NO_ACTION · N errors            (omitted when all zero)
+
+        **Breakdown**
+
+        - **group key** — N turns · IN in (P% cached) → OUT out · $USD [· extras]
         ...
 
+    Every block is a real markdown list separated by blank lines, because the
+    output crosses two renderers: Telegram converts '- ' to '• ', while a
+    CommonMark client (the app) collapses bare newlines into one paragraph and
+    needs genuine list syntax to keep rows apart. Emphasis is '**bold**' for the
+    same reason — single '*' is *italic* in both, which is not what the numbers
+    want. See the /help handler for the precedent.
+
+    `extras` carries NO_ACTION / error counts and, when any model in the period
+    is missing from MODEL_PRICES, an '⚠ unpriced' marker — without it a $0.00
+    from a stale price table is indistinguishable from a genuinely free period.
+
     Function name kept (format_usage_table) for compatibility with the slash
-    command and existing callers, but the layout is now a vertical summary
-    rather than a fixed-width table — readable on mobile, no horizontal scroll.
+    command and existing callers, though the layout is a vertical summary rather
+    than a fixed-width table — readable on mobile, no horizontal scroll.
     """
     if not rows:
         return (
@@ -244,6 +382,7 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     totals_in = sum(r["input_tokens"] for r in rows)
     totals_cache = sum(r["cache_read_tokens"] for r in rows)
     totals_out = sum(r["output_tokens"] for r in rows)
+    totals_reasoning = sum(r.get("reasoning_tokens", 0) for r in rows)
     totals_turns = sum(r["turns"] for r in rows)
     totals_llm = sum(r["llm_calls"] for r in rows)
     totals_tools = sum(r["tool_calls"] for r in rows)
@@ -251,29 +390,34 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     totals_errors = sum(r["errors"] for r in rows)
     totals_usd = sum(r["usd_cost"] for r in rows)
 
-    extras = []
-    if totals_no_action:
-        extras.append(f"{totals_no_action} NO_ACTION")
-    if totals_errors:
-        extras.append(f"{totals_errors} error{'s' if totals_errors != 1 else ''}")
-    extras_str = f" · {' · '.join(extras)}" if extras else ""
+    totals_unpriced = sorted({m for r in rows for m in (r.get("unpriced_models") or [])})
+    extras_parts = _extras(totals_no_action, totals_errors, totals_unpriced)
 
     out: list[str] = []
     if title:
-        out.append(title)
+        # Blank line after the header, or a CommonMark client runs it into the
+        # first list item.
+        out.extend([title, ""])
+    # One metric family per line rather than eight fields on one — the single
+    # line wrapped mid-metric on a phone, which is what made it unreadable.
     out.append(
-        f"Total: {totals_turns} turn{'s' if totals_turns != 1 else ''} · "
-        f"{totals_llm} LLM · "
-        f"{totals_tools} tool{'s' if totals_tools != 1 else ''} · "
-        f"{_human_tokens(totals_in)} in"
-        f"{_cache_pct(totals_in, totals_cache)} → "
-        f"{_human_tokens(totals_out)} out · "
-        f"${totals_usd:.4f}{extras_str}"
+        f"- **{totals_turns:,}** turn{'s' if totals_turns != 1 else ''} · "
+        f"{totals_llm:,} LLM call{'s' if totals_llm != 1 else ''} · "
+        f"{totals_tools:,} tool call{'s' if totals_tools != 1 else ''}"
     )
+    out.append(
+        f"- **{_human_tokens(totals_in)}** in"
+        f"{_cache_pct(totals_in, totals_cache)}"
+        f" → **{_human_tokens(totals_out)}** out"
+        f"{_reasoning_pct(totals_out, totals_reasoning)}"
+    )
+    out.append(f"- **{_usd(totals_usd)}** total")
+    if extras_parts:
+        out.append(f"- {' · '.join(extras_parts)}")
     # Single-row tables (one bucket = whole period) are redundant — totals already
     # cover the whole story. Show the per-row breakdown only when there are 2+.
     if len(rows) > 1:
-        out.append("")
+        out.extend(["", "**Breakdown**", ""])
         for r in rows:
             out.append(_row_line(r))
     return "\n".join(out)

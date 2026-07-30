@@ -66,6 +66,7 @@ def record_turn_start(
         "input_tokens": 0,
         "cache_read_tokens": 0,
         "output_tokens": 0,
+        "reasoning_tokens": 0,
         "total_tokens": 0,
         "model": model,
         "active_skills_start": sorted(active_skills_start or []),
@@ -82,11 +83,21 @@ def record_llm_call(response: Any) -> None:
 
     Gemini's usage_metadata shape (via langchain-google-genai):
         {"input_tokens": ..., "output_tokens": ..., "total_tokens": ...,
-         "input_token_details": {"cache_read": ...}}
+         "input_token_details": {"cache_read": ...},
+         "output_token_details": {"reasoning": ...}}
 
     `cache_read` is the count of input tokens served from the prompt cache —
-    the dollar-saving metric for Lever 4 of #33. Treat usage_metadata and
-    its sub-dicts as None-safe; providers vary.
+    the dollar-saving metric for Lever 4 of #33.
+
+    `reasoning` is the thinking-token slice of output_tokens. Unlike cache_read
+    it does NOT change the cost arithmetic: cache reads are input billed at a
+    discount, whereas reasoning is output billed at the ordinary output rate and
+    is already inside output_tokens. It is recorded as a diagnostic — it is the
+    only observable that `thinking_level` moves, so without it a tuning change
+    cannot be told apart from a regression.
+
+    Treat usage_metadata and its sub-dicts as None-safe; providers vary, and
+    non-thinking models omit output_token_details entirely.
     """
     acc = TURN_ACC.get()
     if acc is None:
@@ -99,6 +110,8 @@ def record_llm_call(response: Any) -> None:
         acc["total_tokens"] += int(usage.get("total_tokens") or 0)
         details = usage.get("input_token_details") or {}
         acc["cache_read_tokens"] += int(details.get("cache_read") or 0)
+        out_details = usage.get("output_token_details") or {}
+        acc["reasoning_tokens"] += int(out_details.get("reasoning") or 0)
     if acc.get("model") is None:
         md = getattr(response, "response_metadata", None) or {}
         model = md.get("model_name") or md.get("model")
