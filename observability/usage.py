@@ -173,6 +173,10 @@ def _empty_bucket(key: str) -> dict:
         "input_tokens": 0,
         "cache_read_tokens": 0,
         "output_tokens": 0,
+        # Thinking-token slice of output_tokens. Diagnostic only — billed at the
+        # ordinary output rate, so it never enters estimate_usd. Reads 0 for
+        # records written before the field existed, and for non-thinking models.
+        "reasoning_tokens": 0,
         "total_tokens": 0,
         "no_action_count": 0,
         "errors": 0,
@@ -199,6 +203,10 @@ def summarize_usage(
     zero-dollar row is indistinguishable from a free one otherwise, which is
     how a wrong price table stays hidden — callers should surface it.
 
+    ``reasoning_tokens`` is the thinking slice of ``output_tokens``, not an
+    addition to it, and carries no separate price — do not add it to usd_cost.
+    Reads 0 for turns recorded before the field existed.
+
     Pure: no I/O beyond load_turns; no global state. Suitable for REPL use:
         >>> from tools.core.usage import summarize_usage
         >>> rows = summarize_usage(group_by="day+scope")
@@ -216,6 +224,7 @@ def summarize_usage(
         b["input_tokens"] += int(t.get("input_tokens") or 0)
         b["cache_read_tokens"] += int(t.get("cache_read_tokens") or 0)
         b["output_tokens"] += int(t.get("output_tokens") or 0)
+        b["reasoning_tokens"] += int(t.get("reasoning_tokens") or 0)
         b["total_tokens"] += int(t.get("total_tokens") or 0)
         if t.get("no_action"):
             b["no_action_count"] += 1
@@ -259,6 +268,21 @@ def _cache_pct(input_tokens: int, cache_read_tokens: int) -> str:
     if input_tokens <= 0 or cache_read_tokens <= 0:
         return ""
     return f" ({cache_read_tokens / input_tokens:.0%} cached)"
+
+
+def _reasoning_pct(output_tokens: int, reasoning_tokens: int) -> str:
+    """Render ' (61% thinking)' or ''. Conditional for the same reason as
+    _cache_pct, plus one of its own: records written before reasoning_tokens
+    existed carry no such key, so a bucket containing only those must stay
+    silent rather than claim a measured '0% thinking'.
+
+    A bucket that *mixes* pre- and post-field turns still dilutes the ratio —
+    unmeasured output sits in the denominator. Inherent to introducing a metric
+    mid-stream; per-day rows isolate it, and it resolves once the window clears
+    the deploy. Don't read a boundary-spanning aggregate as a trend."""
+    if output_tokens <= 0 or reasoning_tokens <= 0:
+        return ""
+    return f" ({reasoning_tokens / output_tokens:.0%} thinking)"
 
 
 def _usd(amount: float) -> str:
@@ -312,7 +336,8 @@ def _row_line(r: dict) -> str:
         f"- **{r['group']}** — {r['turns']:,} turn{'s' if r['turns'] != 1 else ''} · "
         f"{_human_tokens(r['input_tokens'])} in"
         f"{_cache_pct(r['input_tokens'], r['cache_read_tokens'])}"
-        f" → {_human_tokens(r['output_tokens'])} out · "
+        f" → {_human_tokens(r['output_tokens'])} out"
+        f"{_reasoning_pct(r['output_tokens'], r.get('reasoning_tokens', 0))} · "
         f"{_usd(r['usd_cost'])}"
         + (f" · {' · '.join(parts)}" if parts else "")
     )
@@ -324,7 +349,7 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
         **Title**
 
         - **N** turns · N LLM calls · N tool calls
-        - **IN** in (P% cached) → **OUT** out
+        - **IN** in (P% cached) → **OUT** out (P% thinking)
         - **$USD** total
         - N NO_ACTION · N errors            (omitted when all zero)
 
@@ -357,6 +382,7 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     totals_in = sum(r["input_tokens"] for r in rows)
     totals_cache = sum(r["cache_read_tokens"] for r in rows)
     totals_out = sum(r["output_tokens"] for r in rows)
+    totals_reasoning = sum(r.get("reasoning_tokens", 0) for r in rows)
     totals_turns = sum(r["turns"] for r in rows)
     totals_llm = sum(r["llm_calls"] for r in rows)
     totals_tools = sum(r["tool_calls"] for r in rows)
@@ -383,6 +409,7 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
         f"- **{_human_tokens(totals_in)}** in"
         f"{_cache_pct(totals_in, totals_cache)}"
         f" → **{_human_tokens(totals_out)}** out"
+        f"{_reasoning_pct(totals_out, totals_reasoning)}"
     )
     out.append(f"- **{_usd(totals_usd)}** total")
     if extras_parts:

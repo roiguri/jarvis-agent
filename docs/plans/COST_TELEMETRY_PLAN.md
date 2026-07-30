@@ -212,6 +212,19 @@ must not print a misleading "0% reasoning" for the older half.
 Backfill is a non-issue: the `int(t.get(...) or 0)` idiom already used throughout
 handles absent keys.
 
+### Surfaced by B, deferred — #55
+
+`reasoning_tokens` is the first field ever added mid-stream to `turns.jsonl` (every
+other field has 100% coverage since 2026-05-21), so a rollup window spanning its
+deploy dilutes the thinking percentage — unmeasured output sits in the denominator.
+Self-resolving once the window clears; noted in `_reasoning_pct`.
+
+Checking whether that shape affected anything else turned up a pre-existing case
+that does **not** self-resolve: `no_action_rate` divides heartbeat no-ops by *all*
+turns in the bucket, though only heartbeat turns can ever be one — 87.9% reads as
+70.3%. Latent (the rate is computed but never rendered) and out of scope here.
+Tracked in **#55**.
+
 ### B3 — doc sync
 
 | file | change |
@@ -360,10 +373,10 @@ A ──► B ──► C
 - [x] A4 — `CONTEXT_HANDLING_PLAN.md` baseline restated: the whole dollar block was wrong, not just the `:41` monthly figure
 - [x] A5 — `/usage` rendering: real `- ` list items (fixes app-channel line collapse), `**bold**`, split totals block, magnitude-aware `_usd()`
 - [ ] A — **restart + `/usage week` verified live** (needs the owner)
-- [ ] B1 — `reasoning_tokens` captured in `record_turn_start` / `record_llm_call`
-- [ ] B2 — rolled up + conditionally rendered in `usage.py`
-- [ ] B3 — `OBSERVABILITY.md` schema block + prose paragraph
-- [ ] B — restart + non-zero `reasoning_tokens` on a fresh turn verified live
+- [x] B1 — `reasoning_tokens` captured in `record_turn_start` / `record_llm_call`; `estimate_usd` deliberately untouched (asserted in test)
+- [x] B2 — rolled up + conditionally rendered as `(N% thinking)` in `usage.py`
+- [x] B3 — `OBSERVABILITY.md` schema block + prose paragraph (states the diagnostic-not-billing distinction)
+- [ ] B — **restart + non-zero `reasoning_tokens` on a fresh turn verified live** (needs the owner)
 - [ ] C1 — boundary against `heartbeat-assert` settled (and its description trimmed if needed)
 - [ ] C2 — `.claude/skills/cost-review/SKILL.md`
 - [ ] C3 — skill listed wherever the other two are

@@ -59,6 +59,7 @@ All four live in `/app/jarvis_data/logs/`. All four use the shared `_append_line
   "input_tokens": 4501,
   "cache_read_tokens": 0,
   "output_tokens": 312,
+  "reasoning_tokens": 240,
   "total_tokens": 4813,
   "model": "gemini-3-flash-preview",
   "active_skills_start": [],
@@ -71,6 +72,10 @@ All four live in `/app/jarvis_data/logs/`. All four use the shared `_append_line
 Source: built up across a turn by `observability.telemetry.record_turn_start` (at entry) / `record_llm_call` (per LLM invocation) and flushed by `record_turn_end` (at exit).
 
 `cache_read_tokens` is the count of input tokens served from the provider's prompt cache. It is the signal for evaluating prompt-cache effectiveness — `cache_read_tokens / input_tokens` is the cache hit rate. Reads 0 when caching is not enabled or no cached prefix matched. Sourced from `response.usage_metadata.input_token_details.cache_read` for the langchain-google-genai backend; the field is `None`-safe at every level for providers that don't expose it.
+
+`reasoning_tokens` is the thinking-token slice **of** `output_tokens` — a subset, not an addition, so `input + output` still reconciles with `total_tokens`. Sourced from `response.usage_metadata.output_token_details.reasoning`; `None`-safe at every level, and reads 0 both for non-thinking models and for turns recorded before the field existed (2026-07-30).
+
+It is a **diagnostic, not a billing field**, and this is the one way it differs from `cache_read_tokens`. Cache reads are *input* billed at a discount, so `estimate_usd` subtracts them out of the billable-input bucket. Reasoning tokens are *output* billed at the ordinary output rate and are already counted in `output_tokens` — adding them anywhere in `estimate_usd` would double-count. They are recorded because `thinking_level` (Gemini 3.x) is the largest cost/quality dial available and this is the only observable it moves: without it, a successful `thinking_level` tuning cannot be distinguished from a quality regression, and a model whose reasoning appetite is eating the budget is invisible until the invoice arrives.
 
 `no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: when the tick's `heartbeat_respond` ack is present, `no_action = not ack.notify`; only when the ack is missing does it fall back to checking whether the response text begins with `[NO_ACTION]`. Computed in `ask_jarvis`'s `finally`.
 
