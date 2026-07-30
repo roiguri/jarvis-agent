@@ -46,9 +46,9 @@ WS1 did not move per-tick input — it drifted *up*, from ~68k in early July to 
 no-op tick at **214k**. Inside a tick, 63% of each call is re-sent message history and 18% is
 accrued tool results; the whole system prompt is 10%. A representative tick spends **9 tool calls
 and 5 sequential LLM round-trips to make one 785ms API call** — the rest is bookkeeping the harness
-asks for and then discards. Separately, cross-turn prompt caching is still ~0 because the system
-prompt's first line is a per-minute timestamp, and memory recall still requires knowing a file's
-exact name.
+asks for and then discards. Separately, the system prompt's first line is a per-minute timestamp,
+which costs cache hits *within* a single turn (64% of heartbeat turns cross a minute boundary
+mid-turn), and memory recall still requires knowing a file's exact name.
 
 **Plan.** Eight workstreams, ordered below by **measured impact**. WS1 is done. WS8 and WS7 own the
 spend and lead; WS2 is cheap and multiplies everything; WS3 is rescoped to what its method can
@@ -58,7 +58,7 @@ actually deliver; WS5/WS6 are a capability track.
 |---|---|---|---|---|---|
 | 1 | **WS8** | **Heartbeat tick ceremony** | round-trips per tick | small (2 slices) | ~3.8 → ~1 LLM call/tick, on **every** task; 1a shipped & GREEN |
 | 2 | **WS7** | **Conversation compaction** — *unparked* | the 63% + 18% | medium (cheap half is ~20 lines) | Per-call input; owns the largest single line item |
-| 3 | WS2 | Cache-stable prompt layout | every call, both scopes | small | Cross-turn cache hits on the stable prefix |
+| 3 | WS2 | Cache-stable prompt + time grounding | intra-turn cache loss, both scopes | small-medium | Multi-call turns stop losing their own prefix. **Not** cross-tick caching — see the corrections in WS2 |
 | 4 | WS4 | Bootstrap context budget | unbounded prompt growth | small | Backstop, not a win: caps injected copies |
 | 5 | WS5 | Memory & history search | recall capability | medium | "What did we discuss last week?" becomes answerable |
 | 6 | WS6 | Memory size pressure | long-term prompt creep | small | USER.md/MEMORY.md stay curated |
@@ -66,8 +66,9 @@ actually deliver; WS5/WS6 are a capability track.
 | — | WS1 | Heartbeat gating + windows + self-authoring | the 83% | 9 phases | **Done 2026-07-13.** Gate correct, 22% skip — see WS1 below |
 
 **Sequencing.** WS8 first — pure deletion plus injection, no new mechanism, and its win is readable
-in existing telemetry. Then WS7's cheap half (tool-result pruning). WS2 and WS4 can land any time.
-WS5/WS6 are independent. WS3 last, if at all.
+in existing telemetry. Then WS7's cheap half (tool-result pruning). WS2 is no longer "any time": it
+shares `_add_and_trim` with WS7 and its clock work needs re-verification first (see WS2). WS4 can
+land any time. WS5/WS6 are independent. WS3 last, if at all.
 
 **Risk posture.** Everything is additive or a reordering, independently shippable and revertable,
 and checkable against `turns.jsonl` (per-turn input/output/cache-read by scope). **Checkable is not
@@ -339,40 +340,73 @@ stable prefixes reduce the coordination pressure that motivated it.
 
 ---
 
-## WS2 — Cache-stable prompt layout (rank 3; mostly a reordering)
+## WS2 — Cache-stable prompt + time grounding (rank 3)
 
-**Why.** Gemini implicit caching is prefix-based and automatic — no API changes, just byte-stable
-leading content across calls. Today the first line guarantees a miss every minute. Jarvis prompts are
-far above the implicit-caching minimum, so the only blocker is layout. This is a ~10%-slice
-workstream, but it is cheap, carries near-zero risk, and multiplies across every call in both scopes.
+> **The original sketch here — "move the clock to the last line of the system prompt" — was wrong,
+> and is withdrawn.** A WS2 design pass on 2026-07-13 researched Gemini's caching behaviour and
+> overturned it on three points. That pass produced a draft (`CACHE_STABLE_PROMPT_PLAN.md`) that was
+> never committed and no longer exists on disk or in git, so its findings are recorded here to stop
+> them being lost a second time. **They predate this file's other measurements and have not been
+> re-verified against Gemini's current docs — do that first if this workstream is picked up.**
 
-**Design** — all in `build_system_prompt` (`agent.py:332`):
+**The three corrections.**
 
-1. **Reorder stable → volatile.** New assembly order:
-   - *Stable prefix:* `[Active scope: …]` → SOUL.md → AGENTS.md → USER.md → scope framing
-     (+ `prompts/heartbeat.md` for heartbeat) → skill list.
-   - *Volatile tail:* HEARTBEAT.md / due-task blocks + injected notes (heartbeat), daily log, live
-     chat/notification slices, and **`[Current time: …]` as the last line**.
-2. **Move the clock to the tail.** It is currently line 1 (`agent.py:355`), so a minute rollover
-   invalidates the whole prompt; last-line placement invalidates one line. (OpenClaw goes further —
-   timezone-only in prompt, time via tool — but Jarvis's reminder/heartbeat reasoning leans on the
-   clock; tail placement keeps it at near-zero cache cost.)
-3. **`[Channel: …]` is volatile too.** Added to the envelope by the app-channel work
-   (`agent.py:364`), it varies by origin, so it belongs in the tail with the clock — otherwise
-   alternating channels cross-invalidate each other's prefix.
-4. **Keep hot-reload.** Unlike Hermes's frozen snapshots, per-turn re-reads are fine: SOUL/AGENTS/USER
-   change rarely, and when they do the miss is deserved. The skill list changes on activation — also
-   fine, it invalidates only from that point down.
+1. **The clock must leave the system prompt entirely — tail placement does not work.** Gemini's cache
+   prefix spans the *whole request* (`system_instruction` + tools + history), not the system prompt
+   alone. So a per-minute clock anywhere in the system prompt sits *ahead of* the history in that
+   prefix and poisons the entire history cache — the 63% (§0.1) — not just its own line. "Last line
+   of the system prompt" is still upstream of everything that matters.
+2. **Implicit-cache TTL is ~minutes, so cross-tick hits are cold regardless of layout.** Hourly
+   heartbeat ticks will never hit each other's cache no matter how stable the prefix is. The real
+   wins are **intra-turn** (measured: 64% of heartbeat turns cross a minute boundary mid-turn today,
+   so a same-turn round-trip loses its own prefix) and **user conversation bursts**. This shrinks
+   WS2's claim: it is not "cross-turn caching for everything", it is "stop breaking the cache inside
+   a single turn."
+3. **The 50-message cap breaks the history prefix every turn, independently of the clock.** Both
+   threads sit *at* `MAX_MESSAGES`, and `_add_and_trim` (`agent.py:80`) hard-slices to the last 50 on
+   every turn, so the history head shifts each turn and the prefix moves with it. Fixing the clock
+   without this leaves the cache broken anyway.
 
-**Ordering note.** The current order was chosen for prompt readability; nothing in `prompts/AGENTS.md`
-depends on section position. Verify with one manual read-through of an assembled prompt after
-reordering.
+**Design — the OpenClaw/hermes-agent convergent pattern.**
+
+1. **Timezone-only in the system prompt.** No live clock. This is what both references do, and
+   correction 1 is why they do it.
+2. **Stamp inbound user messages at arrival:** a `[Day YYYY-MM-DD HH:MM]` prefix fixed *when the
+   message arrives*, so it is byte-stable forever inside the history and gives the model its
+   temporal grounding where it does no cache damage.
+3. **Fresh `Current time:` line in each heartbeat tick imperative** — the tick's own user-message,
+   not the system prompt. Heartbeat/reminder reasoning keeps the clock it needs.
+4. **Trim hysteresis in `_add_and_trim`:** trim to a low-water mark only once past a high-water mark,
+   instead of slicing to exactly 50 every turn. The head then holds still for many turns.
+5. **Reorder the remaining system prompt stable → volatile.** Stable: `[Active scope: …]` → SOUL.md →
+   AGENTS.md → USER.md → scope framing (+ `prompts/heartbeat.md`) → skill list. Volatile tail:
+   HEARTBEAT.md / due-task blocks + injected notes, daily log, live chat/notification slices.
+6. **`[Channel: …]` is volatile** — added to the envelope by the app-channel work (`agent.py:364`),
+   it varies by origin, so it belongs in the tail; otherwise alternating channels cross-invalidate.
+7. **Keep hot-reload.** Per-turn re-reads are fine: SOUL/AGENTS/USER change rarely, and when they do
+   the miss is deserved. The skill list changes on activation — invalidates only from there down.
+
+**Phase order (from the lost draft): stamps must land before clock removal.** Removing the clock
+first leaves the model temporally blind for a deploy window.
+
+**Interaction with WS7.** Items 3/4 above touch `_add_and_trim` — the same function WS7's
+tool-result pruning modifies. Land them together or sequence them deliberately; they are compatible
+(pruning shrinks message *content*, hysteresis changes *when* the window slides) but they will
+conflict textually.
+
+**Ordering note.** The current section order was chosen for prompt readability; nothing in
+`prompts/AGENTS.md` depends on position. Verify with one manual read-through of an assembled prompt.
 
 **Verify.** The harness's **cache-prefix invariant** test is the acceptance criterion (`xfail` today,
-flips green when this lands). Plus `cache_read_tokens / input_tokens` in `turns.jsonl` per scope —
-expect the intra-turn-only ~23–35% to rise on consecutive same-scope turns.
+flips green when this lands) — note it must compare *whole requests*, not just system prompts, to
+test what correction 1 identified. Plus `cache_read_tokens / input_tokens` in `turns.jsonl` per
+scope, read as an **intra-turn** metric (correction 2): expect multi-call turns to stop losing their
+prefix mid-turn. Do not expect hourly ticks to hit each other's cache.
 
-**Risk.** Low — content unchanged, only order. One-commit revert.
+**Risk.** Higher than the withdrawn sketch claimed. Items 1–3 move the clock out of the system
+prompt, which is a behavioral change (temporal grounding moves to the message stream), not a
+reordering. Item 4 changes window mechanics. Still revertable per item, but this is no longer a
+"content unchanged, only order" workstream.
 
 ---
 
@@ -554,7 +588,8 @@ it. That deserves its own design, not a crossfit-shaped patch.
 ```
 WS8a ✓ ──► WS8b ──► WS8c ─────────────────────►  (rank 1: the round-trips)
      WS7 pruning ──► WS7 summarization? ───────►  (rank 2: the 63% + 18%)
-     WS2 ──────────────────────────────────────►  (cheap, any time — land early)
+        └─ shares _add_and_trim ─┐
+     re-verify Gemini caching ──► WS2 stamps ──► WS2 clock removal ──► WS2 hysteresis
      WS4 ──────────────────────────────────────►  (backstop, any time)
      WS5 ──► WS6 ──────────────────────────────►  (capability track, independent)
                               WS3 ·············►  (last; drop if WS7 sufficed)
