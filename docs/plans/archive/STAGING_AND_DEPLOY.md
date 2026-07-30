@@ -603,7 +603,7 @@ The unbypassable guarantee ("never merged to `main`, never deployed") is the Act
 repo setting the owner enables once the workflow exists. CI installs deps and imports the app with a
 dummy `GOOGLE_API_KEY` under a scratch root — the import makes no network call, so no real secret is
 needed. The workflow starts as this one check and is where the later test suite
-(`TESTING_AND_FEEDBACK_LOOP_PLAN.md`) hangs its jobs.
+(`TEST_HARNESS_PLAN.md`, formerly `TESTING_AND_FEEDBACK_LOOP_PLAN.md`) hangs its jobs.
 
 #### 4b — development moves out of prod
 
@@ -742,7 +742,7 @@ keeps receiving its webhooks throughout.
 ## What this does not solve
 
 Staging enables *manual* behavior testing — chatting with the staging bot. It automates nothing.
-`docs/plans/TESTING_AND_FEEDBACK_LOOP_PLAN.md` Phases 3–4 (pytest + fixtures, and the tests that
+`docs/plans/TEST_HARNESS_PLAN.md` Phases 3–4 (pytest + fixtures, and the tests that
 matter) are the natural follow-on and are not duplicated here.
 
 ---
