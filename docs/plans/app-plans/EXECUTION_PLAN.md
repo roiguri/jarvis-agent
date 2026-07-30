@@ -7,7 +7,7 @@ metadata — width/height + blur-up placeholder)**. The hub **upgraded to the pi
 `3b3a48f330f09a39`** (skew resolved), and an independent audit confirmed we are **in sync with
 `roiguri/jarvis-app-v2@main`** (no re-pin). **Remaining:** restart staging → on-device verify pass →
 Telegram regression + `code-review` → PR to main. **Deferred:** C5 → B2; real `file`-kind ingestion
-(PDF/video) → **#51**, now planned in [../MEDIA_INGESTION_PLAN.md](../MEDIA_INGESTION_PLAN.md)
+(PDF/video) → **#51**, shipped; see [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)
 (interim: an honest "can't read yet" note, never a silent drop). Stages A + B
 merged (#47, #49).
 **Single source of truth.** Absorbs and replaces the former `APP_CHANNEL_PLAN.md` (index),
@@ -66,7 +66,7 @@ stay in Stage D (still no phone renderer).
 - [x] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini (commit `d3e986e`). *Verified* upload→download byte-exact + `_handle` cases; *pending* an on-device photo→describe after restart
 - [x] C4 review follow-ups (commit `bee778c`): reject malformed `att_` ids before a filesystem path + basename guard; `media_cache.save` inside the per-attachment try; retrieval note instead of an empty turn when every download fails
 - [x] §4 — image upload metadata (commit `0783aeb`): `upload_attachment` sends optional `width`/`height`/`blur_preview`; the channel computes them for images via Pillow (`Pillow==12.3.0` added, import guarded). App reserves aspect ratio (no reflow) + shows a blur-up placeholder. `duration_ms` omitted (no outbound-audio producer). *Verified* the hub stored `w/h/blur_preview`
-- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**, planned in [../MEDIA_INGESTION_PLAN.md](../MEDIA_INGESTION_PLAN.md)
+- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**, planned in [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)
 - [ ] C5 — **DEFERRED → B2** (decided 2026-07-24). An interim `UnsupportedConfirmation` is throwaway: the real `AppConfirmationUI` (upstream B2) replaces it, and its registration seam already exists. Interim behavior is **safe** — app-origin destructive tools fall back to the default channel's (Telegram) confirmation; nothing fires silently. Build the real UI when the app ships confirmation; don't build the placeholder.
 - [ ] **Restart staging** + Telegram regression + `code-review` skill, then PR `feat/stage-c-app-channel` → main
 
@@ -333,7 +333,7 @@ now" gate:
   degradation (the convention `Outbox._log` uses at `outbox.py:115`) can land with the capability
   work (#50).
 - **Inbound `file`-kind ingestion (#51)** — **planned in
-  [../MEDIA_INGESTION_PLAN.md](../MEDIA_INGESTION_PLAN.md)** (2026-07-29); that doc supersedes this
+  [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)** (2026-07-29); that doc supersedes this
   sketch. C4 downloads `file`-kind attachments (the hub's `file` bundles PDF + video by mime), but
   the agent can't yet feed them to the model — it emits an honest "can't read yet" note. **No longer
   gated:** the app composer *can* send a video as a file. Two corrections to the sketch above: the

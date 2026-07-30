@@ -343,12 +343,19 @@ Channel router (per-channel)                               └── video_<file
   ├── channel.download_media(remote_id) ─────────────────▶ bytes
   ├── <channel>.media_cache.save(bytes, kind, id) ───────▶ ABSOLUTE path (channel-owned cache)
   └── InboundMessage.attachments.append({
-        kind:       "image" | "video" | "audio",
+        kind:       "image" | "video" | "audio" | "document",
         path:       ABSOLUTE filesystem path, channel-produced (open as-is),
         mime_type:  RFC 6838 type from the source,
         source:     channel name (e.g. "telegram"),
       })
 ```
+
+**The neutral kind is the channel's translation, not the source's tag.** A source
+whose own vocabulary is coarser (the jarvis-app hub tags everything that isn't an
+image or audio as `file`) resolves it against the mime type at the boundary, the
+same way Telegram's router tags `kind="video"`. A kind outside the neutral set —
+notably `file` — means **unidentified**: the agent surfaces it to the model as
+text and never feeds the bytes.
 
 **The channel owns media end to end.** Each channel ships its own
 `gateway/channels/<channel>/media_cache.py` (`save(bytes, kind, id) -> absolute path`,

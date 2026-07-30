@@ -7,6 +7,7 @@ channel.
 
 import asyncio
 import logging
+import mimetypes
 
 from telegram import Update
 
@@ -15,6 +16,24 @@ from gateway.channels.telegram.channel import TelegramChannel, thread_id_for as 
 from gateway.channels.telegram.media_cache import save as _save_media
 
 logger = logging.getLogger(__name__)
+
+
+def _neutral_kind(mime_type: str) -> str:
+    """Resolve a document's mime into the gateway's neutral media kind.
+
+    A Telegram document is a container, not a type — it is how anything that is
+    not a compressed photo, a video or a voice note arrives, so a PDF, a video
+    sent as a file, and a photo sent at original quality all land here. Classify
+    by prefix and let the model boundary decide which formats of a kind it can
+    actually read; the channel must not carry the model's format table.
+    """
+    mime = mime_type.split(";")[0].strip().lower()
+    if mime == "application/pdf":
+        return "document"
+    for prefix, kind in (("image/", "image"), ("audio/", "audio"), ("video/", "video")):
+        if mime.startswith(prefix):
+            return kind
+    return "file"  # unidentified — the agent surfaces it as text
 
 class TelegramInboundRouter:
     def __init__(
@@ -127,6 +146,32 @@ class TelegramInboundRouter:
             chat_id=update.effective_chat.id,
             thread_id=_thread_id(user_id),
             user_text=msg.caption or "[AUDIO attachment]",
+            attachments=[attachment],
+        ))
+
+    async def handle_document(self, update: Update, context) -> None:
+        msg = update.message
+        user_id = msg.from_user.id
+        if not self._authorized(user_id):
+            return
+
+        doc = msg.document
+        # mime_type is client-supplied and may be absent — fall back to the
+        # filename, which Telegram always carries for a document.
+        mime_type = doc.mime_type or ""
+        if not mime_type and doc.file_name:
+            mime_type = mimetypes.guess_type(doc.file_name)[0] or ""
+        kind = _neutral_kind(mime_type)
+
+        attachment = await self._download_and_store(doc.file_id, kind, mime_type)
+        if not attachment:
+            await self._channel.send(str(update.effective_chat.id), "Failed to download media. Please try again.")
+            return
+        await self._dispatch(InboundMessage(
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            thread_id=_thread_id(user_id),
+            user_text=msg.caption or f"[{kind.upper()} attachment]",
             attachments=[attachment],
         ))
 

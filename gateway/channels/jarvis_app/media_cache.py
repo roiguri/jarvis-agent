@@ -17,10 +17,17 @@ os.makedirs(_CACHE_DIR, exist_ok=True)
 
 _RETENTION_DAYS = 90
 
-# The hub's attachment kinds are image | audio | file. Extensions are cosmetic —
+# Kinds arrive already resolved into the gateway's neutral vocabulary (the
+# router maps the hub's image | audio | file onto it). Extensions are cosmetic —
 # the agent reads bytes and branches on mime_type, not the filename — so an
 # unknown kind just gets no suffix.
-_EXT = {"image": ".jpg", "audio": ".ogg", "file": ""}
+_EXT = {
+    "image": ".jpg",
+    "audio": ".ogg",
+    "video": ".mp4",
+    "document": ".pdf",
+    "file": "",
+}
 
 
 def save(data: bytes, kind: str, attachment_id: str) -> str:
