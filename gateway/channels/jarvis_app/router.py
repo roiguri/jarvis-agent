@@ -37,6 +37,25 @@ _BACKOFF_MAX_S = 60.0
 # value that doesn't match is rejected before it can reach a filesystem path.
 _ATT_ID_RE = re.compile(r"^att_[0-9A-HJKMNP-TV-Z]{26}$")
 
+# The hub's wire vocabulary is image | audio | file, where "file" is everything
+# else — so a PDF and a video arrive under the same tag. The neutral vocabulary
+# the agent branches on is image | video | audio | document, and resolving one
+# into the other is the channel's job: only the channel knows its source's
+# vocabulary. "file" survives as "unidentified" and reaches the agent as text.
+_FILE_MIME_KINDS = {
+    "video/mp4": "video",
+    "video/webm": "video",
+    "application/pdf": "document",
+}
+
+
+def _neutral_kind(hub_kind: str, mime_type: str) -> str:
+    """Resolve the hub's kind + mime into the gateway's neutral media kind."""
+    if hub_kind != "file":
+        return hub_kind
+    mime = mime_type.split(";")[0].strip().lower()
+    return _FILE_MIME_KINDS.get(mime, "file")
+
 
 class JarvisAppInboundRouter:
     def __init__(
@@ -181,12 +200,16 @@ class JarvisAppInboundRouter:
         out: list[dict] = []
         for att in raw:
             att_id = att.get("id")
-            kind = att.get("kind")
-            if not att_id or not kind:
+            hub_kind = att.get("kind")
+            if not att_id or not hub_kind:
                 continue
             if not _ATT_ID_RE.match(att_id):
                 logger.warning("jarvis-app skipping attachment with malformed id %r", att_id)
                 continue
+            mime_type = att.get("mime_type") or ""
+            # Resolve before caching, so the cached filename reflects what the
+            # blob actually is rather than the hub's catch-all tag.
+            kind = _neutral_kind(hub_kind, mime_type)
             try:
                 data = await self._client.download_attachment(att_id)
                 path = await asyncio.to_thread(media_cache.save, data, kind, att_id)
@@ -197,7 +220,7 @@ class JarvisAppInboundRouter:
                 {
                     "kind": kind,
                     "path": path,
-                    "mime_type": att.get("mime_type") or "",
+                    "mime_type": mime_type,
                     "source": "jarvis-app",
                 }
             )
