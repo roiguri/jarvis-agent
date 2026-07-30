@@ -1,10 +1,20 @@
 # Inbound media ingestion — file-kind attachments + inline size guard
 
+**Status:** ✅ **SHIPPED** — slices 1–5 landed 2026-07-30; archived.
+**Verified:** slice 1 live (a 42 MB video from the app read correctly, which also measured away this
+plan's central premise — see below). Slices 2–5 have **synthetic coverage only** and have not been
+exercised against the live API; the untested bets are the mime alias normalization
+(`video/quicktime`→`video/mov`, `audio/mpeg`→`audio/mp3`) and PDF ingestion end to end.
+**Left open, by decision:** text and code files → **#60**; multi-turn access to media already sent →
+**#61**. Telegram still has no handler for music files, animations or video notes — the same
+missing-handler defect this plan fixed for documents, recorded in slice 5 and not fixed.
+
 **Issue:** #51 — "Ingest inbound file-kind attachments (PDF + video) from the app channel".
-**Date:** 2026-07-29.
-**Touches:** `agent.py` (model boundary, channel-agnostic), `gateway/channels/jarvis_app/`
-(kind mapping, channel-owned), `docs/architecture/GATEWAY.md` (neutral vocabulary).
-**Companion:** [app-plans/EXECUTION_PLAN.md](app-plans/EXECUTION_PLAN.md) — Stage C shipped the
+**Date:** started 2026-07-29, shipped 2026-07-30.
+**Touches:** `agent.py` (model boundary, channel-agnostic), `gateway/channels/jarvis_app/` and
+`gateway/channels/telegram/` (kind mapping, channel-owned), `docs/architecture/GATEWAY.md`
+(neutral vocabulary).
+**Companion:** [../app-plans/EXECUTION_PLAN.md](../app-plans/EXECUTION_PLAN.md) — Stage C shipped the
 transport this plan builds on (C4 inbound media); `file`-kind ingestion was deferred out of it.
 
 ---
