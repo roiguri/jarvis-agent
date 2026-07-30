@@ -1,12 +1,15 @@
 # Cost telemetry — correctness, then visibility, then a repeatable review
 
+**Status:** all three slices shipped & verified on staging 2026-07-30; plan archived.
+Prod picks them up on the next `deploy/deploy.sh` run — until then prod's `/usage`
+still reports the 6.5x-low figures and records no `reasoning_tokens`.
 **Issue:** _(unfiled)_ — successor concern to #33 "reduce token spend".
-**Date:** 2026-07-29.
+**Date:** 2026-07-29 → archived 2026-07-30.
 **Inputs:** live `models.list` against the production key; the Gemini pricing page
 (read 2026-07-29); a tool-calling smoke test of `gemini-3.6-flash` /
 `gemini-3.5-flash-lite` through the installed `langchain-google-genai` 4.2.6;
 30-day rollup of `turns.jsonl` (757 turns, 3,076 LLM calls).
-**Companion:** [CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md) — WS2/WS3 attack the
+**Companion:** [CONTEXT_HANDLING_PLAN.md](../CONTEXT_HANDLING_PLAN.md) — WS2/WS3 attack the
 spend this plan learns to *measure*. Slice A corrects a number that plan quotes.
 
 ---
@@ -19,7 +22,7 @@ compounding faults:
 1. `MODEL_PRICES` (`observability/usage.py:32`) prices `gemini-3-flash-preview` at
    $0.075/$0.30 per M tokens. The real rate is **$0.50/$3.00**. Every cost figure
    the system has ever produced — `/usage`, the `$3.7/month` in
-   [CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md#L41) — is **6.5x low**. Real
+   [CONTEXT_HANDLING_PLAN.md](../CONTEXT_HANDLING_PLAN.md#L41) — is **6.5x low**. Real
    30-day spend is ~$22, not ~$3.37.
 2. An unknown model silently prices at **$0.00** (`MODEL_PRICES.get(model, _ZERO_PRICE)`).
    Swapping `agent.py:165` without touching `usage.py` makes `/usage` report zero
@@ -424,16 +427,16 @@ A ──► B ──► C
 - [x] A3 — audio-rate limitation documented above `MODEL_PRICES` (adjacent to the table it constrains) rather than the module docstring
 - [x] A4 — `CONTEXT_HANDLING_PLAN.md` baseline restated: the whole dollar block was wrong, not just the `:41` monthly figure
 - [x] A5 — `/usage` rendering: real `- ` list items (fixes app-channel line collapse), `**bold**`, split totals block, magnitude-aware `_usd()`
-- [ ] A — **restart + `/usage week` verified live** (needs the owner)
+- [x] A — verified live on staging 2026-07-30: `/usage week` renders the new layout, and the same week that printed $0.0254 under the old table now prints $0.17 (6.7x)
 - [x] B1 — `reasoning_tokens` captured in `record_turn_start` / `record_llm_call`; `estimate_usd` deliberately untouched (asserted in test)
 - [x] B2 — rolled up + conditionally rendered as `(N% thinking)` in `usage.py`
 - [x] B3 — `OBSERVABILITY.md` schema block + prose paragraph (states the diagnostic-not-billing distinction)
-- [ ] B — **restart + non-zero `reasoning_tokens` on a fresh turn verified live** (needs the owner)
+- [x] B — verified live on staging 2026-07-30: a real `jarvis-app` turn recorded `reasoning_tokens: 478` of 778 output (61%), and `/usage` renders `(N% thinking)`
 - [x] C1 — boundary settled: `heartbeat-assert`'s description now points at `cost-review` for spend, and its §3 states it is regression detection, not a cost check
 - [x] C2 — `.claude/skills/cost-review/SKILL.md`, all six snippets executed against prod data before shipping
 - [x] C3 — no skill index exists in the repo; deliberately not creating one (see A5-style reasoning in C3 above)
-- [ ] C — **clean `/cost-review` run reproduces the baseline** (after the restart, so the numbers mean something)
-- [ ] Two-week reasoning-token baseline accrued → revisit the upgrade question
+- [x] C — an adversarial subagent run reproduced the prod baseline ($21.25/30d, 79.4% heartbeat) and diffed 18/18 rates green; the eleven scaffolding defects it found are fixed and re-tested
+- [ ] **Carried forward, not done here:** deploy to prod, then let a two-week `reasoning_tokens` baseline accrue → revisit the upgrade question (see Appendix)
 
 ---
 
@@ -454,5 +457,5 @@ Nothing forces a move: `gemini-3-flash-preview` has **no announced shutdown date
 surface. Neither can be evaluated responsibly until slice B is measuring.
 
 Revisit after the two-week baseline, and after
-[CONTEXT_HANDLING_PLAN.md](CONTEXT_HANDLING_PLAN.md) WS2/WS3 — halving heartbeat context
+[CONTEXT_HANDLING_PLAN.md](../CONTEXT_HANDLING_PLAN.md) WS2/WS3 — halving heartbeat context
 changes every row in that comparison.

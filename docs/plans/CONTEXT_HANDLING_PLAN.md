@@ -35,7 +35,7 @@ From `observability.usage` over `turns.jsonl`:
 
 > **Dollar figures restated 2026-07-29.** The originals were computed with a
 > `MODEL_PRICES` table that priced `gemini-3-flash-preview` 6.5x too low (see
-> [COST_TELEMETRY_PLAN.md](COST_TELEMETRY_PLAN.md) slice A). Token and turn counts
+> [COST_TELEMETRY_PLAN.md](archive/COST_TELEMETRY_PLAN.md) slice A). Token and turn counts
 > below are unchanged and were always correct; only the costs moved. Recomputed
 > over `2026-06-26..2026-07-10`, the window that reproduces the counts below.
 
