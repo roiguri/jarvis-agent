@@ -121,7 +121,7 @@ A `uuid4().hex` minted at the **top of every turn** and propagated through every
 
 ## The Two Query Surfaces
 
-### `/usage` — Telegram slash command
+### `/usage` — slash command
 
 Lives in `gateway/commands/handlers.py`. Thin wrapper around `observability.summarize_usage` + `format_usage_table`.
 
@@ -138,7 +138,7 @@ Lives in `gateway/commands/handlers.py`. Thin wrapper around `observability.summ
 
 Trailing `user` or `heartbeat` always narrows the rollup; combine freely with any date token. The handler reuses `_parse_log_date` from `/logs` for date parsing.
 
-Rendering is a compact summary (totals line + per-bucket bullets when ≥ 2 buckets) — readable on mobile, no horizontal scroll, no fixed-width tables.
+Rendering is a compact summary (totals line + per-bucket bullets when ≥ 2 buckets) — readable on mobile, no horizontal scroll, no fixed-width tables. It follows the slash-command reply contract (bold header, blank line, real `- ` items) so it survives both the Telegram and CommonMark renderers — see [GATEWAY.md](GATEWAY.md) § Reply formatting.
 
 ### `observability` Python module — REPL / scripts
 

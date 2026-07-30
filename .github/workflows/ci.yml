@@ -1,12 +1,15 @@
 name: CI
 
 # The unbypassable half of the regression gate: runs on every PR and on pushes to
-# main. Two independent static guards, one job each:
+# main. Three independent guards, one job each:
 #   - path-isolation    — no module hardcodes a prod state path (check_paths.py)
 #   - channel-agnostic  — the app stays channel-agnostic (check_channel_agnostic.py)
+#   - command-replies   — slash-command replies survive both renderers
+#                         (check_command_replies.py)
 # Make each a hard gate with a branch-protection rule on `main` (GitHub → Settings →
 # Branches) requiring its check to pass. (The pre-commit hook is the fast local half
-# and runs both; see docs/DEPLOY.md.)
+# and runs the first two — command-replies boots the app, too slow for a hook; see
+# docs/DEPLOY.md.)
 on:
   push:
     branches: [main]
@@ -38,3 +41,18 @@ jobs:
       - name: Channel-agnosticism check
         # Pure static source scan — no app import and no deps, so no pip install.
         run: python scripts/ci/check_channel_agnostic.py
+
+  command-replies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Slash-command reply-layout check
+        # Runs every registered command against a seeded scratch JARVIS_ROOT (same
+        # dummy-secret trick as check_paths) and validates the reply markdown.
+        run: python scripts/ci/check_command_replies.py

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Telegram's hard caps: 4096 chars for text, 1024 for photo captions. We
 # truncate the *source markdown* (not the converted HTML, which could be cut
 # mid-tag) with headroom for HTML entity expansion. This is a safety net,
-# not a feature — see issue #52 for proper paragraph-aware pagination.
+# not a feature — see issue #23 for proper paragraph-aware pagination.
 _TEXT_LIMIT = 3800
 _CAPTION_LIMIT = 900
 _TRUNCATION_TAIL = "\n\n_…(truncated — output too long for one message)_"

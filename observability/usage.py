@@ -363,7 +363,10 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     CommonMark client (the app) collapses bare newlines into one paragraph and
     needs genuine list syntax to keep rows apart. Emphasis is '**bold**' for the
     same reason — single '*' is *italic* in both, which is not what the numbers
-    want. See the /help handler for the precedent.
+    want. That is the slash-command reply contract (gateway/commands/format.py,
+    docs/architecture/GATEWAY.md § Reply formatting); the layout is built here
+    rather than with those helpers only to keep observability free of a gateway
+    import. scripts/ci/check_command_replies.py validates this output via /usage.
 
     `extras` carries NO_ACTION / error counts and, when any model in the period
     is missing from MODEL_PRICES, an '⚠ unpriced' marker — without it a $0.00

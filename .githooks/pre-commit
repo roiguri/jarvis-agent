@@ -4,11 +4,14 @@
 # Active only where core.hooksPath points here (one-time per checkout):
 #     git config core.hooksPath .githooks
 #
-# Runs the same static guards as CI's "path-isolation" job: no module hardcodes a
-# prod state path (check_paths.py), and the app stays channel-agnostic
+# Runs the two static guards: no module hardcodes a prod state path
+# (check_paths.py), and the app stays channel-agnostic
 # (check_channel_agnostic.py). Fast local feedback; the unbypassable gate is CI +
 # branch protection (see docs/DEPLOY.md). Bypass in a genuine emergency with:
 #     git commit --no-verify
+#
+# check_command_replies.py deliberately runs in CI only — it boots the whole app
+# to render each reply, which is a poor fit for a commit-time hook.
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel)"
