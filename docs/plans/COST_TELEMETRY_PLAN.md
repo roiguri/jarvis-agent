@@ -330,6 +330,41 @@ errors the skill warns its reader about:
   stopped thinking" rather than "not recorded yet". Now prints `n/a`, matching the
   honesty rule `_reasoning_pct` applies in the renderer.
 
+### Validated by adversarial run, 2026-07-30
+
+A subagent executed the skill end to end as a fresh reader and was asked to attack it.
+Its core worked — 18/18 rates diffed against the live page, and step 6's
+rank-by-computed-cost was vindicated when two models with identical $0.30 stickers
+landed 47% apart. The scaffolding around it did not. Fixed:
+
+- **Step 2 asked a question its own command could not answer** — the `sed` began *at*
+  `MODEL_PRICES`, hiding the provenance comment the assertion was about. Now anchored
+  on the comment, and cross-checked against the file's git mtime.
+- **Step 2 instructed an edit** ("the date should be refreshed") inside a skill that
+  says twice it changes nothing. Now recommends; never edits.
+- **Step 4's `→ $X/30d` was a no-op** at the default window (`tot/30*30`), an arrow
+  between two identical numbers implying a derivation. Now suppressed unless the
+  window differs.
+- **The window argument was honoured three different ways** — ignored in step 3,
+  hand-edited in step 4, hardcoded in step 6. Now one exported `DAYS`, read by all.
+- **Two assertions referenced a "last review" that cannot exist** — the skill stores
+  no baseline by design. Replaced with a per-day trend series and an explicit
+  statement that no trend claim is possible without the operator's prior output.
+- **Step 7's outcomes were presented as exhaustive and exclusive** and were neither:
+  the run landed in *rates fine, model fine, instrumentation compromised*, which had
+  no slot. Now three independent axes, one of them **measurement apparatus** — a run
+  finding correct rates on broken instrumentation is explicitly not green.
+- Added: log-integrity reporting (records / unparseable / staleness), a
+  priced-but-no-longer-served check, and honest `temperature` wording — the
+  ignored-on-newest-models behaviour is *not* established for `gemini-3-flash-preview`,
+  so the skill now records it as unverified rather than asserting either way.
+
+The log-integrity step immediately earned itself: it surfaced a corrupt record at
+`turns.jsonl:362` that every prior step had silently dropped. Diagnosis — two records
+interleaved mid-line, dated 2026-05-31, five weeks before the repo's first commit.
+`_append_line` holds `_APPEND_LOCK` today and 1,558 turns plus 12,738 tool calls have
+been written cleanly since. Historical, not live; no issue filed.
+
 ### C3 — doc sync
 
 There is **no index of Claude Code skills anywhere in the repo** — verified: neither
