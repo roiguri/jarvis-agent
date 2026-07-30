@@ -319,6 +319,17 @@ Steps, each ending in a verdict backed by evidence lines:
 Include the working `models.list` and rollup snippets from this session so the skill is
 executable rather than aspirational.
 
+**Built 2026-07-30.** All six snippets were run against prod data before shipping, which
+caught two defects in the skill's own code — worth recording, because both are the exact
+errors the skill warns its reader about:
+
+- The comparison table sorted by `input_per_m`, printing `$19.89` above `$13.54`. Cost is
+  not monotonic in the sticker price once cache-read rates differ — trap #1 in the skill's
+  own text. Now ranks by computed cost and marks the configured model.
+- The spend rollup printed `think=0%` where nothing had been measured, reading as "it
+  stopped thinking" rather than "not recorded yet". Now prints `n/a`, matching the
+  honesty rule `_reasoning_pct` applies in the renderer.
+
 ### C3 — doc sync
 
 There is **no index of Claude Code skills anywhere in the repo** — verified: neither
@@ -340,8 +351,14 @@ independently reproduce the numbers in this document's baseline table. If it can
 the skill is wrong — this doc's figures were derived by hand from the same sources and
 are the fixture.
 
-**Done when** a clean run reports "rates correct" (A having fixed them) and a
-deliberately corrupted `MODEL_PRICES` entry makes step 2 fail loudly.
+**Done when** a clean run reproduces the baseline and reports "rates correct" — A
+having fixed them.
+
+No corrupted-rate test: step 2 is a fetch-and-compare judgment, not code with a
+red/green state, so "prove it notices a wrong number" reduces to proving a reader can
+read. The mechanical half of that risk — a model priced at $0.00 because it is missing
+from the table — is the one with a real failure mode, and it is covered by assertions
+on `unpriced_models` in slice A.
 
 ---
 
@@ -377,10 +394,10 @@ A ──► B ──► C
 - [x] B2 — rolled up + conditionally rendered as `(N% thinking)` in `usage.py`
 - [x] B3 — `OBSERVABILITY.md` schema block + prose paragraph (states the diagnostic-not-billing distinction)
 - [ ] B — **restart + non-zero `reasoning_tokens` on a fresh turn verified live** (needs the owner)
-- [ ] C1 — boundary against `heartbeat-assert` settled (and its description trimmed if needed)
-- [ ] C2 — `.claude/skills/cost-review/SKILL.md`
-- [ ] C3 — skill listed wherever the other two are
-- [ ] C — clean run reproduces this doc's baseline; corrupted-rate run fails loudly
+- [x] C1 — boundary settled: `heartbeat-assert`'s description now points at `cost-review` for spend, and its §3 states it is regression detection, not a cost check
+- [x] C2 — `.claude/skills/cost-review/SKILL.md`, all six snippets executed against prod data before shipping
+- [x] C3 — no skill index exists in the repo; deliberately not creating one (see A5-style reasoning in C3 above)
+- [ ] C — **clean `/cost-review` run reproduces the baseline** (after the restart, so the numbers mean something)
 - [ ] Two-week reasoning-token baseline accrued → revisit the upgrade question
 
 ---
