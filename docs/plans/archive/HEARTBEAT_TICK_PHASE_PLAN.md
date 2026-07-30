@@ -1,8 +1,26 @@
 # Heartbeat Tick Phase — Pin the Lattice
 
-**Issue:** [#37](https://github.com/roiguri/jarvis/issues/37) (bug, priority: high)
-**Date:** 2026-07-30 · **rescoped 2026-07-30 after independent review** (was 5 slices, now 2)
-**Status:** implemented and verified (offline + live in staging); awaiting prod deploy.
+**Status:** ✅ **SHIPPED** — merged 2026-07-30 (PR #63, `6fa94f1`); archived.
+**Not yet in prod.** Merged to `main`, but `deploy.sh` + the owner's restart are still pending, so
+the failure this plan fixes remains live in prod until then — `morning-readiness-check` still fires
+34 seconds before its window closes, and a restart in the first ~22 minutes of a clock hour still
+costs a day's message.
+**Verified:** 15/15 offline against `any_due` with an injected clock — and five of those cases
+return the *wrong* answer against the pre-fix comparison, so the suite discriminates. Live in
+staging: two processes booted at `:54` and `:13` both ticked within 11ms of the hour, and the gate's
+single-tick exclusion was exercised on the exact shape that had failed an hour earlier.
+**Not verified:** the daily skip itself, which needs a day plus a badly-timed restart to observe.
+The standing check for it is `heartbeat-assert` §2b (window margin), added alongside this work.
+**Issue:** [#37](https://github.com/roiguri/jarvis/issues/37) (bug, priority: high) — closed by #63.
+**Date:** 2026-07-30 · **rescoped the same day after independent review** (5 slices → 2).
+**Left open, by decision:** DST (an Israel-local window shifts against an absolute-hours cadence
+twice a year; flooring does not help) and its successor design, the occurrence-quantized gate; the
+last-tick-in-window warning; unreachable-window rejection in `manage_heartbeat_task`; and
+[#32](https://github.com/roiguri/jarvis/issues/32), deliberately unbundled. All described under
+[Deferred](#deferred--follow-up-work).
+**Correction owed to #37:** the issue names `weekly-attendance-sync` and `weekly-fitness-scouting`
+as equally exposed. Neither is — see [What is actually exposed](#what-is-actually-exposed). The
+genuinely exposed weekly task is `reading-list-suggestion`, which the issue never mentions.
 
 ---
 
