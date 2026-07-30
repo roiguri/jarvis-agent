@@ -19,12 +19,23 @@ downloaded, cached, and then described as *"[Received a file (video/mp4) attachm
 yet.]"*. No silent drop, but no ingestion — and `agent.py` already contains a working `video`
 branch that this path can never reach.
 
-**The edge that shaped the design.** Gemini caps the whole request at ~20 MB while the hub allows
-50 MB. Inline media is base64 in JSON (+33%), so the real raw-bytes ceiling is **~15 MB**, not 20 —
-which also rules out "just cap the hub at 20 MB" as a fix, on the number alone. Capping the hub is
-wrong on layering too: it pushes a model constraint into transport, so a model swap would need a
-hub deploy plus an app-version skew window, and an oversized send would fail as a composer upload
-error instead of something Jarvis can answer conversationally.
+**The edge that was assumed, and measured away.** This plan originally held that Gemini caps the
+whole request at ~20 MB, and that base64 (+33%) put the real raw-bytes ceiling at ~15 MB — which
+would have made size the dominant constraint. **Both halves are wrong.** The API documents inline
+media at **<100 MB**; the ~20 MB figure is its recommendation for *preferring* the Files API, not a
+limit. Measured on 2026-07-30 against `gemini-3-flash-preview`: a **42 MB** mp4 sent from the app
+inlined and was read correctly (specific detail returned — banner text, Hebrew on-screen text,
+scene) with no error, at ~56 MB on the wire after base64.
+
+So no current channel can produce media the model will refuse: the hub caps uploads at 50 MB and
+Telegram's Bot API at 20 MB, both under the inline ceiling. Size stops being a design driver and
+becomes a backstop (slice 2). What the byte count *cannot* see is duration — the API pairs the
+100 MB inline limit with a **<1 min** guideline for video, an axis no size guard detects; unmeasured,
+and out of scope here.
+
+Capping the hub was never the right fix regardless: it pushes a model constraint into transport, so
+a model swap would need a hub deploy plus an app-version skew window, and an oversized send would
+fail as a composer upload error instead of something Jarvis can answer conversationally.
 
 **Plan.** Four shippable slices plus a gated fifth, split along one principle: **channels translate
 into the neutral vocabulary; the model boundary owns model limits.** Each slice is one topic — the
@@ -34,28 +45,26 @@ questions (*how much may I send?* vs *what can I read?*), so they ship and rever
 | # | Slice | Layer | Size | Effect |
 |---|---|---|---|---|
 | 1 | Neutral `document` kind + app-router kind mapping | channel-owned | small | `file`+mime resolves to a real kind at the boundary, as Telegram already does |
-| 2 | Inline size guard in `agent.py` | model boundary | small | Oversized media refused honestly — **for every channel**, including Telegram's existing hole |
+| 2 | Inline size backstop in `agent.py` | model boundary | small | Unreachable ceiling made honest instead of opaque — **for every channel** |
 | 3 | `document` branch in `agent.py` | model boundary | small | PDFs ingested rather than described as unreadable |
 | 4 | Telegram document handler | channel-owned | small | Closes a **silent drop**: a PDF sent over Telegram currently reaches nothing at all |
-| 5 | Files API for >15 MB media | model boundary | medium | **Gated** — only if oversized sends prove to matter |
+| 5 | Files API for oversized media | model boundary | medium | **Gated** — no known trigger; see the measurement above |
 
-**Why slice 2 is worth doing on its own merits.** The size guard is not app-channel work. Telegram
-has *no* size handling anywhere (`gateway/channels/telegram/router.py:133` downloads and stores
-unconditionally), and the Bot API permits downloads up to 20 MB — which base64s to ~25 MB and would
-exceed the request cap today. The hole already exists on the older channel; it has never fired only
-because the single video that has ever flowed through production was 1 MB. Slice 2 closes it once,
-at the one place that knows what is being fed to the model, and every future channel inherits it.
-It stands alone: it is worth shipping even if no other slice here ever lands.
+**What slice 2 is, after the measurement.** It was scoped as an urgent hole: Telegram has *no* size
+handling anywhere (`gateway/channels/telegram/router.py:133` downloads and stores unconditionally),
+so a 20 MB Bot API download would have blown the assumed ~15 MB ceiling. With the real ceiling at
+100 MB and both channels capped below it, **that hole does not exist** and the guard cannot fire
+today. It is kept, at the documented ceiling, for two reasons: a future channel (or a raised hub cap
+— see *Not in scope*) inherits it for free, and the failure it converts is an opaque API error into
+a sentence Jarvis can say. It is no longer urgent, and no longer blocks anything.
 
-**Risk posture.** Slices 1–4 are additive — new kinds, a new guard, a new branch, and a handler on
+**Risk posture.** Slices 1–4 are additive — new kinds, a backstop, a new branch, and a handler on
 paths that currently terminate in a text note or in nothing. Each is independently revertable. Slice
 5 carries a real latent hazard (see below) and is deliberately separated.
 
-**Ordering constraint.** Slice 1 makes app videos *reachable* by `agent.py`'s existing `video`
-branch, and slice 4 makes Telegram documents reachable — both inline bytes with no ceiling until the
-guard lands. Ship those before slice 2 and an oversized send trades an honest note (or, on Telegram,
-a silent drop) for a failed turn. **Slice 2 should land no later than the first of the other two**;
-everything after it is order-free.
+**Ordering.** The original ordering constraint — *land the guard before anything that makes new
+bytes reachable* — is void: slice 1 shipped, a 42 MB video went through it unguarded, and the model
+read it. The slices are now order-free.
 
 ---
 
@@ -103,23 +112,27 @@ keeps the cache dir legible.
 **`docs/architecture/GATEWAY.md:346`** — vocabulary gains `document`; add a line stating that `file`
 means "unidentified — surfaced to the agent as text, never fed to the model".
 
-## Slice 2 — Inline size guard (model boundary, channel-agnostic)
+## Slice 2 — Inline size backstop (model boundary, channel-agnostic)
 
 One question: *how much may I send the model?* Independent of which kinds are readable — it applies
 to the image, audio and video branches that exist today, and to `document` whenever slice 3 lands.
 
 In `agent.py`, media loop at `:604-670`: a size check between the kind check (`:618`) and the read
-(`:628`). Use `os.path.getsize` *before* `open()`, so a 50 MB blob is never pulled into memory only
-to be refused. Constant near `MAX_MESSAGES`:
+(`:628`). Use `os.path.getsize` *before* `open()`, so an oversized blob is never pulled into memory
+only to be refused. Constant near `MAX_MESSAGES`, set to the API's documented inline ceiling rather
+than to a derived figure:
 
 ```python
-# Gemini caps the whole request at ~20 MB. Inline media is base64 in JSON
-# (+33%), so the raw-bytes ceiling is ~15 MB, leaving headroom for the prompt.
-INLINE_MEDIA_MAX_BYTES = 15 * 1024 * 1024
+INLINE_MEDIA_MAX_BYTES = 100 * 1024 * 1024
 ```
 
 Over the limit → the same honest-note shape as `:618`, sized and channel-neutral:
-`[Received a video (38 MB) — too large for me to read.]` No channel, hub, or cap is named.
+`[Received a video (128 MB) — too large for me to read.]` No channel, hub, or cap is named. The
+article is chosen by vowel, so the note reads "an image", not "a image".
+
+**This cannot fire on any channel that exists today** — that is the point of keeping it small and
+never letting it grow a policy. If it ever *does* fire, the ceiling moved or a channel arrived
+without an upload cap; either way the number here is the single place to change.
 
 ## Slice 3 — `document` branch (model boundary, channel-agnostic)
 
@@ -159,9 +172,9 @@ centralizing.
 
 **`gateway/channels/telegram/media_cache.py:20`** — `_EXT` gains `"document": ".pdf"`.
 
-**Depends on slice 2** (the guard), and on slice 3 for PDFs to be *read* rather than noted. The Bot
-API permits downloads up to 20 MB, which base64s to ~27 MB and exceeds the request cap on its own;
-without the guard this slice converts a silent drop into a failed turn.
+**Depends on slice 3** for PDFs to be *read* rather than noted; independent of slice 2. The Bot API
+caps downloads at 20 MB, comfortably under the inline ceiling, so nothing Telegram can deliver needs
+the backstop.
 
 **Still unhandled after this slice** (each a distinct defect, not folded in): `filters.AUDIO` (music
 files, as opposed to voice notes), animations/GIFs, and video notes. All are silently dropped today
@@ -169,7 +182,12 @@ for the same reason.
 
 ## Slice 5 — Files API (gated)
 
-Only if oversized media proves to matter in practice. Cheaper than the issue assumed:
+**No known trigger.** This slice existed to rescue media above a ceiling that turned out not to
+exist at the size any channel can produce; the honest reading is that it should stay unbuilt unless
+something concrete demands it — a channel without an upload cap, video past the <1 min inline
+guideline, or a measured failure. Kept on record because the analysis below is worth not repeating.
+
+If it is ever built, it is cheaper than the issue assumed:
 `google-genai==1.68.0` is already installed, and the LangChain adapter accepts `file_uri` in the
 *same* media block shape the agent already emits (`chat_models.py:493-496` branches on `data` vs
 `file_uri`). So it is a swap inside the existing branch, not a new path.
@@ -184,8 +202,8 @@ Two hard requirements before it ships:
 - **Latency has no seam.** Upload plus Gemini's PROCESSING poll blocks the turn for tens of seconds
   with no intermediate ack in the current flow. Decide that UX before building.
 
-**Recommendation:** ship 1–3 (+4 for channel parity) and leave #51's size question answered as
-**cap-and-note**. An honest "too large to read" is a fine terminal state for a 40 MB video.
+**Recommendation:** ship 1–3 (+4 for channel parity). #51's size question is answered by measurement
+rather than by design: a 40 MB video needs no special handling at all — it just works.
 
 ---
 
@@ -194,13 +212,15 @@ Two hard requirements before it ships:
 Per slice, before moving on. Claude cannot restart the service — the owner restarts, Claude verifies
 against logs and a live round-trip.
 
-1. **Pre-restart, runnable immediately:** the kind mapping and the size guard are pure functions —
-   drive both through the staging venv with synthetic inputs (each hub kind × mime pair; a file just
-   under and just over the ceiling).
+1. **Pre-restart, runnable immediately:** drive the kind mapping through the staging venv with
+   synthetic inputs (each hub kind × mime pair). The backstop is not a pure function — exercise the
+   real media loop with the compiled graph stubbed out and an isolated `JARVIS_ROOT`, asserting on
+   the content blocks it builds (at the ceiling, one byte over, and a readable kind well under).
 2. **After staging restart:**
    - PDF from the app → Jarvis answers about its contents, not a "can't read" note.
-   - Video sent as a file from the app → Jarvis describes it.
-   - Oversized video → the sized honest note; no traceback in `journalctl -u jarvis-staging`.
+   - Video sent as a file from the app → Jarvis describes it. ✅ *done 2026-07-30: 5.5 MB and 42 MB,
+     both read correctly.*
+   - The backstop cannot be exercised live from any current channel — synthetic coverage only.
 3. **Telegram regression** (slices 2 and 3 touch the shared path): photo, voice note, and a small
    video still ingest normally.
 4. Cache filenames land as `video_att_….mp4` / `document_att_….pdf` in the app channel's
@@ -217,4 +237,7 @@ against logs and a live round-trip.
 - **`image/gif`.** The hub allowlists it and this plan would inline it as an image, but Gemini's
   supported image set is png/jpeg/webp/heic/heif. Likely a one-line addition to the readable check,
   but it is a distinct defect from `file`-kind ingestion — recorded here rather than folded in.
-- **Raising the hub's 50 MB cap.** Only becomes interesting if slice 5 ever lands.
+- **Raising the hub's 50 MB cap.** Now known to have headroom under the model — the inline ceiling
+  is 100 MB — but it is a storage/bandwidth policy on the hub's side, decided there, not here.
+- **Inline video duration.** The API's <1 min guideline for inline video is unmeasured; the 42 MB
+  clip that validated size was short. A long-but-small video is the untested corner.
