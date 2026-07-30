@@ -17,14 +17,15 @@ os.makedirs(_CACHE_DIR, exist_ok=True)
 
 _RETENTION_DAYS = 90
 
-_EXT = {"image": ".jpg", "video": ".mp4", "audio": ".ogg"}
+_EXT = {"image": ".jpg", "video": ".mp4", "audio": ".ogg", "document": ".pdf"}
 
 
 def save(data: bytes, kind: str, file_id: str) -> str:
     """Persist an inbound blob; return its **absolute** path.
 
-    kind ∈ {"image","video","audio"}. The filename embeds the Telegram
-    file_id so the same media re-resolves across turns without re-download.
+    kind is a neutral media kind; an unknown one just gets no suffix, since
+    extensions are cosmetic here. The filename embeds the Telegram file_id so
+    the same media re-resolves across turns without re-download.
     """
     filename = f"{kind}_{file_id[:20]}{_EXT.get(kind, '')}"
     abs_path = os.path.join(_CACHE_DIR, filename)

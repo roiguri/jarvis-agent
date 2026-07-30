@@ -61,6 +61,10 @@ class TelegramHost:
         application.add_handler(MessageHandler(filters.PHOTO, self._router.handle_photo))
         application.add_handler(MessageHandler(filters.VIDEO, self._router.handle_video))
         application.add_handler(MessageHandler(filters.VOICE, self._router.handle_voice))
+        # A document is Telegram's container for anything that is not a
+        # compressed photo, a video or a voice note — the router reads its mime
+        # to decide what it actually is.
+        application.add_handler(MessageHandler(filters.Document.ALL, self._router.handle_document))
         application.add_handler(CallbackQueryHandler(self._confirmation_ui.handle_callback))
 
         await application.initialize()
