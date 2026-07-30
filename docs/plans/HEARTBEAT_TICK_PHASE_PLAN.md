@@ -82,7 +82,6 @@ compare window **occurrences** instead of elapsed hours — named as the success
 - [ ] Occurrence-quantized gate (the successor design).
 - [ ] Last-tick-in-window warning (the redesigned S3).
 - [ ] Unreachable-window rejection in `manage_heartbeat_task` (the old S4).
-- [ ] Silent fail-open when `state.json` is unreadable — observed live, see Deferred.
 - [ ] `reading-list-suggestion` exposure — correct #37, which names the wrong tasks.
 - [ ] #32 stays open, unbundled.
 
@@ -302,8 +301,10 @@ code had run a 78k-token turn on the identical shape at 17:00.
 
 **One caveat on live runs.** The 18:00 tick was invalid and initially looked like a failure: the
 stamp-reset helper had been run as root, leaving `state.json` mode 600 root-owned while the process
-ran as `jarvis_user`. `load_state` caught the `PermissionError`, failed open, and every task ran.
-Worth knowing for the next live test — and worth an issue in its own right (see Deferred).
+ran as `jarvis_user`. `load_state` caught the `PermissionError`, failed open (`heartbeat_state.py:281-283`),
+and every task ran — a 213k-token turn. Not a defect to fix: the service always runs as
+`jarvis_user` and owns its own state, so this is reachable only by running something as root by
+hand. It is a hazard of *manual* live testing, which is why the staging section says never to.
 
 ---
 
@@ -395,15 +396,6 @@ only, so nothing existing breaks. Two subtleties for whoever picks it up: for a 
 `duration >= 1h` already implies a top-of-hour falls inside, so the test reduces to "does a boundary
 fall in the span"; and the two window forms need different tests, because `is_open` is half-open for
 ranges (`heartbeat_state.py:98`) but **closed** for `±radius` (`heartbeat_state.py:89`).
-
-**Silent fail-open when `state.json` is unreadable.** `load_state` catches `OSError` and returns an
-empty map (`heartbeat_state.py:281-283`), so every task looks never-run and the *entire* task list
-executes in one turn. That is the correct direction — never silently skip — but it is invisible
-apart from one `WARNING`, and expensive: observed live at 213k tokens, with a message burst avoided
-only because the tick happened not to notify. It also self-erases, because the tick then writes a
-fresh state file containing only the tasks it acted on, destroying the stamps it could not read. Two
-candidate fixes: make `stamp()` refuse to write when the preceding load failed, and treat an
-unreadable-but-present state file differently from a missing one.
 
 **`reading-list-suggestion` exposure.** #37 names `weekly-attendance-sync` and
 `weekly-fitness-scouting` as the weekly tasks at risk; neither is (see
