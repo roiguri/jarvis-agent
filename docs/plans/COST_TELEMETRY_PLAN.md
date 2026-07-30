@@ -134,6 +134,10 @@ is the identical defect fixed for `/help` in `899fe67`.
 Verified by rendering through the real `markdown_to_html.convert()`, plus an
 assertion that no emitted line is anything but a list item or a header.
 
+`/usage` is the third handler fixed for this one-at-a-time. The systematic pass —
+write the renderer contract down, add shared layout helpers, convert the rest, and
+add a regression test so it cannot recur — is tracked in **#54**, out of scope here.
+
 ### A4 — doc sync
 
 | file | change |
