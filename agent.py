@@ -50,6 +50,49 @@ MAX_MESSAGES = 50
 # which the API constrains separately (<1 min guideline for inline video).
 INLINE_MEDIA_MAX_BYTES = 100 * 1024 * 1024
 
+# The formats the model accepts, per kind, transcribed from the API's published
+# lists. Channels classify a blob into a kind; which *formats* of that kind are
+# readable is a model fact, so it lives here in one copy rather than in every
+# channel's router, where it would go stale on the next model swap. Outside
+# these sets the attachment gets an honest note instead of an opaque API error.
+SUPPORTED_MEDIA_MIMES = {
+    "image": {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"},
+    "audio": {"audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg",
+              "audio/flac"},
+    "video": {"video/mp4", "video/mpeg", "video/mov", "video/avi", "video/x-flv",
+              "video/mpg", "video/webm", "video/wmv", "video/3gpp"},
+    "document": {"application/pdf"},
+}
+
+# Clients name some formats differently from the API (.mov is sent as
+# video/quicktime, .mp3 as audio/mpeg). Normalize to the documented spelling so
+# the check sees a known name and the blob is sent under one the API expects.
+MEDIA_MIME_ALIASES = {
+    "video/quicktime": "video/mov",
+    "video/x-msvideo": "video/avi",
+    "video/x-ms-wmv": "video/wmv",
+    "video/3gpp2": "video/3gpp",
+    "audio/mpeg": "audio/mp3",
+    "audio/mpg": "audio/mp3",
+    "audio/x-wav": "audio/wav",
+    "audio/x-aiff": "audio/aiff",
+    "audio/x-flac": "audio/flac",
+    "image/jpg": "image/jpeg",
+}
+
+
+def _article(word: str) -> str:
+    """'a' or 'an' for a word the model will read back to the owner."""
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
+def _normalize_media_mime(mime_type: str) -> str:
+    """Strip parameters/case from a mime and resolve client spellings to the
+    names the API publishes. Empty in, empty out — an absent mime is handled by
+    the per-kind defaults in the media loop, not here."""
+    mime = mime_type.split(";")[0].strip().lower()
+    return MEDIA_MIME_ALIASES.get(mime, mime)
+
 
 def _strip_media_blobs(msg):
     """Replace base64 media content blocks with lightweight text references.
@@ -645,16 +688,33 @@ def ask_jarvis(
                             "media too large to inline: %s (%d bytes, kind=%s)",
                             abs_path, media_size, media_type,
                         )
-                        article = "an" if media_type[:1] in "aeiou" else "a"
                         content.append({
                             "type": "text",
                             "text": (
-                                f"\n[Received {article} {media_type} "
+                                f"\n[Received {_article(media_type)} {media_type} "
                                 f"({media_size / (1024 * 1024):.0f} MB) — "
                                 "too large for me to read.]"
                             )
                         })
                         continue
+
+                    # A format the model can't read. An absent mime skips the
+                    # check — the per-kind defaults below cover that case.
+                    if mime_type:
+                        mime_type = _normalize_media_mime(mime_type)
+                        if mime_type not in SUPPORTED_MEDIA_MIMES.get(media_type, ()):
+                            logger.info(
+                                "unsupported media format: %s (kind=%s)",
+                                mime_type, media_type,
+                            )
+                            content.append({
+                                "type": "text",
+                                "text": (
+                                    f"\n[Received {_article(media_type)} {media_type} "
+                                    f"({mime_type}) — I can't read that format.]"
+                                )
+                            })
+                            continue
 
                     with open(abs_path, "rb") as f:
                         media_data = f.read()
