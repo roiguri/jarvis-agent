@@ -40,6 +40,16 @@ from observability import telemetry
 # to SQLite, so storage stays bounded regardless of conversation length.
 MAX_MESSAGES = 50
 
+# Gemini's documented ceiling for inline media. The API also recommends the
+# Files API past a ~20 MB request, but that is a recommendation, not a limit —
+# a 42 MB video inlines and is read correctly. A backstop, not a policy: every
+# channel today caps its own uploads well below this, so it exists to meet a
+# future one with an honest note rather than an opaque API failure. Enforced
+# here rather than per channel because it is a model limit — every channel
+# inherits it, and a model swap moves one constant. It cannot see duration,
+# which the API constrains separately (<1 min guideline for inline video).
+INLINE_MEDIA_MAX_BYTES = 100 * 1024 * 1024
+
 
 def _strip_media_blobs(msg):
     """Replace base64 media content blocks with lightweight text references.
@@ -624,6 +634,27 @@ def ask_jarvis(
                         continue
 
                     abs_path = media_path
+
+                    # Too large to inline. Checked before open() so an oversized
+                    # blob is never read into memory only to be refused. Same
+                    # honest-note shape as an unreadable kind — the reply names
+                    # no channel, transport limit, or ceiling.
+                    media_size = os.path.getsize(abs_path)
+                    if media_size > INLINE_MEDIA_MAX_BYTES:
+                        logger.info(
+                            "media too large to inline: %s (%d bytes, kind=%s)",
+                            abs_path, media_size, media_type,
+                        )
+                        article = "an" if media_type[:1] in "aeiou" else "a"
+                        content.append({
+                            "type": "text",
+                            "text": (
+                                f"\n[Received {article} {media_type} "
+                                f"({media_size / (1024 * 1024):.0f} MB) — "
+                                "too large for me to read.]"
+                            )
+                        })
+                        continue
 
                     with open(abs_path, "rb") as f:
                         media_data = f.read()
