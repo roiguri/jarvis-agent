@@ -621,11 +621,11 @@ def ask_jarvis(
                     if not media_type or not media_path:
                         continue
 
-                    # A media kind this build can't feed to the model (e.g. a
-                    # "file" — documents today, video later). Surface it as text so
-                    # the reply is honest rather than silently ignoring the
-                    # attachment, and skip reading bytes we have no way to use.
-                    if media_type not in ("image", "audio", "video"):
+                    # A media kind this build can't feed to the model — a "file",
+                    # meaning the channel could not identify it. Surface it as
+                    # text so the reply is honest rather than silently ignoring
+                    # the attachment, and skip reading bytes we can't use.
+                    if media_type not in ("image", "audio", "video", "document"):
                         label = f"{media_type} ({mime_type})" if mime_type else media_type
                         content.append({
                             "type": "text",
@@ -698,6 +698,20 @@ def ask_jarvis(
                         content.append({
                             "type": "text",
                             "text": f"\n[Video attached: {media_path}]"
+                        })
+                    elif media_type == "document":
+                        if not mime_type:
+                            mime_type = "application/pdf"
+                        b64_data = base64.b64encode(media_data).decode("utf-8")
+                        content.append({
+                            "type": "media",
+                            "mime_type": mime_type,
+                            "data": b64_data,
+                        })
+                        # Keep a lightweight textual hint for models that ignore raw media blocks.
+                        content.append({
+                            "type": "text",
+                            "text": f"\n[Document attached: {media_path}]"
                         })
                 except Exception as e:
                     logger.warning(f"Failed to load media {media_path}: {e}")
