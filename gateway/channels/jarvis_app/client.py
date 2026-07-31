@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # The version the adapter was written against. The hub reports its own
 # contract_version on GET /v1/health; a mismatch is logged, never fatal — the hub
 # already 422s a malformed payload, so this only gives a *silent* skew a voice.
-PINNED_CONTRACT_VERSION = "3b3a48f330f09a39"
+PINNED_CONTRACT_VERSION = "f605f1ced7bdb356"
 
 # The hanging poll's server-side wait. The client read timeout sits a little above
 # it so a genuinely dead connection eventually errors instead of hanging forever.
@@ -28,6 +28,17 @@ POLL_TIMEOUT_S = 25.0
 class HubUnavailable(Exception):
     """The hub could not be reached or returned a server error — raised so the
     router enters degraded mode instead of the fetch loop dying."""
+
+
+class MessageAlreadyResolved(Exception):
+    """A PATCH tried to move a block's state to a value that differs from what
+    the hub already has stored — the terminal-state guard refused it (wire
+    error code "already_resolved"). Carries the state that actually stands, so
+    the caller can log the settled value instead of a bare failure."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__(f"block already resolved to {state!r}")
 
 
 class HubClient:
@@ -70,11 +81,40 @@ class HubClient:
             raise HubUnavailable(str(e)) from e
         return r.json()
 
-    async def send_message(self, body: dict) -> None:
-        """POST an assistant message to the hub. `body` carries any of text /
-        attachment_ids (the hub requires at least one)."""
+    async def send_message(self, body: dict) -> dict:
+        """POST an assistant message to the hub and return the created Message
+        (in particular its `id`, needed to later PATCH a block's state). `body`
+        carries any of text / attachment_ids / blocks (the hub requires at
+        least one)."""
         r = await self._client.post("/bot/v1/messages", json=body)
         r.raise_for_status()
+        return r.json()
+
+    async def patch_message_state(self, message_id: int, state: str) -> None:
+        """PATCH a sent message's sole interactive block to `state` (e.g.
+        confirmed/cancelled/expired for a confirmation). The hub's terminal-state
+        guard makes re-sending the value already stored a harmless no-op; a
+        PATCH to a *different* value than what is stored raises
+        MessageAlreadyResolved carrying the value that stands. Raises
+        HubUnavailable on a server error or transport failure."""
+        try:
+            r = await self._client.patch(
+                f"/bot/v1/messages/{message_id}", json={"state": state}
+            )
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                raise HubUnavailable(f"hub returned {e.response.status_code}") from e
+            if e.response.status_code == 422:
+                try:
+                    error = e.response.json()["error"]
+                except (ValueError, KeyError):
+                    error = {}
+                if error.get("code") == "already_resolved":
+                    raise MessageAlreadyResolved(error["detail"]["state"]) from e
+            raise
+        except httpx.HTTPError as e:
+            raise HubUnavailable(str(e)) from e
 
     async def upload_attachment(
         self,

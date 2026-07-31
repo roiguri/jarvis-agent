@@ -25,6 +25,7 @@ from gateway.channels.jarvis_app.client import (
     HubClient,
     PINNED_CONTRACT_VERSION,
 )
+from gateway.channels.jarvis_app.confirmation import AppConfirmationUI
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +60,16 @@ def _neutral_kind(hub_kind: str, mime_type: str) -> str:
 
 class JarvisAppInboundRouter:
     def __init__(
-        self, channel: JarvisAppChannel, client: HubClient, on_message: OnMessage
+        self,
+        channel: JarvisAppChannel,
+        client: HubClient,
+        on_message: OnMessage,
+        confirmation_ui: AppConfirmationUI,
     ) -> None:
         self._channel = channel
         self._client = client
         self._on_message = on_message
+        self._confirmation_ui = confirmation_ui
         self._queue: asyncio.Queue = asyncio.Queue()
         self._stop = asyncio.Event()
         self._degraded = False  # True while the hub is unreachable — for log-once
@@ -158,8 +164,16 @@ class JarvisAppInboundRouter:
                 self._queue.task_done()
 
     async def _handle(self, update: dict) -> None:
+        if update.get("type") == "action":
+            await self._confirmation_ui.handle_action(
+                action_id=update.get("action_id"),
+                message_id=update.get("message_id"),
+                block_kind=update.get("block_kind"),
+                callback_id=update.get("callback_id"),
+            )
+            return
         if update.get("type") != "message":
-            return  # non-message updates carry no turn; the poll already acked them
+            return  # neither message nor action; the poll already acked it
         message = update.get("message") or {}
         # Only the owner's own messages drive a turn — never the agent's own sends
         # echoed back, which would loop.

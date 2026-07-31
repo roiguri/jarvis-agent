@@ -1,15 +1,17 @@
 # App channel — execution plan
 
-**Status (2026-07-29):** Stage C on branch `feat/stage-c-app-channel`. **Landed & committed:** C1
-(text round-trip, verified live), C2 (slash commands), C6 (channel identity — #50 Phase 1), `/help`
-list fix, **C3 (outbound media), C4 (inbound media)** + its review follow-ups, and **§4 (image upload
-metadata — width/height + blur-up placeholder)**. The hub **upgraded to the pinned
-`3b3a48f330f09a39`** (skew resolved), and an independent audit confirmed we are **in sync with
-`roiguri/jarvis-app-v2@main`** (no re-pin). **Remaining:** restart staging → on-device verify pass →
-Telegram regression + `code-review` → PR to main. **Deferred:** C5 → B2; real `file`-kind ingestion
-(PDF/video) → **#51**, shipped; see [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)
-(interim: an honest "can't read yet" note, never a silent drop). Stages A + B
-merged (#47, #49).
+**Status (2026-07-31):** Stage C merged to main (PR #52) — C1–C4, C6, `/help` fix, and the neutral
+media-kind resolution follow-up all landed. Real `file`-kind ingestion (PDF/video, #51) also shipped
+separately; see [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md). Stages A + B
+merged (#47, #49). **C5/B2 — `AppConfirmationUI`** now implemented: the hub shipped the missing wire
+piece (`contract_version` `3b3a48f330f09a39` → **`f605f1ced7bdb356`** — new `POST /v1/actions`, the
+`{kind, summary, state, payload}` block envelope, and a state-only `PATCH`), so the app channel now has
+its own real confirm/cancel flow instead of falling back to Telegram. Implementation details in the
+**C5/B2** entry below and in `docs/architecture/GATEWAY.md`'s Plane 3 section (`ConfirmationUI`'s
+`edit_outcome` was replaced with a single `apply_outcome(callback_id, outcome, outcome_text)` —
+an earlier two-method split was reviewed and collapsed after landing). **Remaining:** restart staging
+→ on-device confirm/cancel verify pass (see *Verification* under C5/B2) → Telegram regression +
+`code-review` → commit → PR.
 **Single source of truth.** Absorbs and replaces the former `APP_CHANNEL_PLAN.md` (index),
 `02_MULTI_CHANNEL_SUPPORT.md`, and `03_APP_CHANNEL.md` (now in `archive/`). The only other live
 material is the app author's pinned handover under `jarvis-app/` — **imported verbatim, not ours
@@ -67,8 +69,24 @@ stay in Stage D (still no phone renderer).
 - [x] C4 review follow-ups (commit `bee778c`): reject malformed `att_` ids before a filesystem path + basename guard; `media_cache.save` inside the per-attachment try; retrieval note instead of an empty turn when every download fails
 - [x] §4 — image upload metadata (commit `0783aeb`): `upload_attachment` sends optional `width`/`height`/`blur_preview`; the channel computes them for images via Pillow (`Pillow==12.3.0` added, import guarded). App reserves aspect ratio (no reflow) + shows a blur-up placeholder. `duration_ms` omitted (no outbound-audio producer). *Verified* the hub stored `w/h/blur_preview`
 - [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**, planned in [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)
-- [ ] C5 — **DEFERRED → B2** (decided 2026-07-24). An interim `UnsupportedConfirmation` is throwaway: the real `AppConfirmationUI` (upstream B2) replaces it, and its registration seam already exists. Interim behavior is **safe** — app-origin destructive tools fall back to the default channel's (Telegram) confirmation; nothing fires silently. Build the real UI when the app ships confirmation; don't build the placeholder.
-- [ ] **Restart staging** + Telegram regression + `code-review` skill, then PR `feat/stage-c-app-channel` → main
+- [x] C5/B2 — **`AppConfirmationUI` landed (2026-07-31)**, once the hub shipped `POST /v1/actions` +
+  the `{kind, summary, state, payload}` block envelope + a state-only `PATCH` (see the hub-skew note
+  below for the new pin). No throwaway placeholder was built — the deferral held until the app's real
+  confirm/cancel mechanism existed, then this went straight in against it. `send_prompt` posts a
+  `confirmation` block (`payload.callback_id`/`body` = the store's own callback id / description);
+  resolution flows back via an `ActionUpdate` (`type: "action"`) on the same long-poll, dispatched by
+  the router to `AppConfirmationUI.handle_action` (a `block_kind` switch — only `"confirmation"` is
+  handled; `buttons`/`card`/`form` still fall through to Stage D, no consumer yet). Outcome delivery
+  goes through `ConfirmationUI.apply_outcome(callback_id, outcome, outcome_text)` — one method
+  carrying both a structured `ConfirmationOutcome` and rendered prose; `AppConfirmationUI` reads only
+  `outcome` (PATCHes the hub's wire state, since there's no free-text edit) and `TelegramConfirmationUI`
+  reads only `outcome_text` (unchanged edit-message-text behavior). An initial split into two
+  independently-overridable methods (`edit_outcome` + an additive `sync_outcome_state`) was reviewed
+  post-implementation and collapsed into this single method — the split made the mandatory method
+  sometimes vestigial and the load-bearing one easy for a future channel author to forget entirely.
+  *Pending:* staging restart + on-device confirm/cancel/expiry verify.
+- [ ] **Restart staging** + on-device confirm/cancel/expiry verify (C5/B2) + Telegram regression +
+  `code-review` skill, then commit + PR to main
 
 > **Hub-skew note — RESOLVED (2026-07-29):** the hub now serves `contract_version =
 > 3b3a48f330f09a39`, the pinned version (`GET /v1/health`), so the warn-on-mismatch no longer fires
@@ -76,12 +94,21 @@ stay in Stage D (still no phone renderer).
 > contract has not advanced past the pin (verified against its CI drift test) — **no re-pin needed.**
 > One low-impact upstream note it surfaced, now closed: our upload omitted the optional
 > `width/height/blur_preview` metadata → landed as §4.
+>
+> **Contract bump — `f605f1ced7bdb356` (2026-07-31):** re-pulled the hub's live `docs/CONTRACT.md`
+> and route source (`gh api repos/roiguri/jarvis-app/...`) for the C5/B2 work. Every block gained a
+> common `{kind, summary, state, payload}` envelope (`summary` is a required plain-text fallback);
+> `ConfirmationPayload` now carries `body`/`title` (the question lives in the block, not just message
+> `text`); `PATCH` shrank to `{"state": ...}` only, hub-enforced terminal (idempotent same-value,
+> 422 `already_resolved` on a different one); and a new `POST /v1/actions` + `ActionUpdate` (`type:
+> "action"`) is the phone-tap round trip this whole feature depends on. `contract.md` re-synced
+> verbatim; `PINNED_CONTRACT_VERSION` bumped in `client.py`.
 
 **Stage D — rich rendering / blocks** (design deliberately OPEN — decide when a consumer exists)
 - [ ] Design the outbound seam against the real app renderer (`OutboundReply` is *one candidate*, not committed)
 - [ ] 4b — sibling-thread chat injection (needs a second live user thread)
 - [ ] 4c — durable cross-channel context (open question — not app-specific)
-- [ ] Upstream deferrals: B2 app `AppConfirmationUI` — the app's real confirm/cancel UI (this is the successor to the deferred C5; until it lands, app-origin confirmations fall back to Telegram — safe) · B5 chips · B6 apps
+- [ ] Upstream deferrals: B5 streaming chips · B6 apps. (B2 `AppConfirmationUI` — the successor to the deferred C5 — landed 2026-07-31; see the Stage C checklist above.)
 
 ---
 
@@ -289,13 +316,16 @@ replaces it the moment the app can render a confirm/cancel widget, and the per-c
 seam it would plug into (`register_confirmation` / `_confirmation_stores` in the factory) already
 exists. So we skip the placeholder and build the real UI when the app ships confirmation.
 
-**Interim behavior (safe, documented).** Until B2, no confirmation store is registered for the app,
-so `get_confirmation()` on an app-origin turn falls back to the **default channel's store
-(Telegram)**: a destructive tool triggered from the app renders its confirm/cancel prompt on
-Telegram, and the action fires **only** if the owner taps Confirm there — nothing destructive
-happens silently. It is a cross-device wrinkle (a dead-end if the owner isn't on Telegram), not a
-hazard. The general principle still stands and is realized by B2: a channel that can't render a rich
-interaction has the gap surfaced to the agent, which phrases the human explanation.
+**Interim behavior (safe, documented) — superseded 2026-07-31.** Until B2, no confirmation store was
+registered for the app, so `get_confirmation()` on an app-origin turn fell back to the **default
+channel's store (Telegram)**: a destructive tool triggered from the app rendered its confirm/cancel
+prompt on Telegram, and the action fired **only** if the owner tapped Confirm there — nothing
+destructive happened silently. It was a cross-device wrinkle (a dead-end if the owner wasn't on
+Telegram), not a hazard. **B2 landed 2026-07-31** once the hub shipped `POST /v1/actions` + the new
+block envelope — see the C5/B2 checklist entry above and `docs/architecture/GATEWAY.md`'s Plane 3
+section for `AppConfirmationUI`'s shape. The Telegram-fallback path still exists structurally
+(`get_confirmation()`'s default-channel fallback is unconditional, for any origin-less thread), but
+app-origin turns now resolve their own store and never reach it.
 
 **Owner prereq (done).** `APP_HUB_URL`, `APP_HUB_BOT_TOKEN`, `APP_OWNER_USER_ID` are in staging's
 `secrets/.env` with a **staging-specific hub bot token** — the hub is one-bot-one-user, so a
@@ -350,10 +380,11 @@ now" gate:
   sibling chat; beyond that, continuity depends on the daily log or a memory write. Not
   app-specific — the same time-bound governs heartbeat↔user today — so treat it on its own terms,
   alongside `../CONTEXT_HANDLING_PLAN.md` (a wider window costs tokens).
-- **Upstream honest-boundary deferrals:** B2 app `AppConfirmationUI` (the confirm/cancel UI; the
-  successor to the deferred C5), B5 streaming chips, B6 apps. Each is real and specified in
-  `jarvis-app/original_app_plan.md`; none is end-to-end testable today. (B1.6 media inbound
-  graduated to **Stage C4** — the phone sends attachments now.)
+- **Upstream honest-boundary deferrals:** B5 streaming chips, B6 apps. Each is real and specified in
+  `jarvis-app/original_app_plan.md`; neither is end-to-end testable today. (B1.6 media inbound
+  graduated to **Stage C4** — the phone sends attachments now. B2 `AppConfirmationUI` — the
+  confirm/cancel UI, successor to the deferred C5 — graduated out of Stage D and landed 2026-07-31;
+  see the Stage C checklist.)
 
 *Verify:* per slice, when each acquires its consumer.
 
@@ -418,7 +449,7 @@ channels. **Deferred cleanups** (tracked, not blocking): loop-bridge misfiled in
 
 | File | What it is |
 |---|---|
-| `contract.md` | The wire contract, **generated from the hub's Pydantic models** — the single source of truth for payload *shape*. Pinned at `contract_version = 3b3a48f330f09a39` (bumped 2026-07-24, adds the attachments model), which the live hub reports on `GET /v1/health`. B0 records the pin; `HubClient` warns (not hard-fail) on mismatch |
+| `contract.md` | The wire contract, **generated from the hub's Pydantic models** — the single source of truth for payload *shape*. Pinned at `contract_version = f605f1ced7bdb356` (bumped 2026-07-31 for the C5/B2 action/block-envelope rework; previously `3b3a48f330f09a39`, bumped 2026-07-24 for the attachments model), which the live hub reports on `GET /v1/health`. B0 records the pin; `HubClient` warns (not hard-fail) on mismatch |
 | `fake_agent.py` | A fake **agent** (not a fake hub) — it long-polls a *running* hub. Its value is as the reference poll loop B1 must write (`:366-417`) |
 | `original_app_plan.md` | The approved Track B plan (2026-07-12), phases B0–B6. Upstream's *capability* sequencing |
 
