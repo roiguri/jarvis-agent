@@ -9,7 +9,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 
-from gateway.confirmation.base import ConfirmationUI
+from gateway.confirmation.base import ConfirmationOutcome, ConfirmationUI
 from gateway.channels.telegram.channel import TelegramChannel
 from gateway.channels.telegram._render import render_fences_only
 
@@ -61,7 +61,11 @@ class TelegramConfirmationUI(ConfirmationUI):
             )
         self._message_ids[callback_id] = message.message_id
 
-    async def edit_outcome(self, callback_id: str, outcome_text: str) -> None:
+    async def apply_outcome(
+        self, callback_id: str, outcome: ConfirmationOutcome, outcome_text: str
+    ) -> None:
+        # This wire has no structured resolution state of its own — outcome_text
+        # is the entire signal, so `outcome` goes unused here.
         message_id = self._message_ids.pop(callback_id, None)
         try:
             if message_id is not None:
@@ -74,9 +78,6 @@ class TelegramConfirmationUI(ConfirmationUI):
                 await self._channel.send_to_owner(outcome_text)
         except Exception:
             logger.exception("Failed to edit confirmation outcome")
-
-    async def expire(self, callback_id: str) -> None:
-        await self.edit_outcome(callback_id, "⌛ Confirmation expired.")
 
     async def handle_callback(self, update: Update, context) -> None:
         """PTB CallbackQueryHandler entry point."""

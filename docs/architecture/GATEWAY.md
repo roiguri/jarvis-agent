@@ -146,9 +146,9 @@ sequenceDiagram
     UI->>Store: resolve(callback_id, outcome)
     alt confirmed
         Store->>Store: await action_fn()
-        Store->>UI: edit_outcome(success/fail text)
+        Store->>UI: apply_outcome(CONFIRMED/FAILED, success/fail text)
     else cancelled or expired
-        Store->>UI: edit_outcome(cancellation text)
+        Store->>UI: apply_outcome(CANCELLED/EXPIRED, cancellation text)
     end
     Store-)User: on_outcome(...) or outbox.notify_owner(...)
 ```
@@ -347,18 +347,33 @@ The store implementation (`InMemoryConfirmationStore`) handles bookkeeping, TTL 
 ### `ConfirmationUI` ABC (`gateway/confirmation/base.py`)
 
 ```python
+class ConfirmationOutcome(str, Enum):
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"           # confirmed, but the action itself raised
+    EXPIRED = "expired"
+    ALREADY_HANDLED = "already_handled"
+
 class ConfirmationUI(ABC):
     @abstractmethod
     async def send_prompt(self, callback_id: str, description: str) -> None: ...
 
     @abstractmethod
-    async def edit_outcome(self, callback_id: str, outcome_text: str) -> None: ...
+    async def apply_outcome(
+        self, callback_id: str, outcome: ConfirmationOutcome, outcome_text: str
+    ) -> None:
+        """Deliver the final state. `outcome` is the structured result (fixed
+        vocabulary); `outcome_text` is the human-readable prose. Implementations
+        read whichever fits their wire — most read exactly one. Must not raise;
+        the store isolates each call so a failure here can't skip what follows."""
 
     # Channels may also expose a channel-native callback handler
     # (e.g. PTB CallbackQueryHandler) that calls store.resolve(callback_id, outcome).
 ```
 
 `InMemoryConfirmationStore.__init__(ui: ConfirmationUI, outbox: Outbox, owner_thread_id: str, on_outcome=None)` — one store **per channel**, carrying that channel's `owner_thread_id` and `outbox` so a resolved confirmation acks on the channel the turn came from. The store delegates rendering to `ui` and delivers the final outcome via the injected `on_outcome(system_text, owner_thread_id, outbox)` domain callback (conversational acknowledgement) or `outbox.notify_owner(...)` verbatim as fallback. Stores register per channel name; `get_confirmation()` resolves the **origin** channel's store from the running turn's `CURRENT_THREAD_ID` (falling back to the default channel for origin-less turns).
+
+`apply_outcome` is one method carrying both a structured `outcome` and rendered `outcome_text`, rather than two parallel methods. `TelegramConfirmationUI` reads only `outcome_text` (it edits the prompt message to that string) — the jarvis-app hub has no such free-text edit at all, only `PATCH {state}` on the block, so `AppConfirmationUI` reads only `outcome`, mapping it to the hub's `confirmed|cancelled|expired` vocabulary. An earlier draft split this into two independently-overridable methods (one abstract but often vestigial, one optional but load-bearing for the second channel) — collapsed into one abstract method after review, since both facts describe the same event and a channel is expected to just ignore whichever field it doesn't need. `InMemoryConfirmationStore._apply_outcome` wraps every call in a try/except so a channel's delivery failure can never skip the conversational follow-up after it.
 
 ---
 
@@ -474,7 +489,7 @@ Concrete steps to add an `email` (or `whatsapp`, etc.) channel after Phase 1 lan
    - `confirmation.py` — `EmailConfirmationUI(ConfirmationUI)` (e.g. magic-link confirm/cancel URLs).
 2. **Implement the `Channel` ABC** in `channel.py`. Constructor takes `allowed_email: str` (or whatever owner-config makes sense). Implement `send` (SMTP), `send_media` (SMTP attachment), `send_to_owner` (fixed recipient), `authorize` (compare sender), `owner_thread_id` (e.g. `email_<sanitized_address>` — single-source the format in `channel.py` and reuse it from the router).
 3. **Define an owner-config env** (e.g. `ALLOWED_EMAIL`) and add it to `/app/secrets/.env`. Add channel-specific config (`SMTP_HOST`, `SMTP_USER`, `IMAP_HOST`, etc.). The **factory** reads all of it — `main.py` never sees channel config.
-4. **Implement `ConfirmationUI`** if your channel needs a confirmation flow. The store interface is fixed — only `send_prompt` and `edit_outcome` are channel-specific.
+4. **Implement `ConfirmationUI`** if your channel needs a confirmation flow. The store interface is fixed — `send_prompt` and `apply_outcome` are the two required, channel-specific methods. `apply_outcome` carries both a structured `outcome` and rendered `outcome_text`; read whichever fits your wire and ignore the other (see `TelegramConfirmationUI` for text-only, `AppConfirmationUI` for structured-state-only).
 5. **Register in `gateway/factory.py`** — add a `build_email_stack(...)` factory that reads the config env, constructs channel + outbox + router + confirmation store/UI + host, wires the router to `process_inbound_message`, registers the defaults (outbox, confirmation, default channel), and returns a stack with `start()`/`stop()`.
 6. **Wire startup in `main.py`** — call the factory and `await stack.start()`. That's the whole host-side footprint.
 7. **Update `thread_id` convention** — use `email_<sanitized_address>` (or whatever format suits the channel's identifier domain).

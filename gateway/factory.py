@@ -21,6 +21,7 @@ from typing import Awaitable, Callable, Protocol
 
 import turn_context
 
+from gateway import outbox as outbox_mod
 from gateway.base import Channel, OnMessage
 from gateway.confirmation.base import Confirmation
 from gateway.confirmation.store import InMemoryConfirmationStore
@@ -31,6 +32,7 @@ from gateway.channels.telegram.host import TelegramHost
 from gateway.channels.telegram.router import TelegramInboundRouter
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
 from gateway.channels.jarvis_app.client import HubClient
+from gateway.channels.jarvis_app.confirmation import AppConfirmationUI
 from gateway.channels.jarvis_app.router import JarvisAppInboundRouter
 
 logger = logging.getLogger(__name__)
@@ -69,11 +71,22 @@ class JarvisAppStack:
     channel: JarvisAppChannel
     client: HubClient
     router: JarvisAppInboundRouter
+    store: InMemoryConfirmationStore
+    confirmation_ui: AppConfirmationUI
     outbox: Outbox
     _task: "asyncio.Task | None" = field(default=None, init=False)
 
     async def start(self) -> None:
-        """Launch the poll-loop router as a background task; returns immediately."""
+        """Bind the thread->loop bridge, start the confirmation TTL sweeper, then
+        launch the poll-loop router as a background task; returns immediately.
+
+        Telegram's host binds the bridge in its own start(); there is no
+        equivalent host object here, and this stack may build and start before
+        or without Telegram's, so bind explicitly rather than assume it already
+        happened — bind_loop() to the same running loop is a no-op if it did.
+        """
+        outbox_mod.bind_loop(asyncio.get_running_loop())
+        self.store.start_sweeper()
         self._task = asyncio.create_task(self.router.run())
 
     async def stop(self) -> None:
@@ -221,14 +234,16 @@ def _build_jarvis_app_stack(
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
 ) -> JarvisAppStack:
-    """Construct and wire the jarvis-app channel — HubClient, channel, outbox, and
-    the poll-loop router — and register the channel for proactive routing. Reads
+    """Construct and wire the jarvis-app channel — HubClient, channel, confirmation
+    store/UI, outbox, and the poll-loop router — and register the channel for
+    proactive routing and the confirmation backend for destructive tools. Reads
     APP_HUB_URL / APP_HUB_BOT_TOKEN / APP_OWNER_USER_ID from the environment.
 
-    No confirmation store is registered yet: a destructive tool on an app-origin
-    turn currently falls back to the default channel's store (a later step gives
-    the app its own handling), so on_confirmation_outcome is accepted for
-    signature parity but unused here."""
+    on_confirmation_outcome: domain callback that turns a confirmation outcome
+    into a conversational acknowledgement (keeps the agent out of the gateway) —
+    same callback the Telegram stack uses, so a resolved confirmation acks on
+    whichever channel's thread it originated from.
+    """
     base_url = os.getenv("APP_HUB_URL")
     if not base_url:
         raise ValueError("APP_HUB_URL not set in the environment")
@@ -242,11 +257,20 @@ def _build_jarvis_app_stack(
     client = HubClient(base_url, token)
     channel = JarvisAppChannel(client, owner)
     outbox = Outbox(channel, log_sink)
-    router = JarvisAppInboundRouter(channel, client, on_message)
+    confirmation_ui = AppConfirmationUI(client)
+    store = InMemoryConfirmationStore(
+        confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
+    )
+    confirmation_ui.bind_store(store)
+    router = JarvisAppInboundRouter(channel, client, on_message, confirmation_ui)
 
     register_channel(channel, outbox)
+    register_confirmation(channel.name, store)
     logger.info("jarvis-app stack built (owner=%s)", owner)
-    return JarvisAppStack(channel=channel, client=client, router=router, outbox=outbox)
+    return JarvisAppStack(
+        channel=channel, client=client, router=router,
+        store=store, confirmation_ui=confirmation_ui, outbox=outbox,
+    )
 
 
 _STACK_BUILDERS: dict[str, Callable[..., Stack]] = {

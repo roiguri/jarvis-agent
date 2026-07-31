@@ -11,7 +11,21 @@ delivered out-of-band.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Awaitable, Callable
+
+
+class ConfirmationOutcome(str, Enum):
+    """What a resolved confirmation turned out to be, independent of any
+    channel's rendered text — a channel whose native protocol tracks
+    resolution state (rather than free-form prose) needs this instead of
+    parsing outcome_text."""
+
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"  # confirmed, but the action itself raised
+    EXPIRED = "expired"
+    ALREADY_HANDLED = "already_handled"
 
 
 @dataclass
@@ -58,13 +72,22 @@ class ConfirmationUI(ABC):
         """Render the confirm/cancel prompt to the owner."""
 
     @abstractmethod
-    async def edit_outcome(self, callback_id: str, outcome_text: str) -> None:
-        """Replace the prompt with the final outcome text."""
+    async def apply_outcome(
+        self, callback_id: str, outcome: ConfirmationOutcome, outcome_text: str
+    ) -> None:
+        """Deliver the final state of a resolved or expired confirmation.
+        `outcome` is the structured result (fixed vocabulary); `outcome_text`
+        is the human-readable prose. Implementations read whichever fits their
+        channel's wire — most read exactly one, and ignore the other. Must not
+        raise: the store treats this as best-effort delivery and isolates each
+        call so a failure here can never skip the conversational follow-up."""
 
     async def expire(self, callback_id: str) -> None:
         """Retire a prompt whose pending action was TTL-evicted before resolution.
 
-        Default: delegate to edit_outcome with a generic expiry message. Channels
-        with cheaper cleanup paths may override.
+        Default: deliver a generic expiry outcome. Channels with cheaper
+        cleanup paths may override.
         """
-        await self.edit_outcome(callback_id, "⌛ Confirmation expired.")
+        await self.apply_outcome(
+            callback_id, ConfirmationOutcome.EXPIRED, "⌛ Confirmation expired."
+        )

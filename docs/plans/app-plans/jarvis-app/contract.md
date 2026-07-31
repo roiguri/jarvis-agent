@@ -6,7 +6,7 @@
 JSON Schema plus the endpoint list, generated from the Pydantic models and
 the mounted routes under `backend/jarvis_app_backend`.
 
-`contract_version`: `3b3a48f330f09a39`
+`contract_version`: `f605f1ced7bdb356`
 
 ## Endpoints
 
@@ -22,12 +22,90 @@ the mounted routes under `backend/jarvis_app_backend`.
 - `POST /bot/v1/commands` — Declare Commands
 - `POST /bot/v1/events` — Bot Event
 - `POST /bot/v1/messages` — Bot Send
+- `POST /v1/actions` — Post Action
 - `POST /v1/attachments` — Upload Attachment
 - `POST /v1/auth/login` — Login
 - `POST /v1/auth/logout` — Logout
 - `POST /v1/messages` — Send Message
 
 ## Models
+
+### ActionRequest
+
+```json
+{
+  "additionalProperties": false,
+  "description": "`POST /v1/actions`'s body \u2014 a tap on a live block. `action_id` names\none of the block's declared affordances, or, for `confirmation` (which\ndeclares none of its own \u2014 it has exactly two outcomes), the reserved\n`\"confirm\"`/`\"cancel\"` (architecture \u00a75). No `values` field here: it\nexists for submitted form data, and nothing reads it until a `form`\nrenderer exists.",
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "message_id": {
+      "title": "Message Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "message_id",
+    "action_id"
+  ],
+  "title": "ActionRequest",
+  "type": "object"
+}
+```
+
+### ActionUpdate
+
+```json
+{
+  "description": "A tap the hub already validated against the block it names. `callback_id`\nis `None` when the block that was tapped carries none of its own.",
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "block_kind": {
+      "title": "Block Kind",
+      "type": "string"
+    },
+    "callback_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Callback Id"
+    },
+    "message_id": {
+      "title": "Message Id",
+      "type": "integer"
+    },
+    "type": {
+      "const": "action",
+      "title": "Type",
+      "type": "string"
+    },
+    "update_id": {
+      "title": "Update Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "update_id",
+    "type",
+    "message_id",
+    "action_id",
+    "block_kind"
+  ],
+  "title": "ActionUpdate",
+  "type": "object"
+}
+```
 
 ### ApiError
 
@@ -254,271 +332,16 @@ the mounted routes under `backend/jarvis_app_backend`.
 
 ```json
 {
-  "$defs": {
-    "Action": {
-      "additionalProperties": false,
-      "description": "A tappable option: `card.actions` and `buttons.options` both use this\nshape, so a card's own buttons and a bare `buttons` block behave the same\nway once tapped.",
-      "properties": {
-        "action_id": {
-          "title": "Action Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "action_id",
-        "label"
-      ],
-      "title": "Action",
-      "type": "object"
-    },
-    "ButtonsBlock": {
-      "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
-      "properties": {
-        "kind": {
-          "const": "buttons",
-          "default": "buttons",
-          "title": "Kind",
-          "type": "string"
-        },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "State"
-        }
-      },
-      "required": [
-        "options"
-      ],
-      "title": "ButtonsBlock",
-      "type": "object"
-    },
-    "CardBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "actions": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Actions",
-          "type": "array"
-        },
-        "body": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Body"
-        },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
-        "subtitle": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Subtitle"
-        },
-        "title": {
-          "title": "Title",
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "title": "CardBlock",
-      "type": "object"
-    },
-    "ConfirmationBlock": {
-      "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
-      "properties": {
-        "callback_id": {
-          "title": "Callback Id",
-          "type": "string"
-        },
-        "cancel_label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cancel Label"
-        },
-        "confirm_label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Confirm Label"
-        },
-        "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
-          "title": "Kind",
-          "type": "string"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
-        },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields"
-      ],
-      "title": "FormBlock",
-      "type": "object"
-    },
-    "FormField": {
-      "additionalProperties": false,
-      "properties": {
-        "field_id": {
-          "title": "Field Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "field_id",
-        "label"
-      ],
-      "title": "FormField",
-      "type": "object"
-    }
-  },
   "additionalProperties": false,
-  "description": "Replaces a message's blocks \u2014 how the agent resolves a live one (a\n`confirmation` to `confirmed`/`cancelled`/`expired`, a `buttons` `state`).\nBlocks are validated strict, same as a send.",
+  "description": "Resolves a message's one block by setting its `state` alone \u2014 how the\nagent answers a `confirmation` (`confirmed`/`cancelled`/`expired`) or\nnames a `buttons` selection. The body carries no block: `message_id` in\nthe URL plus \"at most one interactive block per message\" (architecture\n\u00a75) is already an unambiguous address, and there is no content for the\nagent to send even if it wanted to \u2014 an action update carries none, and\nthe Bot API has no read.\n\nThis model cannot enforce the terminal-state rule itself \u2014 it has no way\nto see what is already stored, only what was sent. That guard, and the\nper-kind check on `state`'s own vocabulary, both live in\n`messages.db.update_message_blocks`, the only place that holds the\nstored block to check against: once a stored block's `state` is\nnon-null, a PATCH may change it only to the same value again.",
   "properties": {
-    "blocks": {
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "buttons": "#/$defs/ButtonsBlock",
-            "card": "#/$defs/CardBlock",
-            "confirmation": "#/$defs/ConfirmationBlock",
-            "form": "#/$defs/FormBlock"
-          },
-          "propertyName": "kind"
-        },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/CardBlock"
-          },
-          {
-            "$ref": "#/$defs/FormBlock"
-          },
-          {
-            "$ref": "#/$defs/ButtonsBlock"
-          },
-          {
-            "$ref": "#/$defs/ConfirmationBlock"
-          }
-        ]
-      },
-      "title": "Blocks",
-      "type": "array"
+    "state": {
+      "title": "State",
+      "type": "string"
     }
   },
   "required": [
-    "blocks"
+    "state"
   ],
   "title": "BotPatchRequest",
   "type": "object"
@@ -571,7 +394,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "ButtonsBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
+      "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
       "properties": {
         "kind": {
           "const": "buttons",
@@ -579,12 +402,8 @@ the mounted routes under `backend/jarvis_app_backend`.
           "title": "Kind",
           "type": "string"
         },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
+        "payload": {
+          "$ref": "#/$defs/ButtonsPayload"
         },
         "state": {
           "anyOf": [
@@ -597,15 +416,74 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ButtonsBlock",
+      "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
         }
       },
       "required": [
         "options"
       ],
-      "title": "ButtonsBlock",
+      "title": "ButtonsPayload",
       "type": "object"
     },
     "CardBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "card",
+          "default": "card",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CardPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "CardBlock",
+      "type": "object"
+    },
+    "CardPayload": {
       "additionalProperties": false,
       "properties": {
         "actions": {
@@ -627,24 +505,6 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Body"
         },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
         "subtitle": {
           "anyOf": [
             {
@@ -665,13 +525,58 @@ the mounted routes under `backend/jarvis_app_backend`.
       "required": [
         "title"
       ],
-      "title": "CardBlock",
+      "title": "CardPayload",
       "type": "object"
     },
     "ConfirmationBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
       "properties": {
+        "kind": {
+          "const": "confirmation",
+          "default": "confirmation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ConfirmationPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "cancelled",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ConfirmationBlock",
+      "type": "object"
+    },
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
         "callback_id": {
           "title": "Callback Id",
           "type": "string"
@@ -700,20 +605,41 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Confirm Label"
         },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    },
+    "FormBlock": {
+      "additionalProperties": false,
+      "properties": {
         "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
+          "const": "form",
+          "default": "form",
           "title": "Kind",
           "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/FormPayload"
         },
         "state": {
           "anyOf": [
             {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
               "type": "string"
             },
             {
@@ -722,38 +648,15 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
         },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
+        "summary": {
+          "title": "Summary",
           "type": "string"
         }
       },
       "required": [
-        "fields"
+        "summary",
+        "payload"
       ],
       "title": "FormBlock",
       "type": "object"
@@ -775,6 +678,29 @@ the mounted routes under `backend/jarvis_app_backend`.
         "label"
       ],
       "title": "FormField",
+      "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
       "type": "object"
     }
   },
@@ -846,512 +772,6 @@ the mounted routes under `backend/jarvis_app_backend`.
 }
 ```
 
-### BotUpdate
-
-```json
-{
-  "$defs": {
-    "Action": {
-      "additionalProperties": false,
-      "description": "A tappable option: `card.actions` and `buttons.options` both use this\nshape, so a card's own buttons and a bare `buttons` block behave the same\nway once tapped.",
-      "properties": {
-        "action_id": {
-          "title": "Action Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "action_id",
-        "label"
-      ],
-      "title": "Action",
-      "type": "object"
-    },
-    "Attachment": {
-      "additionalProperties": false,
-      "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
-      "properties": {
-        "blur_preview": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Blur Preview"
-        },
-        "duration_ms": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Duration Ms"
-        },
-        "filename": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Filename"
-        },
-        "height": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Height"
-        },
-        "id": {
-          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
-          "title": "Id",
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "image",
-            "audio",
-            "file"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
-        "mime_type": {
-          "title": "Mime Type",
-          "type": "string"
-        },
-        "size": {
-          "title": "Size",
-          "type": "integer"
-        },
-        "width": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Width"
-        }
-      },
-      "required": [
-        "id",
-        "kind",
-        "mime_type",
-        "size"
-      ],
-      "title": "Attachment",
-      "type": "object"
-    },
-    "ButtonsBlock": {
-      "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
-      "properties": {
-        "kind": {
-          "const": "buttons",
-          "default": "buttons",
-          "title": "Kind",
-          "type": "string"
-        },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "State"
-        }
-      },
-      "required": [
-        "options"
-      ],
-      "title": "ButtonsBlock",
-      "type": "object"
-    },
-    "CardBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "actions": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Actions",
-          "type": "array"
-        },
-        "body": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Body"
-        },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
-        "subtitle": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Subtitle"
-        },
-        "title": {
-          "title": "Title",
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "title": "CardBlock",
-      "type": "object"
-    },
-    "ConfirmationBlock": {
-      "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
-      "properties": {
-        "callback_id": {
-          "title": "Callback Id",
-          "type": "string"
-        },
-        "cancel_label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cancel Label"
-        },
-        "confirm_label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Confirm Label"
-        },
-        "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
-          "title": "Kind",
-          "type": "string"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
-        },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields"
-      ],
-      "title": "FormBlock",
-      "type": "object"
-    },
-    "FormField": {
-      "additionalProperties": false,
-      "properties": {
-        "field_id": {
-          "title": "Field Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "field_id",
-        "label"
-      ],
-      "title": "FormField",
-      "type": "object"
-    },
-    "Message": {
-      "description": "The persistent unit; `id` is the sync cursor (architecture \u00a75).",
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/Attachment"
-          },
-          "title": "Attachments",
-          "type": "array"
-        },
-        "blocks": {
-          "anyOf": [
-            {
-              "items": {
-                "discriminator": {
-                  "mapping": {
-                    "buttons": "#/$defs/ButtonsBlock",
-                    "card": "#/$defs/CardBlock",
-                    "confirmation": "#/$defs/ConfirmationBlock",
-                    "form": "#/$defs/FormBlock"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/CardBlock"
-                  },
-                  {
-                    "$ref": "#/$defs/FormBlock"
-                  },
-                  {
-                    "$ref": "#/$defs/ButtonsBlock"
-                  },
-                  {
-                    "$ref": "#/$defs/ConfirmationBlock"
-                  }
-                ]
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Blocks"
-        },
-        "client_msg_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Client Msg Id"
-        },
-        "client_ts": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Client Ts"
-        },
-        "created_at": {
-          "title": "Created At",
-          "type": "string"
-        },
-        "delivered_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Delivered At"
-        },
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "meta": {
-          "$ref": "#/$defs/MessageMeta"
-        },
-        "role": {
-          "enum": [
-            "user",
-            "assistant"
-          ],
-          "title": "Role",
-          "type": "string"
-        },
-        "text": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Text"
-        },
-        "updated_at": {
-          "title": "Updated At",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "client_msg_id",
-        "role",
-        "text",
-        "blocks",
-        "attachments",
-        "meta",
-        "client_ts",
-        "delivered_at",
-        "created_at",
-        "updated_at"
-      ],
-      "title": "Message",
-      "type": "object"
-    },
-    "MessageMeta": {
-      "additionalProperties": false,
-      "description": "`source` is informational only \u2014 the client must not branch on it\n(architecture \u00a74: `heartbeat`/`reminder`/`notifier` are this agent's\nconcepts, not universal ones).",
-      "properties": {
-        "source": {
-          "enum": [
-            "user",
-            "agent",
-            "heartbeat",
-            "reminder",
-            "notifier"
-          ],
-          "title": "Source",
-          "type": "string"
-        }
-      },
-      "required": [
-        "source"
-      ],
-      "title": "MessageMeta",
-      "type": "object"
-    }
-  },
-  "properties": {
-    "message": {
-      "$ref": "#/$defs/Message"
-    },
-    "type": {
-      "const": "message",
-      "title": "Type",
-      "type": "string"
-    },
-    "update_id": {
-      "title": "Update Id",
-      "type": "integer"
-    }
-  },
-  "required": [
-    "update_id",
-    "type",
-    "message"
-  ],
-  "title": "BotUpdate",
-  "type": "object"
-}
-```
-
 ### ButtonsBlock
 
 ```json
@@ -1376,10 +796,28 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "title": "Action",
       "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
+        }
+      },
+      "required": [
+        "options"
+      ],
+      "title": "ButtonsPayload",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
+  "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
   "properties": {
     "kind": {
       "const": "buttons",
@@ -1387,12 +825,8 @@ the mounted routes under `backend/jarvis_app_backend`.
       "title": "Kind",
       "type": "string"
     },
-    "options": {
-      "items": {
-        "$ref": "#/$defs/Action"
-      },
-      "title": "Options",
-      "type": "array"
+    "payload": {
+      "$ref": "#/$defs/ButtonsPayload"
     },
     "state": {
       "anyOf": [
@@ -1405,10 +839,15 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "default": null,
       "title": "State"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
     }
   },
   "required": [
-    "options"
+    "summary",
+    "payload"
   ],
   "title": "ButtonsBlock",
   "type": "object"
@@ -1439,48 +878,65 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "title": "Action",
       "type": "object"
+    },
+    "CardPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtitle"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "CardPayload",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "actions": {
-      "items": {
-        "$ref": "#/$defs/Action"
-      },
-      "title": "Actions",
-      "type": "array"
-    },
-    "body": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Body"
-    },
-    "image": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Image"
-    },
     "kind": {
       "const": "card",
       "default": "card",
       "title": "Kind",
       "type": "string"
     },
-    "subtitle": {
+    "payload": {
+      "$ref": "#/$defs/CardPayload"
+    },
+    "state": {
       "anyOf": [
         {
           "type": "string"
@@ -1490,15 +946,16 @@ the mounted routes under `backend/jarvis_app_backend`.
         }
       ],
       "default": null,
-      "title": "Subtitle"
+      "title": "State"
     },
-    "title": {
-      "title": "Title",
+    "summary": {
+      "title": "Summary",
       "type": "string"
     }
   },
   "required": [
-    "title"
+    "summary",
+    "payload"
   ],
   "title": "CardBlock",
   "type": "object"
@@ -1533,42 +990,74 @@ the mounted routes under `backend/jarvis_app_backend`.
 
 ```json
 {
+  "$defs": {
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "callback_id": {
+          "title": "Callback Id",
+          "type": "string"
+        },
+        "cancel_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cancel Label"
+        },
+        "confirm_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirm Label"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
-  "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
   "properties": {
-    "callback_id": {
-      "title": "Callback Id",
-      "type": "string"
-    },
-    "cancel_label": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Cancel Label"
-    },
-    "confirm_label": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Confirm Label"
-    },
     "kind": {
       "const": "confirmation",
       "default": "confirmation",
       "title": "Kind",
       "type": "string"
+    },
+    "payload": {
+      "$ref": "#/$defs/ConfirmationPayload"
     },
     "state": {
       "anyOf": [
@@ -1586,10 +1075,15 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "default": null,
       "title": "State"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
     }
   },
   "required": [
-    "callback_id"
+    "summary",
+    "payload"
   ],
   "title": "ConfirmationBlock",
   "type": "object"
@@ -1619,31 +1113,62 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "title": "FormField",
       "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "fields": {
-      "items": {
-        "$ref": "#/$defs/FormField"
-      },
-      "title": "Fields",
-      "type": "array"
-    },
     "kind": {
       "const": "form",
       "default": "form",
       "title": "Kind",
       "type": "string"
     },
-    "submit_label": {
-      "default": "Submit",
-      "title": "Submit Label",
+    "payload": {
+      "$ref": "#/$defs/FormPayload"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State"
+    },
+    "summary": {
+      "title": "Summary",
       "type": "string"
     }
   },
   "required": [
-    "fields"
+    "summary",
+    "payload"
   ],
   "title": "FormBlock",
   "type": "object"
@@ -1874,7 +1399,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "ButtonsBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
+      "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
       "properties": {
         "kind": {
           "const": "buttons",
@@ -1882,12 +1407,8 @@ the mounted routes under `backend/jarvis_app_backend`.
           "title": "Kind",
           "type": "string"
         },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
+        "payload": {
+          "$ref": "#/$defs/ButtonsPayload"
         },
         "state": {
           "anyOf": [
@@ -1900,15 +1421,74 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ButtonsBlock",
+      "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
         }
       },
       "required": [
         "options"
       ],
-      "title": "ButtonsBlock",
+      "title": "ButtonsPayload",
       "type": "object"
     },
     "CardBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "card",
+          "default": "card",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CardPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "CardBlock",
+      "type": "object"
+    },
+    "CardPayload": {
       "additionalProperties": false,
       "properties": {
         "actions": {
@@ -1930,24 +1510,6 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Body"
         },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
         "subtitle": {
           "anyOf": [
             {
@@ -1968,13 +1530,58 @@ the mounted routes under `backend/jarvis_app_backend`.
       "required": [
         "title"
       ],
-      "title": "CardBlock",
+      "title": "CardPayload",
       "type": "object"
     },
     "ConfirmationBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
       "properties": {
+        "kind": {
+          "const": "confirmation",
+          "default": "confirmation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ConfirmationPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "cancelled",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ConfirmationBlock",
+      "type": "object"
+    },
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
         "callback_id": {
           "title": "Callback Id",
           "type": "string"
@@ -2003,20 +1610,41 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Confirm Label"
         },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    },
+    "FormBlock": {
+      "additionalProperties": false,
+      "properties": {
         "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
+          "const": "form",
+          "default": "form",
           "title": "Kind",
           "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/FormPayload"
         },
         "state": {
           "anyOf": [
             {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
               "type": "string"
             },
             {
@@ -2025,38 +1653,15 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
         },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
+        "summary": {
+          "title": "Summary",
           "type": "string"
         }
       },
       "required": [
-        "fields"
+        "summary",
+        "payload"
       ],
       "title": "FormBlock",
       "type": "object"
@@ -2078,6 +1683,29 @@ the mounted routes under `backend/jarvis_app_backend`.
         "label"
       ],
       "title": "FormField",
+      "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
       "type": "object"
     },
     "MessageMeta": {
@@ -2261,6 +1889,615 @@ the mounted routes under `backend/jarvis_app_backend`.
 }
 ```
 
+### MessageUpdate
+
+```json
+{
+  "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "description": "A tappable option: `card.actions` and `buttons.options` both use this\nshape, so a card's own buttons and a bare `buttons` block behave the same\nway once tapped.",
+      "properties": {
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "label"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "One uploaded blob, as it rides `attachments[]` on a `Message` or the\nresponse of `POST /v1/attachments`.",
+      "properties": {
+        "blur_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blur Preview"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "audio",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "mime_type",
+        "size"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
+    "ButtonsBlock": {
+      "additionalProperties": false,
+      "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
+      "properties": {
+        "kind": {
+          "const": "buttons",
+          "default": "buttons",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ButtonsPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ButtonsBlock",
+      "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
+        }
+      },
+      "required": [
+        "options"
+      ],
+      "title": "ButtonsPayload",
+      "type": "object"
+    },
+    "CardBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "card",
+          "default": "card",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CardPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "CardBlock",
+      "type": "object"
+    },
+    "CardPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtitle"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "CardPayload",
+      "type": "object"
+    },
+    "ConfirmationBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "confirmation",
+          "default": "confirmation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ConfirmationPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "cancelled",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ConfirmationBlock",
+      "type": "object"
+    },
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "callback_id": {
+          "title": "Callback Id",
+          "type": "string"
+        },
+        "cancel_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cancel Label"
+        },
+        "confirm_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirm Label"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    },
+    "FormBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "form",
+          "default": "form",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/FormPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "FormBlock",
+      "type": "object"
+    },
+    "FormField": {
+      "additionalProperties": false,
+      "properties": {
+        "field_id": {
+          "title": "Field Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_id",
+        "label"
+      ],
+      "title": "FormField",
+      "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
+      "type": "object"
+    },
+    "Message": {
+      "description": "The persistent unit; `id` is the sync cursor (architecture \u00a75).",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "blocks": {
+          "anyOf": [
+            {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "buttons": "#/$defs/ButtonsBlock",
+                    "card": "#/$defs/CardBlock",
+                    "confirmation": "#/$defs/ConfirmationBlock",
+                    "form": "#/$defs/FormBlock"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/FormBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ButtonsBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ConfirmationBlock"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Blocks"
+        },
+        "client_msg_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Client Msg Id"
+        },
+        "client_ts": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Client Ts"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "delivered_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Delivered At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "meta": {
+          "$ref": "#/$defs/MessageMeta"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Text"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "client_msg_id",
+        "role",
+        "text",
+        "blocks",
+        "attachments",
+        "meta",
+        "client_ts",
+        "delivered_at",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "MessageMeta": {
+      "additionalProperties": false,
+      "description": "`source` is informational only \u2014 the client must not branch on it\n(architecture \u00a74: `heartbeat`/`reminder`/`notifier` are this agent's\nconcepts, not universal ones).",
+      "properties": {
+        "source": {
+          "enum": [
+            "user",
+            "agent",
+            "heartbeat",
+            "reminder",
+            "notifier"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "MessageMeta",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "message": {
+      "$ref": "#/$defs/Message"
+    },
+    "type": {
+      "const": "message",
+      "title": "Type",
+      "type": "string"
+    },
+    "update_id": {
+      "title": "Update Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "update_id",
+    "type",
+    "message"
+  ],
+  "title": "MessageUpdate",
+  "type": "object"
+}
+```
+
 ### MessagesPage
 
 ```json
@@ -2384,7 +2621,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "ButtonsBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
+      "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
       "properties": {
         "kind": {
           "const": "buttons",
@@ -2392,12 +2629,8 @@ the mounted routes under `backend/jarvis_app_backend`.
           "title": "Kind",
           "type": "string"
         },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
+        "payload": {
+          "$ref": "#/$defs/ButtonsPayload"
         },
         "state": {
           "anyOf": [
@@ -2410,15 +2643,74 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ButtonsBlock",
+      "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
         }
       },
       "required": [
         "options"
       ],
-      "title": "ButtonsBlock",
+      "title": "ButtonsPayload",
       "type": "object"
     },
     "CardBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "card",
+          "default": "card",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CardPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "CardBlock",
+      "type": "object"
+    },
+    "CardPayload": {
       "additionalProperties": false,
       "properties": {
         "actions": {
@@ -2440,24 +2732,6 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Body"
         },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
         "subtitle": {
           "anyOf": [
             {
@@ -2478,13 +2752,58 @@ the mounted routes under `backend/jarvis_app_backend`.
       "required": [
         "title"
       ],
-      "title": "CardBlock",
+      "title": "CardPayload",
       "type": "object"
     },
     "ConfirmationBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
       "properties": {
+        "kind": {
+          "const": "confirmation",
+          "default": "confirmation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ConfirmationPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "cancelled",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ConfirmationBlock",
+      "type": "object"
+    },
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
         "callback_id": {
           "title": "Callback Id",
           "type": "string"
@@ -2513,20 +2832,41 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Confirm Label"
         },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    },
+    "FormBlock": {
+      "additionalProperties": false,
+      "properties": {
         "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
+          "const": "form",
+          "default": "form",
           "title": "Kind",
           "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/FormPayload"
         },
         "state": {
           "anyOf": [
             {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
               "type": "string"
             },
             {
@@ -2535,38 +2875,15 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
         },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
+        "summary": {
+          "title": "Summary",
           "type": "string"
         }
       },
       "required": [
-        "fields"
+        "summary",
+        "payload"
       ],
       "title": "FormBlock",
       "type": "object"
@@ -2588,6 +2905,29 @@ the mounted routes under `backend/jarvis_app_backend`.
         "label"
       ],
       "title": "FormField",
+      "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
       "type": "object"
     },
     "Message": {
@@ -2793,7 +3133,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "ButtonsBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do; `state` is the\nselected `action_id` once resolved, or `None` while the block is still\nlive.",
+      "description": "`state` is the selected `action_id` once resolved \u2014 an open string\nrather than an enum, because the values are whatever the author of this\nblock's `options` chose.",
       "properties": {
         "kind": {
           "const": "buttons",
@@ -2801,12 +3141,8 @@ the mounted routes under `backend/jarvis_app_backend`.
           "title": "Kind",
           "type": "string"
         },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/Action"
-          },
-          "title": "Options",
-          "type": "array"
+        "payload": {
+          "$ref": "#/$defs/ButtonsPayload"
         },
         "state": {
           "anyOf": [
@@ -2819,15 +3155,74 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ButtonsBlock",
+      "type": "object"
+    },
+    "ButtonsPayload": {
+      "additionalProperties": false,
+      "description": "No prose field exists here \u2014 see the module docstring. `options`\nabsorbs what a separate `choice` kind would otherwise do.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Options",
+          "type": "array"
         }
       },
       "required": [
         "options"
       ],
-      "title": "ButtonsBlock",
+      "title": "ButtonsPayload",
       "type": "object"
     },
     "CardBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "card",
+          "default": "card",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CardPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "CardBlock",
+      "type": "object"
+    },
+    "CardPayload": {
       "additionalProperties": false,
       "properties": {
         "actions": {
@@ -2849,24 +3244,6 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Body"
         },
-        "image": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Image"
-        },
-        "kind": {
-          "const": "card",
-          "default": "card",
-          "title": "Kind",
-          "type": "string"
-        },
         "subtitle": {
           "anyOf": [
             {
@@ -2887,13 +3264,58 @@ the mounted routes under `backend/jarvis_app_backend`.
       "required": [
         "title"
       ],
-      "title": "CardBlock",
+      "title": "CardPayload",
       "type": "object"
     },
     "ConfirmationBlock": {
       "additionalProperties": false,
-      "description": "No prose field exists here either \u2014 the question this block asks\nlives in the message's own `text`, never in the block.",
       "properties": {
+        "kind": {
+          "const": "confirmation",
+          "default": "confirmation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ConfirmationPayload"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "cancelled",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "payload"
+      ],
+      "title": "ConfirmationBlock",
+      "type": "object"
+    },
+    "ConfirmationPayload": {
+      "additionalProperties": false,
+      "description": "`body` carries the question this block asks \u2014 required, since nothing\nelse on the block carries it. `title` is optional and renders no row at\nall when absent; it exists for the rarer confirmation whose question\nneeds a heading above detail. The two labels are what vary the button\nwording between one confirmation and another.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
         "callback_id": {
           "title": "Callback Id",
           "type": "string"
@@ -2922,20 +3344,41 @@ the mounted routes under `backend/jarvis_app_backend`.
           "default": null,
           "title": "Confirm Label"
         },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "callback_id",
+        "body"
+      ],
+      "title": "ConfirmationPayload",
+      "type": "object"
+    },
+    "FormBlock": {
+      "additionalProperties": false,
+      "properties": {
         "kind": {
-          "const": "confirmation",
-          "default": "confirmation",
+          "const": "form",
+          "default": "form",
           "title": "Kind",
           "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/FormPayload"
         },
         "state": {
           "anyOf": [
             {
-              "enum": [
-                "confirmed",
-                "cancelled",
-                "expired"
-              ],
               "type": "string"
             },
             {
@@ -2944,38 +3387,15 @@ the mounted routes under `backend/jarvis_app_backend`.
           ],
           "default": null,
           "title": "State"
-        }
-      },
-      "required": [
-        "callback_id"
-      ],
-      "title": "ConfirmationBlock",
-      "type": "object"
-    },
-    "FormBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/FormField"
-          },
-          "title": "Fields",
-          "type": "array"
         },
-        "kind": {
-          "const": "form",
-          "default": "form",
-          "title": "Kind",
-          "type": "string"
-        },
-        "submit_label": {
-          "default": "Submit",
-          "title": "Submit Label",
+        "summary": {
+          "title": "Summary",
           "type": "string"
         }
       },
       "required": [
-        "fields"
+        "summary",
+        "payload"
       ],
       "title": "FormBlock",
       "type": "object"
@@ -2998,10 +3418,33 @@ the mounted routes under `backend/jarvis_app_backend`.
       ],
       "title": "FormField",
       "type": "object"
+    },
+    "FormPayload": {
+      "additionalProperties": false,
+      "description": "`fields` carries a label and an id and nothing else \u2014 there is no field\n*type*, no required flag, no default. That is the whole taxonomy, and it\nstays this small until a renderer forces the question: a type nothing can\ndraw is a promise the system cannot keep.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "submit_label": {
+          "default": "Submit",
+          "title": "Submit Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "FormPayload",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "`POST /v1/messages`'s body. `client_msg_id` is the idempotency key \u2014\na replay returns the row it already produced rather than a new one.",
+  "description": "`POST /v1/messages`'s body. `client_msg_id` is the idempotency key \u2014\na replay returns the row it already produced rather than a new one.\n\n`blocks` carries at most one entry \u2014 every kind is interactive\n(architecture \u00a75), and `{message_id, action_id}` is only an unambiguous\naddress for a tap when a message carries at most one block. A second\nblock goes out as a second message.",
   "properties": {
     "attachment_ids": {
       "items": {

@@ -16,7 +16,12 @@ import uuid
 from typing import Awaitable, Callable
 
 from gateway import outbox as outbox_mod
-from gateway.confirmation.base import Confirmation, ConfirmationUI, PendingAction
+from gateway.confirmation.base import (
+    Confirmation,
+    ConfirmationOutcome,
+    ConfirmationUI,
+    PendingAction,
+)
 from gateway.outbox import Outbox
 
 logger = logging.getLogger(__name__)
@@ -132,15 +137,18 @@ class InMemoryConfirmationStore(Confirmation):
             action = self._pending.pop(callback_id, None)
 
         if action is None:
-            await self._ui.edit_outcome(
+            await self._apply_outcome(
                 callback_id,
+                ConfirmationOutcome.ALREADY_HANDLED,
                 "⚠️ This confirmation has already been handled or has expired.",
             )
             return
 
         desc = action.description
         if not confirmed:
-            await self._ui.edit_outcome(callback_id, f"❌ {action.result_cancel_text}")
+            await self._apply_outcome(
+                callback_id, ConfirmationOutcome.CANCELLED, f"❌ {action.result_cancel_text}"
+            )
             await self._deliver_outcome(
                 f"[System: The user cancelled the requested action. Task: {desc}]"
             )
@@ -148,8 +156,10 @@ class InMemoryConfirmationStore(Confirmation):
 
         try:
             result = await action.action_fn()
-            await self._ui.edit_outcome(
-                callback_id, f"✅ {action.result_ok_text}\n{result}"
+            await self._apply_outcome(
+                callback_id,
+                ConfirmationOutcome.CONFIRMED,
+                f"✅ {action.result_ok_text}\n{result}",
             )
             feedback = (
                 f"[System: The user confirmed the requested action. "
@@ -157,13 +167,26 @@ class InMemoryConfirmationStore(Confirmation):
             )
         except Exception as e:
             logger.exception("Confirmed action raised")
-            await self._ui.edit_outcome(callback_id, f"❌ Action failed: {e}")
+            await self._apply_outcome(
+                callback_id, ConfirmationOutcome.FAILED, f"❌ Action failed: {e}"
+            )
             feedback = (
                 f"[System: The confirmed action failed. "
                 f"Task: {desc}. Error: {e}]"
             )
 
         await self._deliver_outcome(feedback)
+
+    async def _apply_outcome(
+        self, callback_id: str, outcome: ConfirmationOutcome, outcome_text: str
+    ) -> None:
+        """Best-effort dispatch to the UI, isolated from the rest of resolve()'s
+        control flow — a channel's outcome delivery failing must never skip the
+        conversational follow-up that comes after it."""
+        try:
+            await self._ui.apply_outcome(callback_id, outcome, outcome_text)
+        except Exception:
+            logger.exception("UI.apply_outcome failed for %s", callback_id)
 
     async def _deliver_outcome(self, system_text: str) -> None:
         """Hand the neutral outcome to the domain for a conversational
