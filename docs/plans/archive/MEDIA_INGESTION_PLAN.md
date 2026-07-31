@@ -14,8 +14,9 @@ missing-handler defect this plan fixed for documents, recorded in slice 5 and no
 **Touches:** `agent.py` (model boundary, channel-agnostic), `gateway/channels/jarvis_app/` and
 `gateway/channels/telegram/` (kind mapping, channel-owned), `docs/architecture/GATEWAY.md`
 (neutral vocabulary).
-**Companion:** [../app-plans/EXECUTION_PLAN.md](../app-plans/EXECUTION_PLAN.md) — Stage C shipped the
+**Companion:** [app-plans/EXECUTION_PLAN.md](app-plans/EXECUTION_PLAN.md) — Stage C shipped the
 transport this plan builds on (C4 inbound media); `file`-kind ingestion was deferred out of it.
+(Both now archived, 2026-07-31 — `app-plans/` moved alongside this file.)
 
 ---
 
