@@ -1,21 +1,33 @@
 # App channel — execution plan
 
-**Status (2026-07-31):** Stage C merged to main (PR #52) — C1–C4, C6, `/help` fix, and the neutral
-media-kind resolution follow-up all landed. Real `file`-kind ingestion (PDF/video, #51) also shipped
-separately; see [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md). Stages A + B
-merged (#47, #49). **C5/B2 — `AppConfirmationUI`** now implemented: the hub shipped the missing wire
-piece (`contract_version` `3b3a48f330f09a39` → **`f605f1ced7bdb356`** — new `POST /v1/actions`, the
-`{kind, summary, state, payload}` block envelope, and a state-only `PATCH`), so the app channel now has
-its own real confirm/cancel flow instead of falling back to Telegram. Implementation details in the
-**C5/B2** entry below and in `docs/architecture/GATEWAY.md`'s Plane 3 section (`ConfirmationUI`'s
-`edit_outcome` was replaced with a single `apply_outcome(callback_id, outcome, outcome_text)` —
-an earlier two-method split was reviewed and collapsed after landing). **Remaining:** restart staging
-→ on-device confirm/cancel verify pass (see *Verification* under C5/B2) → Telegram regression +
-`code-review` → commit → PR.
-**Single source of truth.** Absorbs and replaces the former `APP_CHANNEL_PLAN.md` (index),
-`02_MULTI_CHANNEL_SUPPORT.md`, and `03_APP_CHANNEL.md` (now in `archive/`). The only other live
-material is the app author's pinned handover under `jarvis-app/` — **imported verbatim, not ours
-to edit.**
+**Status:** ✅ **SHIPPED** — Stages A–C plus C5/B2 all landed; archived 2026-07-31.
+**Verified:** on-device confirm/cancel/expiry + Telegram regression passed 2026-07-31 (C5/B2); C1
+verified live 2026-07-24. Contract pinned `f605f1ced7bdb356`.
+**Left open, by decision:** Stage D (rich blocks, streaming chips, apps) was never planned — see the
+Stage D section below, kept only as the record of that decision, not a live checklist. A future
+planning effort begins when the hub ships a phone-renderable capability; it is not a resumption of
+this document. Deferred cleanups tracked in issues #43/#44/#48. Raised with the app author for
+tracking, not blocking: the queue-epoch hub-signal risk (offset mis-ack across a queue rebuild).
+The cross-instance isolation ceiling (Radarr/Sonarr/Jellyseerr/Arbox/search reachable from any
+instance) is tracked in **#67**.
+**Reorg note:** `jarvis-app/contract.md` — the one piece of this material still actively consulted
+(re-synced against the live hub as recently as the C5/B2 work) — moved to
+[`docs/architecture/channels/jarvis-app/contract.md`](../../../architecture/channels/jarvis-app/contract.md)
+rather than archiving with the rest. `fake_agent.py` and `original_app_plan.md` archived alongside
+this document (see the Sources section) — both had already served their purpose (the reference poll
+loop C1 was built against; the design decisions now absorbed into `GATEWAY.md` and the code itself).
+**Date:** started 2026-07-12, shipped 2026-07-31.
+**Touches:** `gateway/channels/jarvis_app/`, `gateway/confirmation/`, `gateway/factory.py`,
+`docs/architecture/GATEWAY.md`.
+
+---
+
+*Below is the plan as it stood while live — kept as the historical record, not a live checklist.*
+
+**Single source of truth (historical).** Absorbed and replaced the former `APP_CHANNEL_PLAN.md`
+(index), `02_MULTI_CHANNEL_SUPPORT.md`, and `03_APP_CHANNEL.md` (in `archive/`, alongside this file
+now). The only other live material was the app author's pinned handover under `jarvis-app/` —
+**imported verbatim, not ours to edit.**
 
 **Goal:** ship the custom app as a second channel beside Telegram, without the Telegram loop — the
 owner's day-to-day assistant — ever being the test surface. Work is sequenced by **real
@@ -37,7 +49,7 @@ stay in Stage D (still no phone renderer).
 ## Checklist
 
 **Landed** (on `main`)
-- [x] Staging environment + deploy discipline — `deploy.sh`/`rollback.sh` (archived `../archive/STAGING_AND_DEPLOY.md`)
+- [x] Staging environment + deploy discipline — `deploy.sh`/`rollback.sh` (archived `../STAGING_AND_DEPLOY.md`)
 - [x] Generic `build_stack(name)` factory + neutral `Stack` protocol (PR #42)
 - [x] Channel registry + `default_outbox()`/`default_owner_thread_id()` resolve through it (PR #45)
 - [x] Per-channel origin-scoped confirmations — prompt + ack on origin, no broadcast (PR #45)
@@ -68,7 +80,7 @@ stay in Stage D (still no phone renderer).
 - [x] C4 — inbound media: router downloads `Message.attachments` → app `media_cache` → `InboundMessage.attachments` → Gemini (commit `d3e986e`). *Verified* upload→download byte-exact + `_handle` cases; *pending* an on-device photo→describe after restart
 - [x] C4 review follow-ups (commit `bee778c`): reject malformed `att_` ids before a filesystem path + basename guard; `media_cache.save` inside the per-attachment try; retrieval note instead of an empty turn when every download fails
 - [x] §4 — image upload metadata (commit `0783aeb`): `upload_attachment` sends optional `width`/`height`/`blur_preview`; the channel computes them for images via Pillow (`Pillow==12.3.0` added, import guarded). App reserves aspect ratio (no reflow) + shows a blur-up placeholder. `duration_ms` omitted (no outbound-audio producer). *Verified* the hub stored `w/h/blur_preview`
-- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**, planned in [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)
+- [x] `file`-kind honest fallback (commit `23c347d`): the agent surfaces any unreadable kind as text rather than silently dropping it; real PDF/video ingestion tracked in **#51**, planned in [../MEDIA_INGESTION_PLAN.md](../MEDIA_INGESTION_PLAN.md)
 - [x] C5/B2 — **`AppConfirmationUI` landed (2026-07-31)**, once the hub shipped `POST /v1/actions` +
   the `{kind, summary, state, payload}` block envelope + a state-only `PATCH` (see the hub-skew note
   below for the new pin). No throwaway placeholder was built — the deferral held until the app's real
@@ -363,7 +375,7 @@ now" gate:
   degradation (the convention `Outbox._log` uses at `outbox.py:115`) can land with the capability
   work (#50).
 - **Inbound `file`-kind ingestion (#51)** — **planned in
-  [../archive/MEDIA_INGESTION_PLAN.md](../archive/MEDIA_INGESTION_PLAN.md)** (2026-07-29); that doc supersedes this
+  [../MEDIA_INGESTION_PLAN.md](../MEDIA_INGESTION_PLAN.md)** (2026-07-29); that doc supersedes this
   sketch. C4 downloads `file`-kind attachments (the hub's `file` bundles PDF + video by mime), but
   the agent can't yet feed them to the model — it emits an honest "can't read yet" note. **No longer
   gated:** the app composer *can* send a video as a file. Two corrections to the sketch above: the
@@ -379,7 +391,7 @@ now" gate:
 - **4c — durable cross-channel context** (open question 1). Injection carries only *today's*
   sibling chat; beyond that, continuity depends on the daily log or a memory write. Not
   app-specific — the same time-bound governs heartbeat↔user today — so treat it on its own terms,
-  alongside `../CONTEXT_HANDLING_PLAN.md` (a wider window costs tokens).
+  alongside `../../CONTEXT_HANDLING_PLAN.md` (a wider window costs tokens).
 - **Upstream honest-boundary deferrals:** B5 streaming chips, B6 apps. Each is real and specified in
   `jarvis-app/original_app_plan.md`; neither is end-to-end testable today. (B1.6 media inbound
   graduated to **Stage C4** — the phone sends attachments now. B2 `AppConfirmationUI` — the
@@ -445,7 +457,16 @@ channels. **Deferred cleanups** (tracked, not blocking): loop-bridge misfiled in
 
 ---
 
-## Sources — the app author's handover (`jarvis-app/`, verbatim, not ours to edit)
+## Sources — the app author's handover (verbatim, not ours to edit)
+
+**Reorg note (2026-07-31):** these three files lived together under `jarvis-app/` while this plan
+was live. `contract.md` is still actively consulted — re-synced against the live hub as recently as
+the C5/B2 work — so it moved to
+[`docs/architecture/channels/jarvis-app/contract.md`](../../../architecture/channels/jarvis-app/contract.md)
+rather than archiving. `fake_agent.py` and `original_app_plan.md` had already served their purpose
+(the reference poll loop the router was built against; design decisions now absorbed into
+`GATEWAY.md` and the code itself) and archived alongside this document, at
+`jarvis-app/fake_agent.py` / `jarvis-app/original_app_plan.md` in this same directory.
 
 | File | What it is |
 |---|---|

@@ -16,7 +16,7 @@ of them start. Technical detail and findings live in the step documents.
 
 | # | Step | Status | Document | What it touches |
 |---|---|---|---|---|
-| 1 | Staging environment | ✅ **done 2026-07-23** | [../archive/STAGING_AND_DEPLOY.md](../archive/STAGING_AND_DEPLOY.md) | `config.py`, `main.py`, path constants; a second service |
+| 1 | Staging environment | ✅ **done 2026-07-23** | [../../STAGING_AND_DEPLOY.md](../../STAGING_AND_DEPLOY.md) | `config.py`, `main.py`, path constants; a second service |
 | 2 | Multi-channel support | planning | `02_MULTI_CHANNEL_SUPPORT.md` | **Existing** gateway/agent code — the owner-addressing seam |
 | 3 | Adding the new channel | planning | `03_APP_CHANNEL.md` | **New** `gateway/channels/app/` |
 
@@ -92,7 +92,7 @@ useful — this table is how to read one in terms of the other.
 Track A's hub **exists and runs**, and per the app author B1, B1.5 and B3 are implementable now.
 What stands in the way:
 
-1. ~~**Staging**~~ — ✅ **done** ([../archive/STAGING_AND_DEPLOY.md](../archive/STAGING_AND_DEPLOY.md), completed
+1. ~~**Staging**~~ — ✅ **done** ([../../STAGING_AND_DEPLOY.md](../../STAGING_AND_DEPLOY.md), completed
    2026-07-23). The staging bot is live against its own root, so every phase now verifies against
    the live agent without touching prod state. One hub-side consequence still stands (that plan's
    open question 5): the app channel is *outbound*, so it binds no port and cannot collide the way
