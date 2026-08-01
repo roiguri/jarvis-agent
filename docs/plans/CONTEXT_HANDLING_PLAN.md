@@ -6,6 +6,7 @@
 **Companions:**
 - [HEARTBEAT_GATING_PLAN.md](archive/HEARTBEAT_GATING_PLAN.md) — WS1 below; shipped & verified 2026-07-13, archived.
 - [TEST_HARNESS_PLAN.md](TEST_HARNESS_PLAN.md) — the **verification instrument** for this roadmap. Three of its four tests are the acceptance criteria for WS2, WS4 and WS7; unstarted.
+- [WS2_TIME_GROUNDING_PLAN.md](WS2_TIME_GROUNDING_PLAN.md) — WS2's **execution plan**: four sliced, independently revertable commits. WS2 below stays the reasoning and the measurements; that file is what gets worked from.
 
 ---
 
@@ -344,6 +345,9 @@ stable prefixes reduce the coordination pressure that motivated it.
 
 ## WS2 — Time grounding + cache-stable prompt (rank 3; **rewritten 2026-08-01**)
 
+> **Execution lives in [WS2_TIME_GROUNDING_PLAN.md](WS2_TIME_GROUNDING_PLAN.md)** — four sliced
+> commits with per-slice verification. This section is the reasoning and the measurements behind it.
+
 > **Two prior sketches are withdrawn.** The original ("move the clock to the last line of the
 > system prompt") was overturned by a 2026-07-13 design pass whose draft was never committed. That
 > pass's own conclusion — "timezone only, no clock anywhere" — is *also* now superseded: it was
@@ -447,8 +451,10 @@ design that has since been refined.
 2. **Stamp each turn's input, from that turn's own fixed time.** Prefix
    `[Sat 2026-08-01 09:14 +03] ` — day-of-week included per the note above; **numeric offset, not
    `%Z`** (see §2.4). Applied in `ask_jarvis` (`agent.py`), which is the single entry to a turn and
-   already sets up the ContextVars and telemetry — so the four call sites (Telegram, heartbeat tick,
-   confirmation-outcome replies, `ask_jarvis_once`) cannot each forget. Lands on both message shapes,
+   already sets up the ContextVars and telemetry — so its three call sites (inbound channel message
+   `main.py:66`, confirmation-outcome reply `main.py:181`, heartbeat tick `heartbeat.py:87`) cannot
+   each forget. `ask_jarvis_once` (`agent.py:881`) is **not** in scope: it bypasses the agent loop
+   entirely — no system prompt, no tools, no history. Lands on both message shapes,
    since `user_input` becomes either a bare string or `content[0]["text"]` (`agent.py:657`).
    `main.py:58` writes the raw text to `chat_history.jsonl` *before* calling `ask_jarvis`, so the
    chat log stays clean and unstamped — it has its own `ts`.
