@@ -6,6 +6,7 @@
 **Companions:**
 - [HEARTBEAT_GATING_PLAN.md](archive/HEARTBEAT_GATING_PLAN.md) — WS1 below; shipped & verified 2026-07-13, archived.
 - [TEST_HARNESS_PLAN.md](TEST_HARNESS_PLAN.md) — the **verification instrument** for this roadmap. Three of its four tests are the acceptance criteria for WS2, WS4 and WS7; unstarted.
+- [WS2_TIME_GROUNDING_PLAN.md](WS2_TIME_GROUNDING_PLAN.md) — WS2's **execution plan**: four sliced, independently revertable commits. WS2 below stays the reasoning and the measurements; that file is what gets worked from.
 
 ---
 
@@ -46,9 +47,11 @@ WS1 did not move per-tick input — it drifted *up*, from ~68k in early July to 
 no-op tick at **214k**. Inside a tick, 63% of each call is re-sent message history and 18% is
 accrued tool results; the whole system prompt is 10%. A representative tick spends **9 tool calls
 and 5 sequential LLM round-trips to make one 785ms API call** — the rest is bookkeeping the harness
-asks for and then discards. Separately, the system prompt's first line is a per-minute timestamp,
-which costs cache hits *within* a single turn (64% of heartbeat turns cross a minute boundary
-mid-turn), and memory recall still requires knowing a file's exact name.
+asks for and then discards. Separately, the system prompt's first line is a per-minute timestamp
+rebuilt on every LLM call, so a turn's own notion of "now" moves mid-reasoning — a correctness
+problem before a cost one (WS2, rewritten 2026-08-01; the cache loss it also causes is ~5% of input,
+not the 64%-of-turns figure this paragraph previously carried). Memory recall still requires knowing
+a file's exact name.
 
 **Plan.** Eight workstreams, ordered below by **measured impact**. WS1 is done. WS8 and WS7 own the
 spend and lead; WS2 is cheap and multiplies everything; WS3 is rescoped to what its method can
@@ -58,7 +61,7 @@ actually deliver; WS5/WS6 are a capability track.
 |---|---|---|---|---|---|
 | 1 | **WS8** | **Heartbeat tick ceremony** | round-trips per tick | small (2 slices) | ~3.8 → ~1 LLM call/tick, on **every** task; 1a shipped & GREEN |
 | 2 | **WS7** | **Conversation compaction** — *unparked* | the 63% + 18% | medium (cheap half is ~20 lines) | Per-call input; owns the largest single line item |
-| 3 | WS2 | Cache-stable prompt + time grounding | intra-turn cache loss, both scopes | small-medium | Multi-call turns stop losing their own prefix. **Not** cross-tick caching — see the corrections in WS2 |
+| 3 | WS2 | **Time grounding** + cache-stable prompt | a turn's "now" moving mid-turn; the sliding 50-cap | small-medium | Correctness first (stable per-turn clock). Its cost case is **item 4, trim hysteresis** — ~$6.65/mo; the clock itself is ~$1/mo. See WS2 §2.1 |
 | 4 | WS4 | Bootstrap context budget | unbounded prompt growth | small | Backstop, not a win: caps injected copies |
 | 5 | WS5 | Memory & history search | recall capability | medium | "What did we discuss last week?" becomes answerable |
 | 6 | WS6 | Memory size pressure | long-term prompt creep | small | USER.md/MEMORY.md stay curated |
@@ -340,73 +343,227 @@ stable prefixes reduce the coordination pressure that motivated it.
 
 ---
 
-## WS2 — Cache-stable prompt + time grounding (rank 3)
+## WS2 — Time grounding + cache-stable prompt (rank 3; **rewritten 2026-08-01**)
 
-> **The original sketch here — "move the clock to the last line of the system prompt" — was wrong,
-> and is withdrawn.** A WS2 design pass on 2026-07-13 researched Gemini's caching behaviour and
-> overturned it on three points. That pass produced a draft (`CACHE_STABLE_PROMPT_PLAN.md`) that was
-> never committed and no longer exists on disk or in git, so its findings are recorded here to stop
-> them being lost a second time. **They predate this file's other measurements and have not been
-> re-verified against Gemini's current docs — do that first if this workstream is picked up.**
+> **Execution lives in [WS2_TIME_GROUNDING_PLAN.md](WS2_TIME_GROUNDING_PLAN.md)** — four sliced
+> commits with per-slice verification. This section is the reasoning and the measurements behind it.
 
-**The three corrections.**
+> **Two prior sketches are withdrawn.** The original ("move the clock to the last line of the
+> system prompt") was overturned by a 2026-07-13 design pass whose draft was never committed. That
+> pass's own conclusion — "timezone only, no clock anywhere" — is *also* now superseded: it was
+> reconstructed from memory, and a fresh read of the reference implementation shows it moved on.
+> What follows is measured against production on 2026-08-01 and verified against OpenClaw at
+> HEAD `aa743c9f` (2026-08-01), not recalled.
 
-1. **The clock must leave the system prompt entirely — tail placement does not work.** Gemini's cache
-   prefix spans the *whole request* (`system_instruction` + tools + history), not the system prompt
-   alone. So a per-minute clock anywhere in the system prompt sits *ahead of* the history in that
-   prefix and poisons the entire history cache — the 63% (§0.1) — not just its own line. "Last line
-   of the system prompt" is still upstream of everything that matters.
-2. **Implicit-cache TTL is ~minutes, so cross-tick hits are cold regardless of layout.** Hourly
-   heartbeat ticks will never hit each other's cache no matter how stable the prefix is. The real
-   wins are **intra-turn** (measured: 64% of heartbeat turns cross a minute boundary mid-turn today,
-   so a same-turn round-trip loses its own prefix) and **user conversation bursts**. This shrinks
-   WS2's claim: it is not "cross-turn caching for everything", it is "stop breaking the cache inside
-   a single turn."
-3. **The 50-message cap breaks the history prefix every turn, independently of the clock.** Both
-   threads sit *at* `MAX_MESSAGES`, and `_add_and_trim` (`agent.py:80`) hard-slices to the last 50 on
-   every turn, so the history head shifts each turn and the prefix moves with it. Fixing the clock
-   without this leaves the cache broken anyway.
+**This workstream is now justified on correctness first and cost second.** The clock is rebuilt on
+*every* LLM call (`build_system_prompt` is called inside `_llm_node`, `agent.py:483`), so within one
+turn call 1 reads `06:14` and call 4 reads `06:15`. The model's "now" moves underneath it
+mid-reasoning, on the same turn that may be computing a reminder's `fire_at`. Nothing would ever
+flag that. The cache win is real but smaller than §0.1 implied (below).
 
-**Design — the OpenClaw/hermes-agent convergent pattern.**
+### 2.0 Measured, 2026-08-01 (prod, 7-day window to 2026-08-01 06:45Z)
 
-1. **Timezone-only in the system prompt.** No live clock. This is what both references do, and
-   correction 1 is why they do it.
-2. **Stamp inbound user messages at arrival:** a `[Day YYYY-MM-DD HH:MM]` prefix fixed *when the
-   message arrives*, so it is byte-stable forever inside the history and gives the model its
-   temporal grounding where it does no cache damage.
-3. **Fresh `Current time:` line in each heartbeat tick imperative** — the tick's own user-message,
-   not the system prompt. Heartbeat/reminder reasoning keeps the clock it needs.
-4. **Trim hysteresis in `_add_and_trim`:** trim to a low-water mark only once past a high-water mark,
-   instead of slicing to exactly 50 every turn. The head then holds still for many turns.
-5. **Reorder the remaining system prompt stable → volatile.** Stable: `[Active scope: …]` → SOUL.md →
-   AGENTS.md → USER.md → scope framing (+ `prompts/heartbeat.md`) → skill list. Volatile tail:
+| | heartbeat | user |
+|---|---|---|
+| turns / LLM calls | 129 / 612 | 30 / 141 |
+| calls per turn | 4.74 | 4.70 |
+| input | 9.99M | 4.21M |
+| `cache_read / input` | **35.5%** | **49.5%** |
+| cost at current `MODEL_PRICES` | $16.65/mo | $6.23/mo |
+
+Cached input bills at `$0.05/M` against `$0.50/M` — a **90% discount**, so cache rate is a larger
+lever than this doc previously credited. For a 5-call turn the ceiling is roughly (N−1)/N ≈ 80%;
+heartbeat sits at 35.5%. Closing that to ~70% is worth **~$6.65/mo** of a **$22.87/mo** total.
+
+**The clock is not what is costing us that.** The old correction 2 rested on "64% of heartbeat turns
+cross a minute boundary mid-turn". Re-measured: median heartbeat turn **12.6s** (mean 13.7s, **zero**
+turns ≥60s), median user turn 8.9s. Expected minute-boundary crossings ≈ **23%**, not 64% — WS8a's
+removal of `get_chat_history` shortened ticks. Ceiling on the clock's cost: 23% of turns losing one
+call's prefix out of ~4.7 calls ≈ **5% of input ≈ $1/mo**.
+
+**Two observations that do not fit the clock hypothesis**, and are the reason for the instrument in
+§2.5: user scope gets 49.5% cache against heartbeat's 35.5% at *identical* calls/turn, though both
+rebuild the same first line; and `read_memory`/tick has drifted 2.36 → 2.73 without a matching cache
+change.
+
+### 2.1 What the measurements change — item 4 is the main event
+
+The old correction 3 said the 50-message cap "breaks the history prefix every turn". It is worse:
+`_add_and_trim` is the **reducer** on `messages` (`agent.py:164`), so it runs on *every state update*
+— after each `_llm_node` return and each `_tool_node` return. Both threads sit at the cap (heartbeat
+43 messages, telegram 48, after the HumanMessage-boundary advance at `agent.py:142`), and a heartbeat
+tick adds ~11.5 messages (6.8 tool + 4.7 LLM). So the window head slides **several times inside a
+single turn** — precisely the only window where caching can pay.
+
+**Therefore: item 4 (trim hysteresis) owns the cost case; items 1–3 (time grounding) own the
+correctness case.** They are separable and should be judged separately. Item 4 is also
+doc-independent — a stable history head helps regardless of how Gemini's TTL or prefix-span
+semantics actually work, so it does not wait on the re-verification below.
+
+**Still unverified against current Gemini docs** (carried forward, do not treat as established): that
+the cache prefix spans the whole request (`system_instruction` + tools + history) rather than the
+system prompt alone; and that implicit-cache TTL is short enough that hourly ticks never hit each
+other's cache. Both were recorded from the lost 2026-07-13 draft.
+
+### 2.2 Reference implementation — OpenClaw at HEAD `aa743c9f` (read 2026-08-01)
+
+Four distinct mechanisms, and **no live clock anywhere in the system prompt** (zero hits for
+`Current time` in `system-prompt*.ts`):
+
+1. **System prompt carries a coarse date + timezone + a pointer** (`src/agents/system-prompt.ts:443`):
+   `## Temporal Context` / `Current date: YYYY-MM-DD` / `Time zone: <TZ>` / *"For the exact current
+   time, use `session_status`."* `formatDateStamp` is documented as *"a **stable** YYYY-MM-DD
+   stamp"* — **day resolution**, so it breaks the cache once per day, not once per minute.
+2. **Per-message stamps applied at the LLM boundary** (`attempt.llm-boundary.ts:385`), format
+   `[DOW YYYY-MM-DD HH:MM TZ] `, derived from **each message's own `timestamp` field, never
+   wall-clock `now`**. Storage stays bare. Their comment states the invariant: *"the SAME message
+   produces byte-identical bytes whether it is sent as the current turn or replayed as history. That
+   stability is what lets full-resend transports cache the prefix."* (issue #3658)
+3. **Cron/heartbeat appends a two-line block to the tick body**, not the system prompt
+   (`heartbeat-runner-execution.ts:658`): `Current time: <local> (<TZ>)` + `Reference UTC: <ISO> UTC`,
+   computed from `startedAt` — the tick's start, not `now`.
+4. **A tool** (`session_status`) returns that same line on demand.
+
+**Evolution worth noting.** A 2026-07-13 copy of the same tree had `## Current Date & Time` with
+**timezone only**; by 2026-08-01 it had become `## Temporal Context` with a `Current date:` line and
+the tool pointer added. They moved *toward* putting time back in the system prompt — at day
+resolution. The "timezone only, no clock" position this doc previously recorded is a snapshot of a
+design that has since been refined.
+
+**Two details they paid for in bugs, worth adopting free:**
+
+- **Day-of-week is deliberate** (`agent-timestamp.ts:47`): *"3-letter DOW: small models (8B) can't
+  reliably derive day-of-week from a date, and may treat a bare 'Wed' as a typo. Costs ~1 token."*
+- **Issue #44993 — stale-clock leak.** Because heartbeat prompts flow through their helper
+  repeatedly, a previously-injected `Current time:` block could survive and go stale; the fix
+  *refreshes* an existing block rather than appending a second, behind a deliberately strict
+  two-line regex so it never eats a user-authored line beginning `Current time:`. Plus double-stamp
+  guards: never stamp text already carrying an envelope or a cron marker.
+
+### 2.3 Design
+
+1. **Envelope becomes date + scope, not a clock.** `[Current date: 2026-08-01]` (day resolution)
+   replaces `[Current time: … HH:MM …]` at `agent.py:407`. One cache break per day, at Israel
+   midnight = 21:00/22:00 UTC — inside the overnight stretch where the gate reports `nothing due —
+   skipping model turn`, so effectively free. **No timezone line is needed**: `prompts/AGENTS.md:1`
+   already carries it (*"Roi lives in Tel Aviv (Asia/Jerusalem, UTC+3 in summer / UTC+2 in
+   winter)"*), and duplicating it costs bytes for nothing.
+2. **Stamp each turn's input, from that turn's own fixed time.** Prefix
+   `[Sat 2026-08-01 09:14 +03] ` — day-of-week included per the note above; **numeric offset, not
+   `%Z`** (see §2.4). Applied in `ask_jarvis` (`agent.py`), which is the single entry to a turn and
+   already sets up the ContextVars and telemetry — so its three call sites (inbound channel message
+   `main.py:66`, confirmation-outcome reply `main.py:181`, heartbeat tick `heartbeat.py:87`) cannot
+   each forget. `ask_jarvis_once` (`agent.py:881`) is **not** in scope: it bypasses the agent loop
+   entirely — no system prompt, no tools, no history. Lands on both message shapes,
+   since `user_input` becomes either a bare string or `content[0]["text"]` (`agent.py:657`).
+   `main.py:58` writes the raw text to `chat_history.jsonl` *before* calling `ask_jarvis`, so the
+   chat log stays clean and unstamped — it has its own `ts`.
+3. **Heartbeat tick body also gets a `Reference UTC:` line.** This is a correctness win independent
+   of caching: `AGENTS.md:1` requires `manage_reminder`'s `fire_at` in ISO 8601 UTC while everything
+   user-facing is Israel time, so the model performs a timezone conversion by hand on every reminder.
+   Handing it both removes the step.
+4. **Trim hysteresis in `_add_and_trim`** — trim to a low-water mark only once past a high-water mark
+   (e.g. 70/50) instead of slicing to exactly `MAX_MESSAGES` on every state update. The head then
+   holds still for many calls and many turns. **This is the item that owns the cost case** (§2.1).
+5. **Reorder the remaining system prompt stable → volatile.** Stable: `[Active scope]` → SOUL.md →
+   AGENTS.md → USER.md → scope framing (+ `prompts/heartbeat.md`) → skill list. Volatile tail: date,
    HEARTBEAT.md / due-task blocks + injected notes, daily log, live chat/notification slices.
-6. **`[Channel: …]` is volatile** — added to the envelope by the app-channel work (`agent.py:364`),
-   it varies by origin, so it belongs in the tail; otherwise alternating channels cross-invalidate.
+6. **`[Channel: …]` is volatile** (`agent.py:417`) — it varies by origin, so it belongs in the tail;
+   otherwise alternating channels cross-invalidate. It is constant *within* a thread, so this is
+   cheap insurance rather than a live problem.
 7. **Keep hot-reload.** Per-turn re-reads are fine: SOUL/AGENTS/USER change rarely, and when they do
-   the miss is deserved. The skill list changes on activation — invalidates only from there down.
+   the miss is deserved.
 
-**Phase order (from the lost draft): stamps must land before clock removal.** Removing the clock
-first leaves the model temporally blind for a deploy window.
+**Not adopting: a `session_status`-equivalent time tool.** `manage_reminder` already echoes the real
+current time in its create confirmation (`tools/core/scheduling.py:127`), which covers the one path
+where precision bites. WS8a's lesson is that whether the model calls a tool is driven by docstring
+wording and is unreliable; "sometimes forgets to check the time" is a worse failure than "off by the
+turn's duration". Revisit if drift shows up.
 
-**Interaction with WS7.** Items 3/4 above touch `_add_and_trim` — the same function WS7's
-tool-result pruning modifies. Land them together or sequence them deliberately; they are compatible
-(pruning shrinks message *content*, hysteresis changes *when* the window slides) but they will
-conflict textually.
+**What we accept:** the model's "now" becomes **turn-start** time, not per-call time. Measured, that
+is a sub-15s error on the median turn either scope, with a ~90s worst case bounded by the heartbeat
+timeout. Below anyone's threshold for "remind me tomorrow at 9", and self-correcting inside the turn
+via the `manage_reminder` echo.
 
-**Ordering note.** The current section order was chosen for prompt readability; nothing in
-`prompts/AGENTS.md` depends on position. Verify with one manual read-through of an assembled prompt.
+**Phase order: stamps land before clock removal.** Removing the clock first leaves the model
+temporally blind for a deploy window. Two commits, since deploys are cheap and the intermediate state
+(time present twice) is harmless.
 
-**Verify.** The harness's **cache-prefix invariant** test is the acceptance criterion (`xfail` today,
-flips green when this lands) — note it must compare *whole requests*, not just system prompts, to
-test what correction 1 identified. Plus `cache_read_tokens / input_tokens` in `turns.jsonl` per
-scope, read as an **intra-turn** metric (correction 2): expect multi-call turns to stop losing their
-prefix mid-turn. Do not expect hourly ticks to hit each other's cache.
+### 2.4 Timezone & day-edge correctness
 
-**Risk.** Higher than the withdrawn sketch claimed. Items 1–3 move the clock out of the system
-prompt, which is a behavioral change (temporal grounding moves to the message stream), not a
-reordering. Item 4 changes window mechanics. Still revertable per item, but this is no longer a
-"content unchanged, only order" workstream.
+Israel runs **UTC+2 in winter (IST) and UTC+3 in summer (IDT)**, transitioning at 02:00 local — 2026:
+spring forward **2026-03-27**, fall back **2026-10-25**. The tick lattice is **UTC** (`CronTrigger`,
+`TICK_INTERVAL_HOURS`), while every `due:` window is Israel-local, so the two shift relative to each
+other twice a year. Verified behaviours, measured 2026-08-01 against the live code:
+
+- **Midnight always exists.** Both transitions happen at 02:00, so `00:00` is never a nonexistent or
+  ambiguous wall time. Everything keyed to start-of-Israel-day is therefore safe:
+  `_today_israel_start_utc` (`agent.py`), `_today_israel` and the `daily_YYYY-MM-DD.md` filenames,
+  and the chat/notification slice filters. Checked on both 2026 transition dates.
+- **Windows shift by exactly one UTC tick across DST.** Measured for all four windowed tasks — e.g.
+  `morning-readiness-check` (`08:00-10:00` IL) is in-window at UTC ticks `{5,6}` in summer and
+  `{6,7}` in winter; `crossfit-sync-and-remind` moves `{3..18}` → `{4..19}`.
+- **A 24h task locked on the *last* in-window tick loses exactly one occurrence at spring-forward.**
+  Simulated across every possible lock position through both 2026 transitions using the real
+  `any_due`/`stamp` path: a task stamped at 07:00Z (last winter tick) misses 2026-03-27 entirely,
+  then self-heals the next day. This is the DST half of the §2b `heartbeat-assert` risk, now with a
+  date and a direction.
+- **Production is currently on the safe side of both transitions.** `morning-readiness-check` is
+  stamped at 06:00Z, which is in-window in *both* offsets, so it survives spring-forward and gains
+  margin at fall-back. Its `ticks left: 0` flag remains a real **dropped-tick** fragility; it is
+  **not** an imminent DST loss. Left as-is by owner decision 2026-08-01.
+- **`%Z` is unsafe for the stamp.** Python yields `IST` for Israel winter — which also reads as India
+  Standard Time. Use the numeric offset (`%z` → `+0300`, rendered `+03`), which is unambiguous and
+  survives locale changes.
+- **Latent, not live: windows inside 01:00–03:00 local.** A `due:` window at 02:30 falls in the
+  spring-forward gap (Python resolves it to the pre-transition offset), and 01:30 is ambiguous at
+  fall-back (`datetime.combine` takes `fold=0`, the first occurrence). No current task has a window
+  in that band. Worth a validation warning in `manage_heartbeat_task` rather than gate logic.
+
+**Constraints on the new stamp specifically:** it must be computed from the turn's own fixed
+timestamp and never recomputed (that is the whole byte-stability property); it must carry a numeric
+offset so a stamp written in IDT is still unambiguous when read back in IST; and the double-stamp
+guard matters for us too, since the injected chat slice already renders `[HH:MM] message` — a stamped
+message must not be re-stamped when it later flows through that path.
+
+### 2.5 The instrument (land before or with item 4)
+
+Per-turn telemetry cannot attribute a cache miss to a call: `record_llm_call` sums into the turn
+accumulator (`observability/telemetry.py:112`), so all ~5 calls report as one number. Add
+`llm_calls.jsonl` — one row per LLM call, joining `turns.jsonl` by `turn_id`, exactly the
+`tool_calls.jsonl` pattern: `call_index`, `input_tokens`, `cache_read_tokens`, `output_tokens`,
+`msg_count`, and a hash of `messages[0]` (the window head). Register it in `main.py:168`'s trim tuple
+for the 90-day retention.
+
+With the clock already out of the prompt, the remaining question is binary and the head hash answers
+it: **head changed → the trim is costing us the discount (item 4 is the fix); head unchanged and
+`cache_read` still flat → it is Gemini's implicit cache, and no change of ours recovers it.** That
+second outcome is the only one that says *do not build item 4* — and today we would discover it only
+after shipping. ~750 LLM calls/week in prod, ~200 bytes/row: negligible.
+
+### 2.6 History — this reverts a deliberate decision
+
+`main.py` originally prepended a `time_ctx` to `inbound.user_text`, i.e. the arrival-stamp design
+above. It was removed on purpose: `docs/plans/archive/ARCHITECTURE_PLAN.md:98` lists it as
+architecture problem #4 (*"Time context is jammed into the user message … instead of into the prompt
+envelope"*), line 964 directs *"drop `time_ctx` prepending"*, and that phase's verification step 5 is
+*"Confirm time context is in the prompt envelope, not prepended to user text."* **The stated
+rationale was structural tidiness — nothing about correctness, and nothing about caching**, which was
+not yet a consideration. Recorded here so the reversal is a decision rather than an accident.
+
+**Verify.** The harness's **cache-prefix invariant** test is the acceptance criterion (`xfail` today
+— `TEST_HARNESS_PLAN.md:91` notes "the clock is line 1"); it must compare *whole requests*, not just
+system prompts. Plus `llm_calls.jsonl` per-call `cache_read` (§2.5), read as an **intra-turn** metric.
+Do not expect hourly ticks to hit each other's cache. Prompt-content changes also need a read-through
+of an assembled prompt in each scope, and `docs/architecture/MEMORY.md:115` must be updated — it
+documents the envelope shape.
+
+**Risk.** Items 1–3 are a behavioral change (temporal grounding moves to the message stream), not a
+reordering; the mitigation is the two-commit order and the day-resolution date, which keeps the model
+from ever being date-blind. Item 4 changes window mechanics and trades some input volume for cache
+rate — at a 90% cache discount that is a good trade, but it is a trade, and it conflicts textually
+with WS7's tool-result pruning in the same function. Land them together or sequence deliberately.
+Every item reverts on its own.
 
 ---
 
@@ -589,7 +746,9 @@ it. That deserves its own design, not a crossfit-shaped patch.
 WS8a ✓ ──► WS8b ──► WS8c ─────────────────────►  (rank 1: the round-trips)
      WS7 pruning ──► WS7 summarization? ───────►  (rank 2: the 63% + 18%)
         └─ shares _add_and_trim ─┐
-     re-verify Gemini caching ──► WS2 stamps ──► WS2 clock removal ──► WS2 hysteresis
+     WS2 stamps ──► WS2 clock removal ────────────►  (time grounding: correctness, no Gemini re-verify needed)
+     llm_calls.jsonl (§2.5) ──► WS2 item 4 hysteresis ──►  (the cost half; instrument decides if it is worth building)
+        └─ re-verify Gemini caching only gates item 4's *interpretation*, not items 1–3
      WS4 ──────────────────────────────────────►  (backstop, any time)
      WS5 ──► WS6 ──────────────────────────────►  (capability track, independent)
                               WS3 ·············►  (last; drop if WS7 sufficed)
