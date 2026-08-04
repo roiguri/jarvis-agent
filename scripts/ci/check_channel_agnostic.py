@@ -13,9 +13,10 @@ Four static checks (pure source scan — no app import, no deps):
      legitimate importers: gateway/factory.py and the gateway/channels/ packages.
   2. No channel adapter or core-contract module in gateway/ imports the
      agent/tools/main/heartbeat layers — a channel is a thin adapter; the host
-     injects the coupling. gateway/commands/ is exempt: slash-command handlers
-     are the documented app bridge and legitimately call into agent/tools (they
-     still may not import a concrete channel — check #1 covers that).
+     injects the coupling. gateway/commands/ and gateway/apps/ are exempt:
+     slash-command handlers and app entry handlers are the documented app
+     bridges and legitimately call into agent/tools (they still may not import
+     a concrete channel — check #1 covers that).
   3. No channel name appears in tools/ — tool docstrings are prompt content, so
      the model must not be told a capability is "a Telegram thing".
   4. No channel name appears in agent.py — domain logic must not special-case a
@@ -48,7 +49,14 @@ _CHANNEL_IMPORT_EXEMPT_TREE = os.path.join("gateway", "channels") + os.sep
 # app — EXCEPT gateway/commands/ (the documented slash-command bridge).
 # turn_context is a stdlib-only leaf and is deliberately allowed.
 _REVERSE_ROOTS = {"agent", "tools", "main", "heartbeat", "heartbeat_state"}
-_REVERSE_EXEMPT = os.path.join(REPO_ROOT, "gateway", "commands") + os.sep
+_REVERSE_EXEMPT = (
+    os.path.join(REPO_ROOT, "gateway", "commands") + os.sep,
+    # gateway/apps/: the same category as commands — an app-level bridge that
+    # legitimately reads the domain (the memory app reuses the memory sandbox
+    # rather than reimplementing it). Check #1 still forbids importing a
+    # concrete channel, which is the boundary that matters here.
+    os.path.join(REPO_ROOT, "gateway", "apps") + os.sep,
+)
 
 # tools/ carries prompt content; no channel may be named there. agent.py is
 # domain logic and must not special-case a channel by name either.

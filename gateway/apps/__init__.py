@@ -1,7 +1,7 @@
 """Gateway-shared app registry. Channel-agnostic.
 
-Import order matters: `specs` must load so its `register_app` calls run before
-the first call to `list_apps`.
+Import order matters: `specs` must load so every app's `register_app` call runs
+before the first call to `list_apps`.
 """
 
 from gateway.apps.registry import (
