@@ -17,7 +17,7 @@ import contextlib
 import logging
 import re
 
-from gateway.apps import list_apps
+from gateway.apps import AppError, dispatch, list_apps
 from gateway.base import InboundMessage, OnMessage
 from gateway.commands import list_commands
 from gateway.channels.jarvis_app import media_cache
@@ -72,6 +72,13 @@ class JarvisAppInboundRouter:
         self._on_message = on_message
         self._confirmation_ui = confirmation_ui
         self._queue: asyncio.Queue = asyncio.Queue()
+        # App queries get their own queue and drain task. The turn queue is
+        # serialised so two messages never run overlapping LLM turns on one
+        # thread; a query names no thread and needs no model, so that reason
+        # does not reach it — and a client is parked on it with a timeout
+        # shorter than a turn can take, so sharing the queue would fail it
+        # outright whenever a conversation happened to be in flight.
+        self._app_queue: asyncio.Queue = asyncio.Queue()
         self._stop = asyncio.Event()
         self._degraded = False  # True while the hub is unreachable — for log-once
 
@@ -84,14 +91,21 @@ class JarvisAppInboundRouter:
         await self._declare_all()
         fetcher = asyncio.create_task(self._fetch_loop())
         consumer = asyncio.create_task(self._consume_loop())
+        app_consumer = asyncio.create_task(self._app_query_loop())
 
         await self._stop.wait()
 
         # Drain: stop fetching (a hanging poll just drops — anything fetched is
-        # already queued, since the ack was the poll), finish queued turns, exit.
+        # already queued, since the ack was the poll), finish queued work, exit.
+        # Queries drain first: they are fast and somebody is waiting on each one,
+        # whereas a turn's reply has no deadline.
         fetcher.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await fetcher
+        await self._app_queue.join()
+        app_consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app_consumer
         await self._queue.join()
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -189,9 +203,14 @@ class JarvisAppInboundRouter:
             backoff = _BACKOFF_START_S
             for update in updates:
                 # Advance + enqueue before any turn runs: the next poll (which acks
-                # this batch) must not wait behind the turn.
+                # this batch) must not wait behind the turn. Queries split off
+                # here, at fetch time — routing them later would already have put
+                # them behind whatever the turn queue is holding.
                 offset = update["update_id"] + 1
-                await self._queue.put(update)
+                if update.get("type") == "app_query":
+                    await self._app_queue.put(update)
+                else:
+                    await self._queue.put(update)
 
     async def _consume_loop(self) -> None:
         while True:
@@ -202,6 +221,52 @@ class JarvisAppInboundRouter:
                 logger.exception("jarvis-app turn failed")
             finally:
                 self._queue.task_done()
+
+    async def _app_query_loop(self) -> None:
+        """Answer app queries, independent of the turn consumer."""
+        while True:
+            update = await self._app_queue.get()
+            try:
+                await self._answer_app_query(update)
+            except Exception:  # one bad query must not take the loop down
+                logger.exception("jarvis-app app_query failed")
+            finally:
+                self._app_queue.task_done()
+
+    async def _answer_app_query(self, update: dict) -> None:
+        """Run one query through the app registry and post the result.
+
+        Deterministic dispatch — no model in this path. The result body carries
+        exactly one of data/error, by field presence: `{"data": None}` is a
+        valid success, an empty body is not.
+        """
+        query_id = update.get("query_id")
+        ns = update.get("ns")
+        entry_id = update.get("entry_id")
+        if not query_id or not ns or not entry_id:
+            logger.warning("jarvis-app malformed app_query: %s", update)
+            return
+        params = update.get("params") or {}
+        try:
+            body = {"data": await dispatch(ns, entry_id, params)}
+        except AppError as exc:
+            body = {"error": {"code": exc.code, "message": str(exc)}}
+        except Exception as exc:
+            # Neither closed code fits a fault on this side — both describe a
+            # bad request. Reporting one would blame the caller for our bug, so
+            # this deliberately takes the documented fallback: an unrecognised
+            # code reaches the client as a 502, which is what actually happened.
+            logger.exception("jarvis-app app %s/%s raised", ns, entry_id)
+            body = {"error": {"code": "internal_error", "message": str(exc)}}
+        try:
+            delivered = await self._client.post_app_result(query_id, body)
+        except Exception as exc:
+            logger.warning("jarvis-app could not answer %s: %s", query_id, exc)
+            return
+        if not delivered:
+            # Nobody was waiting: timed out, hung up, or queued before a hub
+            # restart. Expected, and unretryable — the park is gone.
+            logger.info("jarvis-app query %s expired before it was answered", query_id)
 
     async def _handle(self, update: dict) -> None:
         if update.get("type") == "action":

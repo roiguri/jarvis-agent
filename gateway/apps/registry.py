@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
 
 # Namespaces, entry ids and param names are identifiers, not free text. Checked
 # at registration — i.e. at import — because publishing a manifest is
@@ -39,6 +40,37 @@ _NAME_MAX = 64
 _METHODS = ("GET", "POST")
 
 
+# An entry's implementation: receives the caller's params (values are always
+# strings — whatever they address, this side validates) and returns the payload
+# to hand back. Async because a channel answers these on its own task, off
+# whatever else the agent is doing.
+Handler = Callable[[dict[str, str]], Awaitable[Any]]
+
+
+class AppError(Exception):
+    """Base for failures an app reports to its caller.
+
+    `code` is a CLOSED vocabulary — a channel maps it to a status, so an
+    unrecognised value would hand this side control of the transport's own
+    status codes. Subclasses below are the whole set; raise one of those.
+    """
+
+    code = "invalid_request"
+
+
+class AppNotFound(AppError):
+    """No such app, entry, or addressed thing."""
+
+    code = "not_found"
+
+
+class AppInvalidRequest(AppError):
+    """The call was malformed — an undeclared param, a missing required one,
+    or a value this entry cannot act on."""
+
+    code = "invalid_request"
+
+
 @dataclass(frozen=True)
 class AppEntry:
     """One callable entry point within an app."""
@@ -46,6 +78,7 @@ class AppEntry:
     id: str
     method: str  # "GET" for a read, "POST" for a write
     params: tuple[str, ...] = ()
+    handler: Handler | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +121,10 @@ def register_app(spec: AppSpec) -> AppSpec:
                 f"App {spec.ns!r} entry {entry.id!r} method must be one of "
                 f"{', '.join(_METHODS)}, got {entry.method!r}"
             )
+        # Same reasoning as the empty-entries check: a declared entry with
+        # nothing behind it is an affordance that cannot lead anywhere.
+        if entry.handler is None:
+            raise ValueError(f"App {spec.ns!r} entry {entry.id!r} has no handler")
         for param in entry.params:
             _check_identifier("param name", param)
     _APPS[spec.ns] = spec
@@ -98,3 +135,29 @@ def list_apps() -> list[AppSpec]:
     """Every registered app, sorted by namespace. Used by channels to publish
     the manifest."""
     return [_APPS[ns] for ns in sorted(_APPS)]
+
+
+async def dispatch(ns: str, entry_id: str, params: dict[str, str]) -> Any:
+    """Route a query to its entry's handler and return the payload.
+
+    Raises AppError (AppNotFound / AppInvalidRequest) for anything a caller
+    could have caused; a handler's own unexpected failure propagates as-is, for
+    the caller to log and report as an internal fault rather than blame on the
+    request.
+
+    Params are re-checked against the declaration even though a channel may
+    already have filtered them: this is the layer that knows what was declared,
+    and it must hold for a channel that does no filtering at all.
+    """
+    app = _APPS.get(ns)
+    if app is None:
+        raise AppNotFound(f"No app {ns!r}")
+    entry = next((e for e in app.entries if e.id == entry_id), None)
+    if entry is None:
+        raise AppNotFound(f"App {ns!r} has no entry {entry_id!r}")
+    undeclared = sorted(set(params) - set(entry.params))
+    if undeclared:
+        raise AppInvalidRequest(
+            f"{ns}/{entry_id} does not accept: {', '.join(undeclared)}"
+        )
+    return await entry.handler(params)

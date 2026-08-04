@@ -179,6 +179,35 @@ class HubClient:
         r = await self._client.post("/bot/v1/commands", json=commands)
         r.raise_for_status()
 
+    async def post_app_result(self, query_id: str, body: dict) -> bool:
+        """Answer a parked app query. `body` carries exactly one of data/error —
+        the discriminator is field presence, so this leg's own status describes
+        whether the hub accepted the answer, not whether the query succeeded.
+
+        Returns False when nobody is waiting any more (404 `unknown_query`): the
+        query timed out, the client hung up, or the hub restarted after queuing
+        it. That is expected traffic, not a fault — the caller logs and drops it,
+        and must never retry, since no retry can find a park that is gone.
+        Raises HubUnavailable on a server error or transport failure.
+        """
+        try:
+            r = await self._client.post(f"/bot/v1/apps/{query_id}/results", json=body)
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                raise HubUnavailable(f"hub returned {e.response.status_code}") from e
+            if e.response.status_code == 404:
+                try:
+                    code = e.response.json()["error"]["code"]
+                except (ValueError, KeyError, TypeError):
+                    code = None
+                if code == "unknown_query":
+                    return False
+            raise
+        except httpx.HTTPError as e:
+            raise HubUnavailable(str(e)) from e
+        return True
+
     async def declare_apps(self, apps: list[dict]) -> None:
         """Publish the app manifest to the hub so the app can draw its Apps
         screen. Each entry is {"ns", "name", "entries": [{"id", "method",
