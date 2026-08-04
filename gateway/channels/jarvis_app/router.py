@@ -17,6 +17,7 @@ import contextlib
 import logging
 import re
 
+from gateway.apps import list_apps
 from gateway.base import InboundMessage, OnMessage
 from gateway.commands import list_commands
 from gateway.channels.jarvis_app import media_cache
@@ -80,7 +81,7 @@ class JarvisAppInboundRouter:
     async def run(self) -> None:
         """Poll and answer until request_stop(); then drain in-flight turns."""
         await self._check_contract()
-        await self._declare_commands()
+        await self._declare_all()
         fetcher = asyncio.create_task(self._fetch_loop())
         consumer = asyncio.create_task(self._consume_loop())
 
@@ -96,6 +97,19 @@ class JarvisAppInboundRouter:
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
 
+    async def _declare_all(self) -> None:
+        """Publish everything the hub holds on the agent's behalf: the slash
+        commands and the app manifest.
+
+        Called at startup *and* on every reconnect. The hub keeps both registries
+        in memory, so a hub restart forgets them — declaring only on first boot
+        would leave the app's command menu and Apps screen empty until the agent
+        itself happened to restart. Each declare replaces that whole list, so
+        re-sending is idempotent. Neither call raises: a declare that fails is
+        logged and retried on the next reconnect."""
+        await self._declare_commands()
+        await self._declare_apps()
+
     async def _declare_commands(self) -> None:
         """Publish the shared slash-command list to the hub so the app's command
         menu matches the gateway's commands (same source Telegram's menu uses).
@@ -110,6 +124,28 @@ class JarvisAppInboundRouter:
             logger.warning("jarvis-app command declaration skipped: %s", exc)
         else:
             logger.info("declared %d slash commands to the jarvis-app hub", len(commands))
+
+    async def _declare_apps(self) -> None:
+        """Publish the registry's app manifest so the app can draw its Apps
+        screen. Maps the neutral AppSpec/AppEntry into the hub's wire shape here
+        — the registry stays channel-agnostic. Non-fatal, same as commands."""
+        apps = [
+            {
+                "ns": app.ns,
+                "name": app.name,
+                "entries": [
+                    {"id": e.id, "method": e.method, "params": list(e.params)}
+                    for e in app.entries
+                ],
+            }
+            for app in list_apps()
+        ]
+        try:
+            await self._client.declare_apps(apps)
+        except Exception as exc:
+            logger.warning("jarvis-app app declaration skipped: %s", exc)
+        else:
+            logger.info("declared %d apps to the jarvis-app hub", len(apps))
 
     async def _check_contract(self) -> None:
         """Warn (never fail) if the hub's contract_version differs from the one
@@ -146,6 +182,10 @@ class JarvisAppInboundRouter:
             if self._degraded:
                 logger.info("jarvis-app hub reachable again")
                 self._degraded = False
+                # The outage may have been a hub restart, which drops the
+                # in-memory command and app registries — re-declare before
+                # serving, since only this transition knows a link was re-made.
+                await self._declare_all()
             backoff = _BACKOFF_START_S
             for update in updates:
                 # Advance + enqueue before any turn runs: the next poll (which acks

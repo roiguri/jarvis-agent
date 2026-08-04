@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # The version the adapter was written against. The hub reports its own
 # contract_version on GET /v1/health; a mismatch is logged, never fatal — the hub
 # already 422s a malformed payload, so this only gives a *silent* skew a voice.
-PINNED_CONTRACT_VERSION = "f605f1ced7bdb356"
+PINNED_CONTRACT_VERSION = "b124f103398748df"
 
 # The hanging poll's server-side wait. The client read timeout sits a little above
 # it so a genuinely dead connection eventually errors instead of hanging forever.
@@ -174,6 +174,15 @@ class HubClient:
 
     async def declare_commands(self, commands: list[dict]) -> None:
         """Publish the bot's slash-command list to the hub so the app can show a
-        command menu. Each entry is {"name", "description"}."""
+        command menu. Each entry is {"name", "description"}. A declare replaces
+        the whole list, so re-sending the same payload is idempotent."""
         r = await self._client.post("/bot/v1/commands", json=commands)
+        r.raise_for_status()
+
+    async def declare_apps(self, apps: list[dict]) -> None:
+        """Publish the app manifest to the hub so the app can draw its Apps
+        screen. Each entry is {"ns", "name", "entries": [{"id", "method",
+        "params"}]}. Like commands, a declare replaces the whole list, so
+        re-sending the same payload is idempotent."""
+        r = await self._client.post("/bot/v1/apps", json=apps)
         r.raise_for_status()
