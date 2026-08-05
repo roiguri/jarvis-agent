@@ -12,7 +12,7 @@ should not be implemented from.
 
 ## Checklist
 
-**Phase 1 — storage + skill scaffold** — **SHIPPED (staging), pending live check**
+**Phase 1 — storage + skill scaffold** — **SHIPPED & VERIFIED on staging 2026-08-05**
 - [x] `tools/travel/` package + `SKILL.md` (frontmatter `name`/`description` + rules body)
 - [x] `DATA_DIR/travel/travel.sqlite` — four tables, created idempotently at import
 - [x] `query_travel_db` — pulled forward from Phase 2; a skill with no tools is invisible to
@@ -22,7 +22,8 @@ should not be implemented from.
       for a capability none of them has yet
 - [x] `scripts/ci/check_paths.py` and `check_channel_agnostic.py` green; `check_env.sh` reports
       no new drift
-- [ ] Live check after restart: activate the skill in chat, call `query_travel_db` with empty `sql`
+- [x] Live check after restart: skill activates in chat and `query_travel_db` returns the schema;
+      staging registry went 8 → 9 namespaces, 52 → 53 skill tools
 
 **Phase 2 — the four tools** *(the actual deliverable)*
 - [ ] `manage_place` — search (Google Places Text Search) / save / update / delete
