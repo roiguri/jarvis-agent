@@ -6,27 +6,33 @@
 JSON Schema plus the endpoint list, generated from the Pydantic models and
 the mounted routes under `backend/jarvis_app_backend`.
 
-`contract_version`: `f605f1ced7bdb356`
+`contract_version`: `b124f103398748df`
 
 ## Endpoints
 
 - `GET /bot/v1/attachments/{attachment_id}` — Bot Download Attachment
 - `GET /bot/v1/updates` — Get Updates
+- `GET /v1/apps` — Get Apps
+- `GET /v1/apps/{ns}/q/{entry_id}` — Query App
 - `GET /v1/attachments/{attachment_id}` — Download Attachment
 - `GET /v1/commands` — Get Commands
 - `GET /v1/events` — Events
 - `GET /v1/health` — Health
 - `GET /v1/messages` — Get Messages
 - `PATCH /bot/v1/messages/{message_id}` — Bot Patch
+- `POST /bot/v1/apps` — Declare Apps
+- `POST /bot/v1/apps/{query_id}/results` — Post App Query Results
 - `POST /bot/v1/attachments` — Bot Upload Attachment
 - `POST /bot/v1/commands` — Declare Commands
 - `POST /bot/v1/events` — Bot Event
 - `POST /bot/v1/messages` — Bot Send
 - `POST /v1/actions` — Post Action
+- `POST /v1/apps/{ns}/q/{entry_id}` — Query App Post
 - `POST /v1/attachments` — Upload Attachment
 - `POST /v1/auth/login` — Login
 - `POST /v1/auth/logout` — Logout
 - `POST /v1/messages` — Send Message
+- `POST /v1/push/register` — Register Push
 
 ## Models
 
@@ -167,6 +173,245 @@ the mounted routes under `backend/jarvis_app_backend`.
     "error"
   ],
   "title": "ApiError",
+  "type": "object"
+}
+```
+
+### AppEntry
+
+```json
+{
+  "additionalProperties": false,
+  "description": "One callable entry point on an app.\n\n`id` is a name the **agent** routes on \u2014 never a path the hub dials. The hub\nholds no agent URL and no way to acquire one (architecture \u00a76), so an entry\nthat read as a path would be describing a call nobody can make.\n\n`method` is per entry rather than per app so a read and a write can live\nside by side under one namespace. It is the hub's only way to know that a\nrequest is safe, which is what lets a write be refused here rather than a\nround-trip later.",
+  "properties": {
+    "id": {
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "GET",
+        "POST"
+      ],
+      "title": "Method",
+      "type": "string"
+    },
+    "params": {
+      "items": {
+        "pattern": "^[a-z][a-z0-9_]{0,31}$",
+        "type": "string"
+      },
+      "title": "Params",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "method"
+  ],
+  "title": "AppEntry",
+  "type": "object"
+}
+```
+
+### AppManifest
+
+```json
+{
+  "$defs": {
+    "AppEntry": {
+      "additionalProperties": false,
+      "description": "One callable entry point on an app.\n\n`id` is a name the **agent** routes on \u2014 never a path the hub dials. The hub\nholds no agent URL and no way to acquire one (architecture \u00a76), so an entry\nthat read as a path would be describing a call nobody can make.\n\n`method` is per entry rather than per app so a read and a write can live\nside by side under one namespace. It is the hub's only way to know that a\nrequest is safe, which is what lets a write be refused here rather than a\nround-trip later.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "type": "string"
+          },
+          "title": "Params",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "method"
+      ],
+      "title": "AppEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One app, as the agent publishes it.\n\nAn app with no entries is refused: nothing about it could ever be called, so\nit would draw an icon that cannot lead anywhere \u2014 the dead affordance the\nclient is built to avoid rather than render.",
+  "properties": {
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/AppEntry"
+      },
+      "minItems": 1,
+      "title": "Entries",
+      "type": "array"
+    },
+    "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "ns": {
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "title": "Ns",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ns",
+    "name",
+    "entries"
+  ],
+  "title": "AppManifest",
+  "type": "object"
+}
+```
+
+### AppQueryError
+
+```json
+{
+  "additionalProperties": false,
+  "description": "An app-level failure, as the agent reports it.\n\n`code` is a **closed** vocabulary the hub maps to a status. It is closed\nrather than passed through because passing it through would hand the agent\ncontrol of the hub's own status codes \u2014 including the ones a client\nbranches on, like `401`. An unrecognised code still produces an answer, but\na `502`: the agent replied with something the hub cannot honour.",
+  "properties": {
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "AppQueryError",
+  "type": "object"
+}
+```
+
+### AppQueryResult
+
+```json
+{
+  "$defs": {
+    "AppQueryError": {
+      "additionalProperties": false,
+      "description": "An app-level failure, as the agent reports it.\n\n`code` is a **closed** vocabulary the hub maps to a status. It is closed\nrather than passed through because passing it through would hand the agent\ncontrol of the hub's own status codes \u2014 including the ones a client\nbranches on, like `401`. An unrecognised code still produces an answer, but\na `502`: the agent replied with something the hub cannot honour.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "AppQueryError",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What the agent posts back for a parked query: a payload, or a failure.\n\nExactly one of `data`/`error`, and the discriminator has to be in the body\nbecause this leg has no status code of its own to carry it \u2014 the agent is\nPOSTing an answer, so the HTTP result describes whether the *hub accepted\nthe answer*, not whether the query succeeded. The client's leg needs no such\nwrapper: there a status code exists, so `data` is returned raw.\n\n`data` is `Any`, and deliberately un-modelled. The hub relays an app's\npayload without interpreting it; a model here would mean the hub knowing\nwhat each app's data looks like, which is the coupling this whole path\nexists to avoid.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {},
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Data"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppQueryError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "title": "AppQueryResult",
+  "type": "object"
+}
+```
+
+### AppQueryUpdate
+
+```json
+{
+  "description": "A client asking an app for data, relayed to the agent that owns it.\n\nUnlike the other variants this one has somebody waiting on it: a client\nrequest is parked on the hub until `POST /bot/v1/apps/{query_id}/results`\nanswers it, and it is abandoned after a timeout. So it is the one update\nkind that goes stale \u2014 an agent that answers a `query_id` nobody is holding\nis told so rather than silently succeeding.\n\nIt must therefore be answered promptly, and never behind whatever else the\nagent is doing: it names no thread and needs no model, so an agent that\nserialises it behind a conversational turn turns a data read into a wait of\nthat turn's length.\n\n`params` is only what the app's own manifest declared. The **values** are\nuninterpreted \u2014 the hub bounds their length and nothing else, because\njudging one would mean knowing what the app means by it. Whatever they\naddress, the agent validates.",
+  "properties": {
+    "entry_id": {
+      "title": "Entry Id",
+      "type": "string"
+    },
+    "ns": {
+      "title": "Ns",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "app_query",
+      "title": "Type",
+      "type": "string"
+    },
+    "update_id": {
+      "title": "Update Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "update_id",
+    "type",
+    "query_id",
+    "ns",
+    "entry_id",
+    "params"
+  ],
+  "title": "AppQueryUpdate",
   "type": "object"
 }
 ```
@@ -1184,6 +1429,10 @@ the mounted routes under `backend/jarvis_app_backend`.
       "title": "Contract Version",
       "type": "string"
     },
+    "history_epoch": {
+      "title": "History Epoch",
+      "type": "string"
+    },
     "service": {
       "const": "jarvis-app-hub",
       "title": "Service",
@@ -1192,7 +1441,8 @@ the mounted routes under `backend/jarvis_app_backend`.
   },
   "required": [
     "service",
-    "contract_version"
+    "contract_version",
+    "history_epoch"
   ],
   "title": "HealthResponse",
   "type": "object"
@@ -3102,6 +3352,32 @@ the mounted routes under `backend/jarvis_app_backend`.
     "has_more"
   ],
   "title": "MessagesPage",
+  "type": "object"
+}
+```
+
+### PushRegisterRequest
+
+```json
+{
+  "additionalProperties": false,
+  "description": "`POST /v1/push/register`'s body. The device is never named on the\nwire \u2014 it comes from the caller's own bearer token, so a device may only\nregister itself.",
+  "properties": {
+    "platform": {
+      "const": "android",
+      "title": "Platform",
+      "type": "string"
+    },
+    "token_or_topic": {
+      "title": "Token Or Topic",
+      "type": "string"
+    }
+  },
+  "required": [
+    "platform",
+    "token_or_topic"
+  ],
+  "title": "PushRegisterRequest",
   "type": "object"
 }
 ```
