@@ -12,19 +12,25 @@ should not be implemented from.
 
 ## Checklist
 
-**Phase 1 — storage + skill scaffold**
-- [ ] `tools/travel/` package + `SKILL.md` (frontmatter `name`/`description` + rules body)
-- [ ] `DATA_DIR/travel/travel.sqlite` — four tables, created idempotently on first use
-- [ ] `GOOGLE_PLACES_API_KEY` in `.env.example`; Places API enabled on the existing GCP project
-- [ ] `scripts/ci/check_paths.py` stays green (no hardcoded `/app/jarvis_data`)
+**Phase 1 — storage + skill scaffold** — **SHIPPED (staging), pending live check**
+- [x] `tools/travel/` package + `SKILL.md` (frontmatter `name`/`description` + rules body)
+- [x] `DATA_DIR/travel/travel.sqlite` — four tables, created idempotently at import
+- [x] `query_travel_db` — pulled forward from Phase 2; a skill with no tools is invisible to
+      `skill_namespaces()`, so without it there is nothing to activate and nothing to verify
+- [x] `GOOGLE_PLACES_API_KEY` in `.env.example`, **commented** — nothing reads it until place
+      search exists, and an uncommented key would report `check_env.sh` drift on every instance
+      for a capability none of them has yet
+- [x] `scripts/ci/check_paths.py` and `check_channel_agnostic.py` green; `check_env.sh` reports
+      no new drift
+- [ ] Live check after restart: activate the skill in chat, call `query_travel_db` with empty `sql`
 
 **Phase 2 — the four tools** *(the actual deliverable)*
 - [ ] `manage_place` — search (Google Places Text Search) / save / update / delete
 - [ ] `manage_trip` — create / update / set_current / archive / delete / list
 - [ ] `manage_wishlist` — add / remove / list
 - [ ] `manage_itinerary` — schedule / reschedule / unschedule / remove / list
-- [ ] `query_travel_db` — read-only SELECT, per the `query_fitness_db` precedent
 - [ ] Confirmation wired on `manage_trip(action="delete")` only
+- [ ] Uncomment `GOOGLE_PLACES_API_KEY` in `.env.example` once place search calls it
 - [ ] Settle the `category` vocabulary against real Places responses (open question below)
 
 **Phase 3 — app surface (agent side)**
@@ -91,11 +97,38 @@ why, rather than accepting a day that means nothing.
 night before and end after a late checkout. The payload marks them so the client can render an edge
 day; nothing is ever silently hidden or silently stretched.
 
-**Real Google Places API (New) Text Search.** Accepted as a new paid dependency, on the GCP project
-that already exists for `tools/google_health`. Lookup is its own tool returning several candidates
-— a chain name resolves to dozens of branches, and only a separate step lets the agent or the owner
-choose. A Places failure is relayed verbatim (the Arbox precedent) and never blocks saving a place
-by hand.
+**Google Places API (New) Text Search, at the Pro tier.** Enabled on the GCP project that already
+serves `tools/google_health`. "Places API (New)" is the only real option: the legacy Places API was
+frozen in March 2025 and cannot be enabled on new projects.
+
+Lookup is its own tool returning several candidates — a chain name resolves to dozens of branches,
+and only a separate step lets the agent or the owner choose. A Places failure is relayed verbatim
+(the Arbox precedent) and never blocks saving a place by hand.
+
+**The field mask is the price**, and this is the load-bearing detail. Text Search (New) requires an
+`X-Goog-FieldMask` header — omitting it is an error, not a default — and the fields named in it
+select the SKU:
+
+| Field mask contains | SKU | Free/month | Beyond |
+|---|---|---|---|
+| `places.id` only | Essentials (IDs Only) | unlimited | — |
+| `displayName`, `formattedAddress`, `location`, `types`, `googleMapsUri` | **Pro** | **5,000** | $32 / 1,000 |
+| adds `rating` | Enterprise | 1,000 | $35 / 1,000 |
+| adds `reviews` / atmosphere | Enterprise + Atmosphere | 1,000 | $40 / 1,000 |
+
+Every field this design needs is Pro, and `rating` is deliberately **not** requested. 5,000 free
+lookups a month against single-user traffic — and only for a place not already in `places`, which
+caches them permanently — means this bills nothing in practice, though billing must still be
+enabled on the project. The old $200 monthly credit no longer exists; these per-SKU free caps
+replaced it.
+
+The risk is therefore not the bill but a **silent tier slip**: adding one field to the mask cuts the
+free allowance fivefold and raises the rate, with no error and no warning. So the field mask is a
+**hardcoded module constant, never assembled from caller input** — a caller must not be able to
+widen it, and adding a field to it is a deliberate edit that changes the pricing tier.
+
+Revisiting `rating` later is not free: it means a second billed lookup for every place already
+saved, so wanting it after the fact costs more than asking for it now. Accepted.
 
 **Times are local wall-clock text; the trip carries a timezone.** `"20:00"` means 20:00 where the
 owner is standing and is never converted. `trips.timezone` is used for exactly one thing: deciding
@@ -208,9 +241,13 @@ Derived at read time, never stored: `day_number = julianday(start_date) - julian
 `NULL` when the trip has no dates. Lodging covering a given day is
 `? BETWEEN start_date AND COALESCE(end_date, start_date)`.
 
-**Environment.** `GOOGLE_PLACES_API_KEY` joins `.env.example` uncommented, which means
-`scripts/check_env.sh` requires it on every instance — correct, since the skill loads on both.
-Places API must be enabled on the existing GCP project with billing attached.
+**Environment.** `GOOGLE_PLACES_API_KEY` joins `.env.example` **commented**, following the app
+channel's precedent for a key not every instance can use yet. The skill loading on an instance does
+not mean the key is needed there — only the place-search tool calls Places, and until that exists an
+uncommented key would make `check_env.sh` report drift everywhere for a capability nobody has. It is
+uncommented in the same change that ships place search. **Places API (New)** — not the frozen legacy
+Places API — must be enabled with billing on the GCP project that already serves
+`tools/google_health`.
 
 ### Secrets migration — required before this ships to prod
 
@@ -247,7 +284,7 @@ Registered `@tool_register(namespace="travel", destructive=...)` above `@tool`.
 
 | Tool | Actions | Notes |
 |---|---|---|
-| `manage_place` | `search`, `save`, `update`, `delete` | `search` calls Places Text Search and returns ~5 candidates with `google_place_id`, address and a disambiguator. `delete` refuses while referenced. |
+| `manage_place` | `search`, `save`, `update`, `delete` | `search` POSTs to `places.googleapis.com/v1/places:searchText` with the constant Pro field mask and returns ~5 candidates with `google_place_id`, address and a disambiguator. `delete` refuses while referenced. |
 | `manage_trip` | `create`, `update`, `set_current`, `archive`, `delete`, `list` | `create` claims `is_current` only if unheld. `update` with new dates performs the shift described above. `delete` is `destructive=True` + confirmation. |
 | `manage_wishlist` | `add`, `remove`, `list` | `add` takes either a `google_place_id` or inline place details (get-or-create). `list` groups by `category`. |
 | `manage_itinerary` | `schedule`, `reschedule`, `unschedule`, `remove`, `list` | `schedule` is also the promote path — a wishlist row stays put. Refuses on an undated trip. |
@@ -347,6 +384,13 @@ above, which is a design aid and will drift.
 
 Places is the first **metered, per-request** external dependency in the system. Nothing currently
 counts it, and the existing cost surface cannot absorb it as-is.
+
+**What this is actually for.** At the Pro tier's 5,000 free monthly lookups, single-user traffic will
+not approach a bill, so metering is not cost control — it is the detector for a **tier slip**. A
+field added to the mask silently moves the SKU, cutting the free allowance fivefold with no error
+anywhere; a request count plus the mask in use is what makes that visible before a bill does. Size
+the work to that purpose: a counter and the active mask are worth more here than a precise
+dollar figure.
 
 Where it doesn't fit today:
 
