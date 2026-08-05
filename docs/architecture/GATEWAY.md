@@ -248,6 +248,78 @@ async def register_command_menu(self) -> None:
 
 ---
 
+## App Surfaces
+
+`gateway/apps/` is the **structured, request/response** surface on Plane 1 — the agent declares things it can answer directly, and a channel with somewhere to show them (the jarvis-app hub's Apps screen) publishes the list in its own wire shape. Deliberately parallel to `gateway/commands/`: same "below the agent, above any one channel" position, same rule that declaring is agent-level while publishing is channel-level. The difference is the shape of the answer — a slash command returns markdown for a human to read, an app entry returns **structured data for a client to render**.
+
+There is **no model in this path.** Dispatch is deterministic.
+
+### Module shape
+
+```
+gateway/apps/
+├── registry.py   # mechanism — AppSpec/AppEntry, register_app, list_apps, dispatch, AppError codes
+├── specs.py      # content — one import line per app; the single file that says which exist
+├── memory.py     # the "memory" app — read-only list/read over MEMORY_DIR
+└── __init__.py   # re-exports the registry and imports specs so registration precedes first use
+```
+
+### Contract
+
+```python
+Handler = Callable[[dict[str, str]], Awaitable[Any]]
+
+AppEntry(id: str, method: str, params: tuple[str, ...], handler: Handler)
+AppSpec(ns: str, name: str, entries: tuple[AppEntry, ...])
+
+def register_app(spec) -> AppSpec         # validates at import; returns the spec
+def list_apps() -> list[AppSpec]           # sorted by ns; what a channel publishes
+async def dispatch(ns, entry_id, params) -> Any
+```
+
+`ns`, entry `id` and param names are identifiers (`^[a-z][a-z0-9_]{0,31}$`), `name` is 1–64 chars of free text. All of it is checked **at registration — i.e. at import**, and an app with no entries, or an entry with no handler, is refused. That is deliberate: publishing a manifest is best-effort (a channel logs a rejected declare and carries on), so an unvalidated typo would surface only as an Apps screen that is mysteriously empty. Failing loudly at startup is the whole point of validating a second time.
+
+`method` is `GET` or `POST`. HTTP verbs are used on purpose despite this module naming no transport: they are the precise vocabulary for "safe and idempotent" versus "mutating," and they let a channel refuse a write to a read-only entry without a round-trip. A channel speaking something else maps out of these verbs.
+
+`params` is the **closed set** of names an entry accepts. `dispatch` re-checks it even when the channel already filtered — this is the layer that knows what was declared, and it has to hold for a channel that filters nothing.
+
+### Error vocabulary — closed on purpose
+
+| Exception | `code` | Means |
+|---|---|---|
+| `AppNotFound` | `not_found` | No such app, entry, or addressed thing |
+| `AppInvalidRequest` | `invalid_request` | Undeclared param, missing required one, or a value the entry can't act on |
+
+A channel maps these to its own status codes, so an unrecognised value would hand this side control of the transport's status vocabulary. Raise one of the two. Anything **else** a handler raises propagates as-is and is the caller's to report as an internal fault — never blamed on the request.
+
+### The queue-split rule
+
+**An app query must never share the turn queue.** A channel's turn consumer is serialised so two messages can't run overlapping LLM turns on one thread. That reason does not reach a query: it names no thread and needs no model, while a client is parked on it with a timeout shorter than a turn can take. Sharing the queue wouldn't make queries slow — it would fail them outright whenever a conversation happened to be in flight, and it would read as a flaky hub rather than a queueing bug. Queries therefore split off at **fetch** time, onto their own queue and drain task (`gateway/channels/jarvis_app/router.py`).
+
+For the same reason, every blocking call inside a handler goes through `asyncio.to_thread`. One event loop serves the poll, the in-flight turn, and the query drain; a synchronous filesystem read re-couples exactly what the queue split decoupled.
+
+### The security line
+
+Param values arrive **uninterpreted** — a relay bounds their length and nothing else, because judging a path would mean knowing what the app means by one. So `../../secrets/.env` reaches a handler verbatim, and resolution inside the handler is the only defence there is.
+
+`gateway/apps/memory.py` therefore **imports** `_get_safe_path` from `tools/core/memory.py` rather than reimplementing it — a second copy of a security boundary is one that can drift, and the copy is always the one with less scrutiny. It adds one guard on top: `_get_safe_path` resolves with `abspath`, which does not follow symlinks, so a link inside the tree pointing out of it passes. That is tolerable for a local tool the agent drives; this surface is reachable from a device, so it also requires the **real** path to stay contained (#73). An extra guard, never a replacement.
+
+The memory app also walks `MEMORY_DIR` directly instead of calling the memory *tools*: their output is English written for a model, and parsing it here would ship a client that reads prose and breaks when a docstring is reworded.
+
+### Channel publication — optional, same as command menus
+
+A channel publishes the manifest only if it has an Apps surface; one that doesn't simply never calls `list_apps()` and needs no stub. The jarvis-app channel maps `AppSpec`/`AppEntry` into the hub's wire shape at the boundary, so the registry stays channel-agnostic, and declares **at startup and on every reconnect** — the hub holds its registry in memory, so a hub restart forgets it, and the degraded→reachable transition is the only place that knows a link was re-made. A declare replaces the whole list, so re-sending is idempotent. A failed declare is logged, never fatal.
+
+> **Nothing is served until the process restarts.** The agent imports these modules once at boot. A surface that is written, committed, and correct still answers nothing until the service is bounced, and the failure is silent from the client's side: the update is fetched, the offset advances, and an unknown update type is dropped on an early return. A query that times out with no agent-side log at all is this, not a handler bug — check process start time against source mtimes first.
+
+### What does *not* belong here
+
+- **Anything needing the model.** If answering requires reasoning, it's a tool or a turn, not an app entry.
+- **Long-running work.** A client is parked on the answer with a short timeout.
+- **Channel-specific shapes.** The registry names no transport, no URL, and no channel; `id` is an identifier the agent routes on, never a URL path.
+
+---
+
 ## Contracts
 
 ### `InboundMessage` (`gateway/base.py`)
@@ -494,12 +566,14 @@ Concrete steps to add an `email` (or `whatsapp`, etc.) channel after Phase 1 lan
 6. **Wire startup in `main.py`** — call the factory and `await stack.start()`. That's the whole host-side footprint.
 7. **Update `thread_id` convention** — use `email_<sanitized_address>` (or whatever format suits the channel's identifier domain).
 8. **(Optional) Surface slash commands.** Slash commands already work on the new channel for free — `process_inbound_message` calls `try_handle_command` before the agent regardless of which channel produced the `InboundMessage`. If your channel has a native command-menu / autocomplete / help-footer surface, add a method on the channel (mirroring Telegram's `register_command_menu()`) that calls `gateway.commands.list_commands()` and renders the list in protocol-native form; have `main.py` invoke it once at startup. No protocol → skip; `/help` is the universal fallback.
-9. **Test** following the verification protocol in [docs/plans/ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md). At minimum: inbound text → reply, proactive send via heartbeat, destructive-tool confirmation flow, a slash command (e.g. `/help`).
+9. **(Optional) Surface app queries.** Same shape as step 8, and same "skip it if there's nowhere to show it" rule. If your channel has a structured-surface affordance, publish `gateway.apps.list_apps()` in your protocol's wire shape (declare at startup **and** on reconnect if the far side holds the registry in memory), and route inbound queries to `gateway.apps.dispatch(ns, entry_id, params)` — on their **own queue**, never the turn queue (see App Surfaces § the queue-split rule). Map `AppNotFound`/`AppInvalidRequest` to your transport's statuses; report anything else as an internal fault. A channel with no such surface skips this entirely and needs no stub.
+10. **Test** following the verification protocol in [docs/plans/ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md). At minimum: inbound text → reply, proactive send via heartbeat, destructive-tool confirmation flow, a slash command (e.g. `/help`).
 
 What you should **not** need to touch when adding a channel:
 - Any file under `tools/` or `agent.py`.
 - `heartbeat.py`.
 - `gateway/commands/` — slash commands are inherited; handlers stay channel-agnostic.
+- `gateway/apps/` — app surfaces are declared once, agent-side; only *publishing* them is channel work, and only if your channel has somewhere to show them.
 - The `Confirmation` or `Channel` ABCs (if you do, the abstraction has leaked — push back).
 
 ---
