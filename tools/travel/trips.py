@@ -109,6 +109,11 @@ def manage_trip(
         notes: free text about the trip as a whole.
     """
     action = (action or "").strip().lower()
+    if action not in ("list", "create", "update", "set_current", "archive", "delete",):
+        # Checked before anything else is required: an unknown action must not
+        # be reported as a missing id, which is what the model would then try to
+        # fix.
+        return f"Error: Unknown action {action!r}. Use one of: list, create, update, set_current, archive, delete."
     conn = _get_db()
     try:
         try:
@@ -145,10 +150,6 @@ def manage_trip(
             if action == "delete":
                 return _delete_trip(conn, trip)
 
-            raise TravelError(
-                f"Unknown action {action!r}. Use one of: "
-                "list, create, update, set_current, archive, delete."
-            )
         except TravelError as e:
             return f"Error: {e}"
     finally:

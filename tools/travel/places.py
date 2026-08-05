@@ -404,6 +404,11 @@ def manage_place(
             not know, or to correct a bucket that came out wrong.
     """
     action = (action or "").strip().lower()
+    if action not in ("search", "save", "list", "update", "delete",):
+        # Checked before anything else is required: an unknown action must not
+        # be reported as a missing id, which is what the model would then try to
+        # fix.
+        return f"Error: Unknown action {action!r}. Use one of: search, save, list, update, delete."
     conn = _get_db()
     try:
         try:
@@ -487,9 +492,6 @@ def manage_place(
             if action == "delete":
                 return _delete_place(conn, place)
 
-            raise TravelError(
-                f"Unknown action {action!r}. Use one of: search, save, list, update, delete."
-            )
         except TravelError as e:
             return f"Error: {e}"
     finally:
@@ -520,3 +522,56 @@ def _delete_place(conn: sqlite3.Connection, place: sqlite3.Row) -> str:
     conn.execute("DELETE FROM places WHERE place_id = ?", (pid,))
     conn.commit()
     return f"Deleted place {pid} — {place['title']}."
+
+def _resolve_place(
+    conn: sqlite3.Connection,
+    place_id: int,
+    google_place_id: str,
+    title: str,
+    address: str,
+    maps_url: str,
+    category: str,
+) -> int:
+    """Find or create the place this wishlist row will point at.
+
+    Three ways in, in order of how much they can be trusted: an id already in
+    hand, Google's id (which dedupes exactly), or a bare title for somewhere
+    Google does not know. The inline forms exist so the common path is one call
+    — the model should not have to orchestrate two tools to write down a
+    restaurant.
+    """
+    if place_id:
+        row = conn.execute(
+            "SELECT place_id FROM places WHERE place_id = ?", (place_id,)
+        ).fetchone()
+        if row is None:
+            raise TravelError(
+                f"No place with id {place_id}. Saved places:\n{_place_lines(conn)}"
+            )
+        return place_id
+
+    gid = google_place_id.strip() or None
+    if not gid and not title.strip():
+        raise TravelError(
+            "add needs a place: pass place_id, or google_place_id from a "
+            "manage_place search, or at least a title."
+        )
+
+    fields = dict(_SEARCH_CACHE.get(gid, {})) if gid else {}
+    resolved_title = title.strip() or fields.get("title") or ""
+    if not resolved_title:
+        raise TravelError(
+            f"google_place_id {gid!r} is not from a recent search, so there is no "
+            "title for it. Search for the place again, or pass a title."
+        )
+    fields.update({
+        "google_place_id": gid,
+        "title": resolved_title,
+        "address": address.strip() or fields.get("address"),
+        "maps_url": maps_url.strip() or fields.get("maps_url"),
+        "category": _validate_category(category) or _categorize(fields.get("google_type")),
+    })
+    for k in ("lat", "lng", "google_type", "google_type_label", "google_types"):
+        fields.setdefault(k, None)
+    new_id, _ = _upsert_place(conn, fields)
+    return new_id

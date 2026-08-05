@@ -11,13 +11,7 @@ from langchain_core.tools import tool
 
 from tools.registry import tool_register
 from tools.travel._db import TravelError, _get_db, _require_trip
-from tools.travel.places import (
-    CATEGORIES,
-    _categorize,
-    _place_lines,
-    _upsert_place,
-    _validate_category,
-)
+from tools.travel.places import CATEGORIES, _resolve_place
 
 # Undecided sorts last: a place nothing could classify is the one you want at
 # the bottom of the list, not interleaved with the headings that mean something.
@@ -63,60 +57,6 @@ def _wishlist_lines(conn: sqlite3.Connection, trip_id: str) -> str:
     return "\n".join(out)
 
 
-def _resolve_place(
-    conn: sqlite3.Connection,
-    place_id: int,
-    google_place_id: str,
-    title: str,
-    address: str,
-    maps_url: str,
-    category: str,
-) -> int:
-    """Find or create the place this wishlist row will point at.
-
-    Three ways in, in order of how much they can be trusted: an id already in
-    hand, Google's id (which dedupes exactly), or a bare title for somewhere
-    Google does not know. The inline forms exist so the common path is one call
-    — the model should not have to orchestrate two tools to write down a
-    restaurant.
-    """
-    if place_id:
-        row = conn.execute(
-            "SELECT place_id FROM places WHERE place_id = ?", (place_id,)
-        ).fetchone()
-        if row is None:
-            raise TravelError(
-                f"No place with id {place_id}. Saved places:\n{_place_lines(conn)}"
-            )
-        return place_id
-
-    gid = google_place_id.strip() or None
-    if not gid and not title.strip():
-        raise TravelError(
-            "add needs a place: pass place_id, or google_place_id from a "
-            "manage_place search, or at least a title."
-        )
-
-    from tools.travel.places import _SEARCH_CACHE
-
-    fields = dict(_SEARCH_CACHE.get(gid, {})) if gid else {}
-    resolved_title = title.strip() or fields.get("title") or ""
-    if not resolved_title:
-        raise TravelError(
-            f"google_place_id {gid!r} is not from a recent search, so there is no "
-            "title for it. Search for the place again, or pass a title."
-        )
-    fields.update({
-        "google_place_id": gid,
-        "title": resolved_title,
-        "address": address.strip() or fields.get("address"),
-        "maps_url": maps_url.strip() or fields.get("maps_url"),
-        "category": _validate_category(category) or _categorize(fields.get("google_type")),
-    })
-    for k in ("lat", "lng", "google_type", "google_type_label", "google_types"):
-        fields.setdefault(k, None)
-    new_id, _ = _upsert_place(conn, fields)
-    return new_id
 
 
 @tool_register(namespace="travel", destructive=True)
@@ -164,6 +104,11 @@ def manage_wishlist(
         priority: higher sorts first within its category. Leave 0 unless asked.
     """
     action = (action or "").strip().lower()
+    if action not in ("list", "add", "remove",):
+        # Checked before anything else is required: an unknown action must not
+        # be reported as a missing id, which is what the model would then try to
+        # fix.
+        return f"Error: Unknown action {action!r}. Use one of: list, add, remove."
     conn = _get_db()
     try:
         try:
@@ -225,7 +170,6 @@ def manage_wishlist(
                     "The saved place itself is kept."
                 )
 
-            raise TravelError(f"Unknown action {action!r}. Use one of: list, add, remove.")
         except TravelError as e:
             return f"Error: {e}"
     finally:

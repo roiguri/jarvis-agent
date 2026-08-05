@@ -31,7 +31,7 @@ os.environ["JARVIS_ROOT"] = _SCRATCH
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.travel import (  # noqa: E402
-    manage_place, manage_trip, manage_wishlist, query_travel_db,
+    manage_itinerary, manage_place, manage_trip, manage_wishlist, query_travel_db,
 )
 
 VERBOSE = False
@@ -240,7 +240,8 @@ def test_delete_cascade() -> None:
           contains="0")
 
     check("its scheduled rows went with it",
-          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM itinerary"),
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM itinerary WHERE trip_id='shift'"),
           contains="0")
 
     check("the saved place survived",
@@ -607,6 +608,153 @@ def test_manage_wishlist() -> None:
           contains=["unknown action", "add", "remove"])
 
 
+# ---------------------------------------------------------------------------
+# manage_itinerary
+# ---------------------------------------------------------------------------
+
+
+def test_manage_itinerary() -> None:
+    section("manage_itinerary — scheduling needs a dated trip")
+
+    call(manage_trip, action="create", trip_id="it0", destination="Undated Town")
+    check("an undated trip refuses, and says how to fix it",
+          call(manage_itinerary, action="schedule", trip_id="it0",
+               title="Anything", date="2027-01-01"),
+          contains=["no dates yet", "manage_trip", "wishlist"])
+
+    call(manage_trip, action="create", trip_id="it", destination="Itinerary City",
+         start_date="2027-03-10", end_date="2027-03-14")
+
+    check("an empty schedule says so", call(manage_itinerary, action="list", trip_id="it"),
+          contains="nothing scheduled")
+
+    check("schedule needs a date",
+          call(manage_itinerary, action="schedule", trip_id="it", title="X"),
+          contains="needs a date")
+
+    check("schedule needs something to schedule",
+          call(manage_itinerary, action="schedule", trip_id="it", date="2027-03-11"),
+          contains="needs something to schedule")
+
+    check("a bad time is refused",
+          call(manage_itinerary, action="schedule", trip_id="it", title="X",
+               date="2027-03-11", start_time="9am"),
+          contains="24-hour hh:mm")
+
+    check("an end before a start on one day is refused",
+          call(manage_itinerary, action="schedule", trip_id="it", title="X",
+               date="2027-03-11", start_time="14:00", end_time="09:00"),
+          contains="before start_time")
+
+    check("an unknown item_type lists the real ones",
+          call(manage_itinerary, action="schedule", trip_id="it", title="X",
+               date="2027-03-11", item_type="reservation"),
+          contains=["unknown item_type", "lodging", "transit"])
+
+    check("a transit leg with no title is refused",
+          call(manage_itinerary, action="schedule", trip_id="it",
+               date="2027-03-11", item_type="transit"),
+          contains="needs a title")
+
+    section("manage_itinerary — day numbers derive, edges are flagged")
+
+    check("scheduling reports the derived day number",
+          call(manage_itinerary, action="schedule", trip_id="it", place_id=1,
+               date="2027-03-11", start_time="13:00", end_time="14:30"),
+          contains=["scheduled", "day 2", "13:00"])
+
+    check("a night-before item is accepted and flagged, not refused",
+          call(manage_itinerary, action="schedule", trip_id="it", title="Red-eye out",
+               item_type="transit", date="2027-03-09", start_time="23:40",
+               origin="Home", destination_loc="Airport"),
+          contains=["scheduled", "outside the trip window", "edge day"])
+
+    check("a booking says it will not be moved",
+          call(manage_itinerary, action="schedule", trip_id="it", title="Hotel Splendid",
+               item_type="lodging", date="2027-03-10", end_date="2027-03-14",
+               confirmation_code="BK-1"),
+          contains=["scheduled", "not be moved"])
+
+    check("a transit leg is not turned into a saved place",
+          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM places WHERE title='Red-eye out'"),
+          contains="0")
+
+    out = call(manage_itinerary, action="list", trip_id="it")
+    check("stays are lifted out of the day list", out, contains=["STAYS", "Hotel Splendid"])
+    check("the stay shows its span", out, contains="2027-03-10 → 2027-03-14")
+    check("days are numbered from the trip's start", out, contains="Day 2 · 2027-03-11")
+    check("a pre-trip day is labelled, not numbered", out, contains="before day 1")
+    check("transit shows its endpoints", out, contains="Home → Airport")
+
+    section("manage_itinerary — the wishlist is never consumed")
+
+    call(manage_wishlist, action="add", trip_id="it", place_id=2)
+    before = call(query_travel_db,
+                  sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2")
+    call(manage_itinerary, action="schedule", trip_id="it", place_id=2, date="2027-03-12")
+    check("scheduling a wishlisted place leaves the wishlist row alone",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2"),
+          contains="1")
+    check("(it was there before too)", before, contains="1")
+
+    check("the same place can be scheduled twice",
+          call(manage_itinerary, action="schedule", trip_id="it", place_id=2,
+               date="2027-03-13", start_time="19:00"),
+          contains="scheduled")
+    check("two entries for one place",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM itinerary WHERE trip_id='it' AND place_id=2"),
+          contains="2")
+
+    section("manage_itinerary — reschedule, unschedule, remove")
+
+    check("a wrong entry_id shows the itinerary",
+          call(manage_itinerary, action="reschedule", trip_id="it", entry_id=9999,
+               date="2027-03-12"),
+          contains=["no entry 9999", "itinerary"])
+
+    check("reschedule with nothing to change is a no-op",
+          call(manage_itinerary, action="reschedule", trip_id="it", entry_id=1),
+          contains="nothing to change")
+
+    check("moving an entry reports what moved",
+          call(manage_itinerary, action="reschedule", trip_id="it", entry_id=1,
+               date="2027-03-13", start_time="18:00"),
+          contains=["moved", "2027-03-13", "18:00"])
+
+    check("moving something outside the window flags it",
+          call(manage_itinerary, action="reschedule", trip_id="it", entry_id=1,
+               date="2027-04-01"),
+          contains="outside the trip window")
+
+    check("unschedule puts the place back on the wishlist",
+          call(manage_itinerary, action="unschedule", trip_id="it", entry_id=1),
+          contains=["unscheduled", "wishlist"])
+
+    check("and it really is there",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=1"),
+          contains="1")
+
+    check("unscheduling a note says there was nothing to put back",
+          call(manage_itinerary, action="unschedule", trip_id="it", entry_id=2),
+          contains="nothing to put back")
+
+    check("remove deletes without touching the wishlist",
+          call(manage_itinerary, action="remove", trip_id="it", entry_id=4),
+          contains="removed")
+
+    check("the place it pointed at is still wishlisted",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2"),
+          contains="1")
+
+    check("unknown action lists the real actions",
+          call(manage_itinerary, action="frobnicate", trip_id="it"),
+          contains=["unknown action", "schedule", "unschedule"])
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -629,6 +777,7 @@ def main() -> int:
         test_categories()
         test_search_guards()
         test_manage_wishlist()
+        test_manage_itinerary()
         test_trip_date_shift()
         test_delete_cascade()
     finally:

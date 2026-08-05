@@ -32,9 +32,12 @@ should not be implemented from.
       `scripts/test_travel.py` (63 checks) and live against the real Places API
 - [x] `manage_wishlist` — add / remove / list — verified by `scripts/test_travel.py`
       (86 checks) and live on staging, grouped headings included
-- [ ] `manage_itinerary` — schedule / reschedule / unschedule / remove / list
-- [ ] `SKILL.md` rule when itinerary lands: always record a booking's confirmation code — it is
-      the only thing that stops a row being re-dated when the trip moves
+- [x] `manage_itinerary` — schedule / reschedule / unschedule / remove / list — verified by
+      `scripts/test_travel.py` (117 checks) and live on staging
+- [x] `SKILL.md` rule: always record a booking's confirmation code — it is the only thing that
+      stops a row being re-dated when the trip moves
+- [x] `SKILL.md` rule added after live testing: never widen a trip's dates as a side effect of
+      adding an item — schedule it outside the window and say so instead
 - [x] `GOOGLE_PLACES_API_KEY` uncommented in `.env.example` — place search now calls it
 - [x] `category` vocabulary settled (below); no schema migration ships — instances are
       migrated by hand, as staging was
