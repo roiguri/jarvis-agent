@@ -30,7 +30,8 @@ should not be implemented from.
 - [x] Confirmation wired on `manage_trip(action="delete")` only
 - [x] `manage_place` — search / save / list / update / delete — verified by
       `scripts/test_travel.py` (63 checks) and live against the real Places API
-- [ ] `manage_wishlist` — add / remove / list
+- [x] `manage_wishlist` — add / remove / list — verified by `scripts/test_travel.py`
+      (86 checks) and live on staging, grouped headings included
 - [ ] `manage_itinerary` — schedule / reschedule / unschedule / remove / list
 - [ ] `SKILL.md` rule when itinerary lands: always record a booking's confirmation code — it is
       the only thing that stops a row being re-dated when the trip moves

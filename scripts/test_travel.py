@@ -30,7 +30,9 @@ os.environ["JARVIS_ROOT"] = _SCRATCH
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.travel import manage_place, manage_trip, query_travel_db  # noqa: E402
+from tools.travel import (  # noqa: E402
+    manage_place, manage_trip, manage_wishlist, query_travel_db,
+)
 
 VERBOSE = False
 _passed = 0
@@ -486,6 +488,125 @@ def test_manage_place() -> None:
           contains="1")
 
 
+# ---------------------------------------------------------------------------
+# manage_wishlist
+# ---------------------------------------------------------------------------
+
+
+def test_manage_wishlist() -> None:
+    from tools.travel import places as places_mod
+
+    section("manage_wishlist — a trip's list, three ways in")
+
+    call(manage_trip, action="create", trip_id="wl", destination="Wishville")
+    call(manage_trip, action="create", trip_id="wl2", destination="Otherville")
+
+    check("an empty wishlist says so, by name",
+          call(manage_wishlist, action="list", trip_id="wl"),
+          contains="nothing on its wishlist")
+
+    check("a wrong trip lists the real ones",
+          call(manage_wishlist, action="list", trip_id="nope"),
+          contains=["no trip", "wl"])
+
+    check("add by existing place_id",
+          call(manage_wishlist, action="add", trip_id="wl", place_id=1,
+               notes="go before 11"),
+          contains="wishlist")
+
+    check("add by bare title creates the place",
+          call(manage_wishlist, action="add", trip_id="wl", title="Ana's kitchen",
+               address="a friend's flat", category="restaurant"),
+          contains="wishlist")
+
+    real_search = places_mod._search_places
+    places_mod._search_places = _fake_search
+    places_mod._TURN_SEARCHES.clear()
+    try:
+        call(manage_place, action="search", query="cafe central", near="Lisbon")
+        check("add by google_place_id, straight from a search",
+              call(manage_wishlist, action="add", trip_id="wl",
+                   google_place_id="ChIJ_branch_one"),
+              contains="wishlist")
+    finally:
+        places_mod._search_places = real_search
+
+    check("a google id nobody searched for is refused, not invented",
+          call(manage_wishlist, action="add", trip_id="wl",
+               google_place_id="ChIJ_never_seen"),
+          contains=["not from a recent search", "pass a title"])
+
+    check("add with nothing to identify a place is refused",
+          call(manage_wishlist, action="add", trip_id="wl"),
+          contains="needs a place")
+
+    check("an unknown place_id lists the saved places",
+          call(manage_wishlist, action="add", trip_id="wl", place_id=999),
+          contains="no place with id 999")
+
+    section("manage_wishlist — grouping, duplicates, independence")
+
+    out = call(manage_wishlist, action="list", trip_id="wl")
+    check("grouped under category headings", out,
+          contains=["RESTAURANT", "CAFE"])
+    check("the fine type shows under the coarse heading", out,
+          contains="Coffee Shop")
+    check("notes are carried", out, contains="go before 11")
+
+    check("re-adding is not an error",
+          call(manage_wishlist, action="add", trip_id="wl", place_id=1),
+          contains="already on")
+
+    check("re-adding with a note updates it instead of stranding it",
+          call(manage_wishlist, action="add", trip_id="wl", place_id=1,
+               notes="actually go at dawn"),
+          contains=["already", "updated its note"])
+
+    check("and the new note is what's stored",
+          call(manage_wishlist, action="list", trip_id="wl"),
+          contains="actually go at dawn", missing="go before 11")
+
+    check("the same place can sit on a second trip's wishlist",
+          call(manage_wishlist, action="add", trip_id="wl2", place_id=1),
+          contains="wishlist")
+
+    check("each trip's list is its own",
+          call(manage_wishlist, action="list", trip_id="wl2"),
+          contains="1 place(s)")
+
+    section("manage_wishlist — removal keeps the place")
+
+    check("remove without a place_id shows the list",
+          call(manage_wishlist, action="remove", trip_id="wl"),
+          contains=["needs a place_id", "wishlist"])
+
+    check("removing something not on the list says so",
+          call(manage_wishlist, action="remove", trip_id="wl", place_id=999),
+          contains="not on")
+
+    check("remove reports the place is kept",
+          call(manage_wishlist, action="remove", trip_id="wl", place_id=1),
+          contains=["removed place 1", "kept"])
+
+    check("gone from this trip",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='wl' AND place_id=1"),
+          contains="0")
+
+    check("still on the other trip's",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='wl2' AND place_id=1"),
+          contains="1")
+
+    check("and the place itself survived",
+          call(query_travel_db, sql="SELECT title FROM places WHERE place_id=1"),
+          contains="cafe central")
+
+    check("unknown action lists the real actions",
+          call(manage_wishlist, action="frobnicate", trip_id="wl"),
+          contains=["unknown action", "add", "remove"])
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -507,6 +628,7 @@ def main() -> int:
         test_manage_place()
         test_categories()
         test_search_guards()
+        test_manage_wishlist()
         test_trip_date_shift()
         test_delete_cascade()
     finally:

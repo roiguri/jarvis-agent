@@ -8,5 +8,6 @@ module, running its ``@tool_register`` side-effects.
 from tools.travel.places import manage_place  # noqa: F401
 from tools.travel.query import query_travel_db  # noqa: F401
 from tools.travel.trips import manage_trip  # noqa: F401
+from tools.travel.wishlist import manage_wishlist  # noqa: F401
 
-__all__ = ["manage_place", "manage_trip", "query_travel_db"]
+__all__ = ["manage_place", "manage_trip", "manage_wishlist", "query_travel_db"]
