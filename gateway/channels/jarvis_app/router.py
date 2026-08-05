@@ -267,6 +267,12 @@ class JarvisAppInboundRouter:
             # Nobody was waiting: timed out, hung up, or queued before a hub
             # restart. Expected, and unretryable — the park is gone.
             logger.info("jarvis-app query %s expired before it was answered", query_id)
+        else:
+            # The only positive trace that a query was served, and the only
+            # record of an AppError refusal — which is otherwise silent on this
+            # side even though this is the side issuing it.
+            outcome = "ok" if "data" in body else body["error"]["code"]
+            logger.info("jarvis-app served %s/%s -> %s", ns, entry_id, outcome)
 
     async def _handle(self, update: dict) -> None:
         if update.get("type") == "action":
