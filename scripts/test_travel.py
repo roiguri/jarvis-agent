@@ -755,6 +755,122 @@ def test_manage_itinerary() -> None:
           contains=["unknown action", "schedule", "unschedule"])
 
 
+# ---------------------------------------------------------------------------
+# the travel app surface (gateway/apps/travel.py)
+# ---------------------------------------------------------------------------
+
+
+def test_tile() -> None:
+    """The tile payload. Deterministic dispatch, no model — so this is the whole
+    contract the app client will be written against."""
+    import asyncio
+
+    from gateway.apps import AppError, dispatch
+
+    def tile(**params):
+        return asyncio.run(dispatch("travel", "tile", params))
+
+    def fails(**params):
+        try:
+            asyncio.run(dispatch("travel", "tile", params))
+            return "NO ERROR"
+        except AppError as e:
+            return f"{e.code}: {e}"
+
+    # This test owns its data: borrowing another test's leftovers made these
+    # assertions depend on what that test happened to delete.
+    call(manage_trip, action="create", trip_id="tile", destination="Tileburg",
+         start_date="2027-06-10", end_date="2027-06-14", timezone="Europe/Lisbon")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Night train in",
+         item_type="transit", date="2027-06-09", start_time="23:10",
+         origin="Home", destination_loc="Tileburg Centraal")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Hotel Tile",
+         item_type="lodging", date="2027-06-10", end_date="2027-06-14",
+         confirmation_code="BK-TILE")
+    call(manage_itinerary, action="schedule", trip_id="tile", place_id=1,
+         date="2027-06-11", start_time="13:00", end_time="14:30")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Nap",
+         item_type="note", date="2027-06-11")
+    call(manage_wishlist, action="add", trip_id="tile", place_id=2)
+    call(manage_wishlist, action="add", trip_id="tile", place_id=1, notes="go at dawn")
+
+    section("travel tile — addressing a trip")
+
+    check("an unknown trip is not_found", fails(trip_id="nope"),
+          contains="not_found")
+
+    check("an undeclared param is refused before any handler runs",
+          fails(path="../../secrets/.env"), contains="invalid_request")
+
+    d = tile(trip_id="tile")
+    check("the addressed trip comes back", str(d["trip"]["trip_id"]), contains="tile")
+    check("its timezone and position are resolved",
+          f"{d['trip']['position']} {d['trip']['timezone']}",
+          contains=["before", "Europe/Lisbon"])
+
+    section("travel tile — the day strip")
+
+    dates = [x["date"] for x in d["days"]]
+    check("every day of the trip is present, including empty ones",
+          str(len(dates)), contains="6")   # 5 in-window + 1 edge day
+    check("empty middle days are not skipped",
+          str([x["date"] for x in d["days"] if not x["items"]]),
+          contains=["2027-06-12", "2027-06-13", "2027-06-14"])
+    check("an out-of-window day is included and flagged",
+          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-09"]),
+          contains="True")
+    check("in-window days are not flagged",
+          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-11"]),
+          contains="False")
+    check("day numbers count from the trip's start",
+          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-11"]),
+          contains="2")
+    check("a pre-trip day gets a number below 1 rather than a fake one",
+          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-09"]),
+          contains="0")
+    check("days are sorted", str(dates == sorted(dates)), contains="true")
+
+    section("travel tile — stays, items, wishlist")
+
+    check("a stay is lifted out of the day list",
+          str([x["title"] for x in d["lodging"]]), contains="Hotel Tile")
+    check("and does not also appear inside a day",
+          str([i["item_type"] for day in d["days"] for i in day["items"]]),
+          missing="lodging")
+    check("a stay carries its span and its booking",
+          f"{d['lodging'][0]['end_date']} {d['lodging'][0]['confirmation_code']}",
+          contains=["2027-06-14", "BK-TILE"])
+
+    items = [i for day in d["days"] for i in day["items"]]
+    check("a transit leg has no place object, and keeps its endpoints",
+          str([(i["place"], i["origin"], i["destination_loc"])
+               for i in items if i["item_type"] == "transit"]),
+          contains=["None", "Tileburg Centraal"])
+    check("a place-backed item carries its place",
+          str([i["place"]["title"] for i in items if i["place"]]),
+          contains="cafe central")
+    check("every item has a title the client can render",
+          "ok" if all(i["title"] for i in items) else "missing", contains="ok")
+    check("an untimed item still appears, sorted after timed ones",
+          str([i["title"] for day in d["days"] if day["date"] == "2027-06-11"
+               for i in day["items"]]),
+          contains="Nap")
+
+    check("the wishlist is grouped, in the vocabulary's own order",
+          str([g["category"] for g in d["wishlist"]]),
+          contains="['restaurant', 'cafe']")
+    check("wishlist items carry their note and place details",
+          str(d["wishlist"][1]["items"][0]),
+          contains=["go at dawn", "Coffee Shop"])
+
+    section("travel tile — empty states are not errors")
+
+    d0 = tile(trip_id="it0")
+    check("an undated trip returns a trip with no days, not an error",
+          f"{d0['trip']['trip_id']} days={len(d0['days'])} pos={d0['trip']['position']}",
+          contains=["it0", "days=0", "undated"])
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -778,6 +894,7 @@ def main() -> int:
         test_search_guards()
         test_manage_wishlist()
         test_manage_itinerary()
+        test_tile()
         test_trip_date_shift()
         test_delete_cascade()
     finally:

@@ -42,11 +42,12 @@ should not be implemented from.
 - [x] `category` vocabulary settled (below); no schema migration ships — instances are
       migrated by hand, as staging was
 
-**Phase 3 — app surface (agent side)**
-- [ ] `gateway/apps/travel.py` — `AppSpec(ns="travel")`, one `GET tile` entry
-- [ ] One import line in `gateway/apps/specs.py`
-- [ ] Every blocking call through `asyncio.to_thread` (the queue-split rule)
-- [ ] `scripts/ci/check_channel_agnostic.py` stays green
+**Phase 3 — app surface (agent side)** — **BUILT, pending a restart + hub declare**
+- [x] `gateway/apps/travel.py` — `AppSpec(ns="travel")`, one `GET tile` entry
+- [x] One import line in `gateway/apps/specs.py`
+- [x] Every blocking call through `asyncio.to_thread` (the queue-split rule)
+- [x] `scripts/ci/check_channel_agnostic.py` green; 138 checks in `scripts/test_travel.py`
+- [ ] Live: restart, confirm the hub receives a two-app manifest, and fetch the tile
 
 **Phase 4 — app client** *(handoff to `roiguri/jarvis-app`)*
 - [ ] Handoff spec written from the shipped tile payload, not from this document
@@ -338,13 +339,25 @@ Payload sketch — settled during implementation, and the handoff is written fro
 ships:
 
 ```
-trip      trip_id, destination, start_date, end_date, timezone, status,
-          today (in the trip's timezone), position (before|during|after)
-days      [{ date, day_number, outside_window }]      -- union of scheduled dates
-lodging   [ entries with item_type='lodging' ]        -- rendered as a banner, not a slot
-itinerary [ entries, grouped by date, sorted by start_time (NULLs last) ]
-wishlist  [ rows for this trip, grouped by place.category ]
+trip      trip_id, destination, start_date, end_date, timezone, status, is_current,
+          notes, today (in the trip's timezone), position (before|during|after|undated)
+days      [{ date, day_number, outside_window, is_today, items: [entry, ...] }]
+lodging   [ entry, ... ]      -- item_type='lodging', a banner rather than a slot
+wishlist  [{ category, items: [place, ...] }]
 ```
+
+**`days` carries its own items**, rather than the separate `itinerary` array this was first
+sketched with. Two arrays keyed by date would make the client join them to draw one screen, and
+would admit a state where they disagree. Every day of the trip is present including empty ones — a
+strip that skipped an empty Wednesday would be wrong — plus any day outside the window that holds
+something, flagged, with a `day_number` below 1 rather than a fabricated one. Untimed items sort
+after timed ones within a day: an item with no time is not a midnight item.
+
+`trip: null` with empty arrays is the answer when no trip is pinned. That is a legitimate state, and
+a `not_found` there would make an empty screen indistinguishable from a broken one; an explicitly
+requested trip that does not exist **is** `AppNotFound`. The connection is opened read-only at the
+URI level, so a device cannot write to this database even if a handler were wrong about what it was
+doing.
 
 **Why one entry and not several.** Entries serve navigation steps the client makes, not data types.
 The memory app splits `list` from `read` because it is an unbounded tree that must be browsed, with
