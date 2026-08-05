@@ -23,44 +23,23 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── main.py                # Entry point
-├── gateway/                   # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
-│   ├── base.py                # Channel ABC + InboundMessage (neutral contracts)
-│   ├── outbox.py              # Outbox — single owner-send seam (log-on-success, SendOutcome, thread→loop bridge)
-│   ├── factory.py             # build_telegram_stack(); default_outbox(); get_confirmation(); default_owner_thread_id()
-│   ├── confirmation/          # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
-│   ├── commands/              # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
-│   │   ├── router.py          #   @command decorator + try_handle_command(inbound) entry point
-│   │   ├── handlers.py        #   built-in handlers (/help, /clear, /skills, /status, /memory, /heartbeat, /logs)
-│   │   └── format.py          #   reply-layout helpers (section/kv_section/document/join) + check_reply
-│   ├── channels/              # Concrete channels, one dir each
-│   │   └── telegram/          # ONLY Telegram-specific code: channel.py, router.py, confirmation.py, host.py (PTB lifecycle)
-│   └── webhook/               # Channel-agnostic: server.py (FastAPI), notifier.py (media aggregator)
-├── prompts/                   # DEV-controlled prompt content (committed, NOT agent-writable)
-│   ├── AGENTS.md              # Operating rules — read into every system prompt
-│   └── heartbeat.md           # Heartbeat-scope-only tick rules ([NO_ACTION] contract)
-├── tools/
-│   ├── __init__.py            # Populates the registry (registry.import_all); no tool list
-│   ├── registry.py            # @tool_register, get_tools/find (scoped), compact_skill_list, SKILL.md parsing
-│   ├── core/                  # Always-on tools (namespace="core")
-│   │   ├── memory.py          # write/read/list/delete_memory + path sandbox
-│   │   ├── search.py          # web_search
-│   │   ├── history.py         # get_chat_history, get_notification_history (logs only — no media)
-│   │   ├── scheduling.py      # manage_reminder
-│   │   ├── heartbeat.py       # heartbeat_respond tick-ack + manage_heartbeat_task authoring
-│   │   └── activate_skill.py  # activate_skill / deactivate_skill meta-tools
-│   ├── media/                 # "media" parent skill — SKILL.md + _shared.py; owns NO tools (discovery index)
-│   │   ├── radarr/             #   sub-skill (namespace="media/radarr"): __init__.py + radarr.py + SKILL.md
-│   │   ├── sonarr/             #   sub-skill (namespace="media/sonarr")
-│   │   ├── prowlarr/           #   sub-skill (namespace="media/prowlarr")
-│   │   ├── jellyseerr/         #   sub-skill (namespace="media/jellyseerr")
-│   │   └── system/             #   sub-skill (namespace="media/system")
-│   └── fitness/               # "fitness" skill — SKILL.md + Arbox + workout/running logging
-├── observability/             # Per-turn LLM telemetry — app-layer infra, NOT an agent tool
-│   ├── telemetry.py           # ContextVars + record_turn_*/record_llm_call/record_tool_call
-│   └── usage.py               # load_turns / summarize_usage / format_usage_table / MODEL_PRICES
-├── scripts/
-│   └── trace.py               # Per-turn timeline: joins turns.jsonl + tool_calls.jsonl + chat/notif
-└── DEVELOPMENT.md             # Operational/dev runbook (env, constants, systemd, firewall, local testing)
+├── gateway/               # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
+│   ├── base.py            # Channel ABC + InboundMessage (neutral contracts)
+│   ├── outbox.py          # Outbox — single owner-send seam (log-on-success, SendOutcome, thread→loop bridge)
+│   ├── factory.py         # per-channel build_*_stack(); default_outbox(); get_confirmation(); default_owner_thread_id()
+│   ├── confirmation/      # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
+│   ├── commands/          # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
+│   ├── apps/              # Channel-agnostic structured surfaces — request/response, no model
+│   ├── channels/          # Concrete channels, one dir each (telegram/, jarvis_app/) — ONLY channel-specific code
+│   └── webhook/           # Channel-agnostic: FastAPI server + media notifier
+├── prompts/               # DEV-controlled prompt content, committed and NOT agent-writable: AGENTS.md
+│                          #   (always-on operating rules) + heartbeat.md (tick rules, [NO_ACTION] contract)
+├── tools/                 # registry.py is the mechanism (@tool_register, scoped get_tools, SKILL.md parsing);
+│                          #   core/ is always-on; every other dir is an activatable skill, and a parent skill
+│                          #   may own zero tools and nest sub-skills (see "Add a new tool" below)
+├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
+├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
+└── DEVELOPMENT.md         # Operational/dev runbook (env, constants, systemd, firewall, local testing)
 
 /app/jarvis_memory/        # ONLY genuine memory: markdown the agent both reads AND writes via memory tools
 ├── SOUL.md                # User-curated identity (protected — write requires button)
@@ -89,6 +68,13 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/secrets/.env          # API keys and tokens — DO NOT READ THIS FILE
 ```
+
+> **Granularity is deliberate.** The `/app/jarvis_code/` tree stops at directories, naming a file
+> only where that one file *is* the concept. Adding a module inside an existing directory needs no
+> edit here — only a new top-level concept does. Don't re-expand it to file level: an exhaustive
+> listing is what `ls` is for, and the two spots that had drifted before this rule (`scripts/`, and
+> `channels/` missing `jarvis_app/`) both drifted at file granularity. The memory and data trees
+> above stay file-granular because there their contents *are* the contract.
 
 ### Placement principle
 
