@@ -30,7 +30,7 @@ os.environ["JARVIS_ROOT"] = _SCRATCH
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.travel import manage_trip, query_travel_db  # noqa: E402
+from tools.travel import manage_place, manage_trip, query_travel_db  # noqa: E402
 
 VERBOSE = False
 _passed = 0
@@ -246,6 +246,246 @@ def test_delete_cascade() -> None:
           contains="Somewhere")
 
 
+# ---------------------------------------------------------------------------
+# manage_place
+# ---------------------------------------------------------------------------
+
+# Two branches of one chain plus an unrelated hit — the case the whole
+# search-then-save split exists for. Shaped exactly like a Text Search reply so
+# _flatten is exercised on the real structure, not a convenient one.
+FAKE_PLACES = [
+    {
+        "id": "ChIJ_branch_one",
+        "displayName": {"text": "Cafe Central — Baixa"},
+        "formattedAddress": "Rua Augusta 1, Lisboa",
+        "location": {"latitude": 38.7107, "longitude": -9.1373},
+        "types": ["coffee_shop", "cafe", "food", "point_of_interest"],
+        "primaryType": "coffee_shop",
+        "primaryTypeDisplayName": {"text": "Coffee Shop"},
+        "googleMapsUri": "https://maps.google.com/?cid=1",
+    },
+    {
+        "id": "ChIJ_branch_two",
+        "displayName": {"text": "Cafe Central — Alfama"},
+        "formattedAddress": "Largo do Chafariz 8, Lisboa",
+        "location": {"latitude": 38.7128, "longitude": -9.1281},
+        "types": ["italian_restaurant", "restaurant", "food"],
+        "primaryType": "italian_restaurant",
+        "primaryTypeDisplayName": {"text": "Italian Restaurant"},
+        "googleMapsUri": "https://maps.google.com/?cid=2",
+    },
+]
+
+
+_api_calls = 0
+
+
+def _fake_search(query: str, near: str) -> list:
+    global _api_calls
+    _api_calls += 1
+    return FAKE_PLACES
+
+
+def test_categories() -> None:
+    """Bucketing: the exact table, the suffix fallback, and the cases that must
+    stay undecided rather than be filed wrongly."""
+    from tools.travel.places import CATEGORIES, _categorize
+
+    section("manage_place — bucketing Google's types")
+
+    cases = [
+        ("pastry_shop", "dessert"), ("ice_cream_shop", "dessert"),
+        ("coffee_shop", "cafe"), ("cafe", "cafe"),
+        ("kebab_shop", "restaurant"),       # a real type we have actually seen
+        ("barber_shop", None),              # unknown _shop: undecided, not shopping
+        ("italian_restaurant", "restaurant"),   # via suffix
+        ("ramen_restaurant", "restaurant"),     # a cuisine nobody enumerated
+        ("sandwich_shop", "restaurant"),        # named, because the suffix would lie
+        ("wine_bar", "bar"), ("farmers_market", "market"),
+        ("museum", "sights"), ("historical_landmark", "sights"),
+        ("botanical_garden", "outdoors"), ("beach", "outdoors"),
+        ("subway_station", "transit"),          # via suffix
+        ("book_store", "shopping"),             # via suffix
+        ("hotel", "lodging"),
+        ("dentist", None), ("", None), (None, None),
+    ]
+    wrong = [(t, _categorize(t), want) for t, want in cases if _categorize(t) != want]
+    check(f"{len(cases)} type mappings", "ok" if not wrong else f"wrong: {wrong}",
+          contains="ok")
+
+    check("every mapped bucket is in the closed vocabulary",
+          "ok" if all(v in CATEGORIES for v in _TYPE_VALUES()) else "drifted",
+          contains="ok")
+
+    check("a category outside the vocabulary is refused",
+          call(manage_place, action="save", title="X", category="delicious"),
+          contains=["unknown category", "restaurant", "other"])
+
+
+def _TYPE_VALUES():
+    from tools.travel.places import _TYPE_TO_CATEGORY, _SUFFIX_RULES
+
+    return list(_TYPE_TO_CATEGORY.values()) + [b for _, b in _SUFFIX_RULES]
+
+
+def test_search_guards() -> None:
+    """The loop guards: a repeated query must not reach the API, and a run of
+    distinct ones must stop with advice rather than an error to retry."""
+    from tools.travel import places as places_mod
+
+    section("manage_place — loop guards")
+
+    global _api_calls
+    real_search = places_mod._search_places
+    places_mod._search_places = _fake_search
+    places_mod._TURN_SEARCHES.clear()
+    try:
+        _api_calls = 0
+        call(manage_place, action="search", query="ramen", near="Lisbon")
+        call(manage_place, action="search", query="ramen", near="Lisbon")
+        call(manage_place, action="search", query="RAMEN", near="lisbon")
+        check(f"a repeated query never reaches the API (calls={_api_calls})",
+              str(_api_calls), contains="1")
+
+        check("the repeat still returns the candidates",
+              call(manage_place, action="search", query="ramen", near="Lisbon"),
+              contains=["2 candidate", "Baixa"])
+
+        for i in range(2, 6):
+            call(manage_place, action="search", query=f"distinct query {i}")
+        check(f"four more distinct queries hit the API (calls={_api_calls})",
+              str(_api_calls), contains="5")
+
+        check("the sixth distinct query is refused, with a way out",
+              call(manage_place, action="search", query="one too many"),
+              contains=["limit", "ask the owner", "by hand"])
+
+        check("and it did NOT reach the API", str(_api_calls), contains="5")
+
+        check("an already-seen query still works after the cap",
+              call(manage_place, action="search", query="ramen", near="Lisbon"),
+              contains="2 candidate")
+    finally:
+        places_mod._search_places = real_search
+        places_mod._TURN_SEARCHES.clear()
+
+
+def test_manage_place() -> None:
+    from tools.travel import places as places_mod
+
+    section("manage_place — lookup returns candidates, never picks for you")
+
+    check("no API key is a refusal that still offers a way forward",
+          call(manage_place, action="search", query="Cafe Central"),
+          contains=["not configured", "by hand"])
+
+    real_search = places_mod._search_places
+    places_mod._search_places = _fake_search
+    try:
+        out = call(manage_place, action="search", query="Cafe Central", near="Lisbon")
+        check("both branches are offered, not silently resolved", out,
+              contains=["2 candidate", "Baixa", "Alfama"])
+        check("each candidate carries the id save needs", out,
+              contains=["ChIJ_branch_one", "ChIJ_branch_two"])
+        check("search alone saves nothing", call(manage_place, action="list"),
+              contains="no saved places")
+
+        check("search needs a query", call(manage_place, action="search"),
+              contains="needs a query")
+
+        section("manage_place — saving keeps what the search knew")
+
+        check("saving a candidate reports a new place",
+              call(manage_place, action="save", google_place_id="ChIJ_branch_one",
+                   title="Cafe Central — Baixa"),
+              contains="saved place")
+
+        check("coordinates and type came from the search, not the arguments",
+              call(query_travel_db,
+                   sql="SELECT lat, lng, google_type, address FROM places "
+                       "WHERE google_place_id='ChIJ_branch_one'"),
+              contains=["38.7107", "-9.1373", "coffee_shop", "Rua Augusta"])
+
+        check("primaryType wins over types[0], and its label is kept",
+              call(query_travel_db,
+                   sql="SELECT google_type, google_type_label FROM places "
+                       "WHERE google_place_id='ChIJ_branch_one'"),
+              contains=["coffee_shop", "Coffee Shop"])
+
+
+        check("re-saving the same google id does not duplicate",
+              call(manage_place, action="save", google_place_id="ChIJ_branch_one",
+                   title="Cafe Central — Baixa"),
+              contains=["already saved", "nothing duplicated"])
+
+        check("still exactly one row for it",
+              call(query_travel_db,
+                   sql="SELECT COUNT(*) AS n FROM places WHERE google_place_id='ChIJ_branch_one'"),
+              contains="1")
+
+        check("the other branch is a separate place",
+              call(manage_place, action="save", google_place_id="ChIJ_branch_two",
+                   title="Cafe Central — Alfama"),
+              contains="saved place")
+        check("the full types array survives, so nothing finer is lost",
+              call(query_travel_db,
+                   sql="SELECT google_types FROM places "
+                       "WHERE google_place_id='ChIJ_branch_two'"),
+              contains=["italian_restaurant", "restaurant", "food"])
+    finally:
+        places_mod._search_places = real_search
+
+    check("a hand-added place needs no google id",
+          call(manage_place, action="save", title="Ana's kitchen",
+               address="a friend's flat"),
+          contains="saved place")
+
+    check("save needs at least a title", call(manage_place, action="save"),
+          contains="needs at least a title")
+
+    section("manage_place — corrections are shared, deletion is guarded")
+
+    check("list shows ids to work with", call(manage_place, action="list"),
+          contains=["[1]", "[2]", "[3]"])
+
+    check("unknown id lists the saved places",
+          call(manage_place, action="update", place_id=999, title="x"),
+          contains=["no place with id 999", "cafe central"])
+
+    check("missing id lists the saved places",
+          call(manage_place, action="update", title="x"),
+          contains=["place_id is required", "cafe central"])
+
+    check("correcting an address is one edit",
+          call(manage_place, action="update", place_id=1, address="Rua Augusta 2, Lisboa"),
+          contains=["updated place 1", "rua augusta 2"])
+
+    check("update with no fields is a no-op, not an error",
+          call(manage_place, action="update", place_id=1), contains="nothing to update")
+
+    check("unknown action lists the real actions",
+          call(manage_place, action="frobnicate", place_id=1),
+          contains=["unknown action", "search"])
+
+    check("an unreferenced place deletes without a button",
+          call(manage_place, action="delete", place_id=3), contains="deleted place 3")
+
+    # A reference is what makes deletion refuse, so make one.
+    call(manage_trip, action="create", trip_id="pl", destination="Placeville")
+    conn = _raw()
+    conn.execute("INSERT INTO wishlist(trip_id, place_id) VALUES('pl', 1)")
+    conn.commit()
+    conn.close()
+
+    check("a referenced place refuses to delete, and says by what",
+          call(manage_place, action="delete", place_id=1),
+          contains=["still used by", "1 wishlist"])
+
+    check("and it is still there",
+          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM places WHERE place_id=1"),
+          contains="1")
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -264,6 +504,9 @@ def main() -> int:
     print(f"scratch root: {_SCRATCH}")
     try:
         test_manage_trip()
+        test_manage_place()
+        test_categories()
+        test_search_guards()
         test_trip_date_shift()
         test_delete_cascade()
     finally:

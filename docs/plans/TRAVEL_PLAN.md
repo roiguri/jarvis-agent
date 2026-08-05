@@ -17,9 +17,8 @@ should not be implemented from.
 - [x] `DATA_DIR/travel/travel.sqlite` — four tables, created idempotently at import
 - [x] `query_travel_db` — pulled forward from Phase 2; a skill with no tools is invisible to
       `skill_namespaces()`, so without it there is nothing to activate and nothing to verify
-- [x] `GOOGLE_PLACES_API_KEY` in `.env.example`, **commented** — nothing reads it until place
-      search exists, and an uncommented key would report `check_env.sh` drift on every instance
-      for a capability none of them has yet
+- [x] `GOOGLE_PLACES_API_KEY` documented in `.env.example` — commented at this point, since
+      nothing read it until place search existed (uncommented in Phase 2)
 - [x] `scripts/ci/check_paths.py` and `check_channel_agnostic.py` green; `check_env.sh` reports
       no new drift
 - [x] Live check after restart: skill activates in chat and `query_travel_db` returns the schema;
@@ -29,13 +28,15 @@ should not be implemented from.
 - [x] `manage_trip` — create / update / set_current / archive / delete / list — verified by
       `scripts/test_travel.py` (31 checks) and live on staging
 - [x] Confirmation wired on `manage_trip(action="delete")` only
-- [ ] `manage_place` — search (Google Places Text Search) / save / update / delete
+- [x] `manage_place` — search / save / list / update / delete — verified by
+      `scripts/test_travel.py` (63 checks) and live against the real Places API
 - [ ] `manage_wishlist` — add / remove / list
 - [ ] `manage_itinerary` — schedule / reschedule / unschedule / remove / list
 - [ ] `SKILL.md` rule when itinerary lands: always record a booking's confirmation code — it is
       the only thing that stops a row being re-dated when the trip moves
-- [ ] Uncomment `GOOGLE_PLACES_API_KEY` in `.env.example` once place search calls it
-- [ ] Settle the `category` vocabulary against real Places responses (open question below)
+- [x] `GOOGLE_PLACES_API_KEY` uncommented in `.env.example` — place search now calls it
+- [x] `category` vocabulary settled (below); no schema migration ships — instances are
+      migrated by hand, as staging was
 
 **Phase 3 — app surface (agent side)**
 - [ ] `gateway/apps/travel.py` — `AppSpec(ns="travel")`, one `GET tile` entry
@@ -133,6 +134,20 @@ widen it, and adding a field to it is a deliberate edit that changes the pricing
 
 Revisiting `rating` later is not free: it means a second billed lookup for every place already
 saved, so wanting it after the fact costs more than asking for it now. Accepted.
+
+**Eleven display categories, with Food and Drink split five ways.** `restaurant · cafe · dessert ·
+bar · market · sights · outdoors · shopping · lodging · transit · other`. Google's own 19
+documentation headings are the skeleton — they are not exposed by the API, so the mapping is
+transcribed — but its Food and Drink bucket is too coarse to be useful: on a trip a cafe and a
+restaurant are different errands. Everything finer survives on the row (`google_type`,
+`google_type_label`, and the full `google_types` array), so re-cutting these buckets later is a
+migration rather than a re-fetch, and "Italian Restaurant" is always recoverable under a heading
+that reads `restaurant`.
+
+A category is derived from Google's `primaryType` by an exact table plus suffix rules (`*_restaurant`
+covers every cuisine, including ones Google has yet to invent). An unrecognised type leaves the
+category **NULL, not `other`** — undecided and miscellaneous are different states, and only the
+first is worth revisiting. The model may set or correct a category, but only to one of the eleven.
 
 **Times are local wall-clock text; the trip carries a timezone.** `"20:00"` means 20:00 where the
 owner is standing and is never converted. `trips.timezone` is used for exactly one thing: deciding
@@ -245,13 +260,14 @@ Derived at read time, never stored: `day_number = julianday(start_date) - julian
 `NULL` when the trip has no dates. Lodging covering a given day is
 `? BETWEEN start_date AND COALESCE(end_date, start_date)`.
 
-**Environment.** `GOOGLE_PLACES_API_KEY` joins `.env.example` **commented**, following the app
-channel's precedent for a key not every instance can use yet. The skill loading on an instance does
-not mean the key is needed there — only the place-search tool calls Places, and until that exists an
-uncommented key would make `check_env.sh` report drift everywhere for a capability nobody has. It is
-uncommented in the same change that ships place search. **Places API (New)** — not the frozen legacy
-Places API — must be enabled with billing on the GCP project that already serves
-`tools/google_health`.
+**Environment.** `GOOGLE_PLACES_API_KEY` was documented commented while nothing read it — the skill
+loading on an instance does not mean the key is needed there — and was uncommented in the change
+that shipped place search. `check_env.sh` therefore reports it missing on any instance not yet
+given one, which is the intended reminder rather than a fault. **Places API (New)** — not the
+frozen legacy Places API — must be enabled with billing on the GCP project that already serves
+`tools/google_health`, the key restricted to that single API, and a daily quota set: the field mask
+selects the billing SKU, so a quota is what turns a mistake into a failed request rather than a
+surprise on the bill.
 
 ### Secrets migration — required before this ships to prod
 
@@ -373,10 +389,6 @@ above, which is a design aid and will drift.
 
 ## Open questions
 
-- **The `category` vocabulary.** Deferred until real Places responses are in front of us. The test
-  is not "is there an icon for it" — since the wishlist groups by category, the test is "do these
-  make useful section headings for a list of saved places?" `google_type` is stored verbatim
-  regardless, so a finer grain is available later without re-fetching anything.
 - **Whether `manage_trip(action="update")` shifts lines automatically or proposes and confirms.**
   Leaning automatic for unbooked lines, since the booked ones are reported rather than moved.
 

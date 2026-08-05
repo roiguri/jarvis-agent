@@ -69,7 +69,13 @@ def _init_db():
             lat             REAL,
             lng             REAL,
             category        TEXT,
-            google_type     TEXT,
+            -- What Google says this is, kept at three levels of fidelity because
+            -- the display vocabulary is not settled and a re-fetch costs a
+            -- billed lookup: the primary type, its human label, and the full
+            -- types array verbatim.
+            google_type       TEXT,
+            google_type_label TEXT,
+            google_types      TEXT,
             created_at      DATETIME DEFAULT (datetime('now'))
         );
 
