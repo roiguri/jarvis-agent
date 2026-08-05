@@ -1,7 +1,11 @@
 """Travel skill — trips, saved places, per-trip wishlists, dated itineraries.
 
-Importing this package imports the tool module, running its
-``@tool_register`` side-effects and exposing every public name.
+One module per table, so a tool and the rows it owns stay together; `_db.py`
+holds the schema and the helpers they share. Importing this package imports each
+module, running its ``@tool_register`` side-effects.
 """
 
-from tools.travel.travel_tools import *  # noqa: F401,F403
+from tools.travel.query import query_travel_db  # noqa: F401
+from tools.travel.trips import manage_trip  # noqa: F401
+
+__all__ = ["manage_trip", "query_travel_db"]

@@ -25,12 +25,15 @@ should not be implemented from.
 - [x] Live check after restart: skill activates in chat and `query_travel_db` returns the schema;
       staging registry went 8 → 9 namespaces, 52 → 53 skill tools
 
-**Phase 2 — the four tools** *(the actual deliverable)*
+**Phase 2 — the four tools** *(the actual deliverable; one module per table, one commit per tool)*
+- [x] `manage_trip` — create / update / set_current / archive / delete / list — verified by
+      `scripts/test_travel.py` (31 checks) and live on staging
+- [x] Confirmation wired on `manage_trip(action="delete")` only
 - [ ] `manage_place` — search (Google Places Text Search) / save / update / delete
-- [ ] `manage_trip` — create / update / set_current / archive / delete / list
 - [ ] `manage_wishlist` — add / remove / list
 - [ ] `manage_itinerary` — schedule / reschedule / unschedule / remove / list
-- [ ] Confirmation wired on `manage_trip(action="delete")` only
+- [ ] `SKILL.md` rule when itinerary lands: always record a booking's confirmation code — it is
+      the only thing that stops a row being re-dated when the trip moves
 - [ ] Uncomment `GOOGLE_PLACES_API_KEY` in `.env.example` once place search calls it
 - [ ] Settle the `category` vocabulary against real Places responses (open question below)
 

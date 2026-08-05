@@ -1,18 +1,27 @@
-import os
-import re
-import sqlite3
+"""Travel storage: the connection, the schema, and the helpers every tool shares.
 
-from langchain_core.tools import tool
+Private to the skill. Each tool module owns one table and imports what it needs
+from here, so the schema and the refusal vocabulary exist in exactly one place.
+"""
+
+import os
+import sqlite3
+from datetime import date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import config
-from tools.registry import tool_register
 
 DB_PATH = os.path.join(config.DATA_DIR, "travel", "travel.sqlite")
 
 # Read-only access for the ad-hoc query tool: a separate connection opened in
 # SQLite read-only URI mode, so writes are physically impossible (not policy).
-_TRAVEL_RO_URI = f"file:{DB_PATH}?mode=ro"
-_QUERY_ROW_CAP = 200
+TRAVEL_RO_URI = f"file:{DB_PATH}?mode=ro"
+QUERY_ROW_CAP = 200
+
+
+class TravelError(Exception):
+    """A refusal phrased for the model: it says what was wrong and, where the
+    fix is a different argument, what the valid ones are."""
 
 
 def _get_db() -> sqlite3.Connection:
@@ -110,78 +119,100 @@ def _init_db():
     conn.close()
 
 
-@tool_register(namespace="travel")
-@tool
-def query_travel_db(sql: str = "") -> str:
-    """Run a read-only SELECT against the travel DB for ad-hoc analysis.
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
 
-    Use for questions the fixed tools don't cover: cross-trip totals, custom
-    aggregates, "which places have I saved but never scheduled".
 
-    Call with an EMPTY sql to get the LIVE schema (tables, columns, row counts)
-    — do this first if unsure of column names; the live schema is authoritative.
-
-    Rules:
-    - Read-only: a single SELECT or WITH...SELECT only. No writes, no PRAGMA,
-      no ATTACH, no multiple statements. The connection is physically read-only.
-    - Results cap at 200 rows; add your own LIMIT/aggregation if you hit it.
-    - Times (start_time/end_time) are 'HH:MM' local to the destination and are
-      never converted; dates are 'YYYY-MM-DD'.
-    - A place carries no trip_id — join through wishlist or itinerary to scope
-      it to one. itinerary.place_id is NULL for transit legs and notes.
-
-    Args:
-        sql: A single read-only SELECT/WITH. Empty string = describe schema.
-    """
+def _parse_date(value: str, field: str) -> date:
     try:
-        conn = sqlite3.connect(_TRAVEL_RO_URI, uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            if not sql or not sql.strip():
-                tables = conn.execute(
-                    "SELECT name, sql FROM sqlite_master WHERE type='table' "
-                    "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-                ).fetchall()
-                parts = []
-                for t in tables:
-                    n = conn.execute(f"SELECT COUNT(*) FROM {t['name']}").fetchone()[0]
-                    parts.append(f"-- {t['name']} ({n} rows)\n{t['sql']}")
-                return "\n\n".join(parts)
-
-            stripped = sql.strip().rstrip(";").strip()
-            if ";" in stripped:
-                return "Error: only a single statement is allowed (no ';')."
-            low = stripped.lower()
-            if not (low.startswith("select") or low.startswith("with")):
-                return "Error: only SELECT / WITH queries are allowed."
-            if re.search(r"\b(attach|detach)\b", low):
-                return "Error: ATTACH/DETACH not allowed (travel DB only)."
-
-            cur = conn.execute(stripped)
-            cols = [d[0] for d in cur.description] if cur.description else []
-            rows = cur.fetchmany(_QUERY_ROW_CAP + 1)
-            truncated = len(rows) > _QUERY_ROW_CAP
-            rows = rows[:_QUERY_ROW_CAP]
-            if not rows:
-                return "(0 rows)"
-            header = " | ".join(cols)
-            body = "\n".join(
-                " | ".join("" if v is None else str(v) for v in r) for r in rows
-            )
-            tail = (
-                f"\n\n[truncated to {_QUERY_ROW_CAP} rows — add LIMIT or aggregate]"
-                if truncated else f"\n\n({len(rows)} row(s))"
-            )
-            return f"{header}\n{body}{tail}"
-        finally:
-            conn.close()
-    except sqlite3.OperationalError as e:
-        return f"Error: read-only query rejected ({e})."
-    except Exception as e:
-        return f"Error: {e}"
+        return date.fromisoformat(value.strip())
+    except ValueError:
+        raise TravelError(f"{field} must be YYYY-MM-DD, got {value!r}.")
 
 
-# At import, so the schema exists before the read-only connection above is ever
+def _validate_window(start_date: str, end_date: str) -> tuple[str | None, str | None]:
+    """Both dates or neither. A half-dated trip cannot answer "is this trip
+    dated?", which is the question scheduling turns on."""
+    s_raw, e_raw = start_date.strip(), end_date.strip()
+    if not s_raw and not e_raw:
+        return None, None
+    if bool(s_raw) != bool(e_raw):
+        raise TravelError("Give both start_date and end_date, or neither.")
+    s, e = _parse_date(s_raw, "start_date"), _parse_date(e_raw, "end_date")
+    if e < s:
+        raise TravelError(f"end_date {e} is before start_date {s}.")
+    return s.isoformat(), e.isoformat()
+
+
+def _validate_tz(timezone: str) -> str | None:
+    tz = (timezone or "").strip()
+    if not tz:
+        return None
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise TravelError(
+            f"Unknown timezone {tz!r}. Use an IANA name such as 'Europe/Lisbon' or 'Asia/Tokyo'."
+        )
+    return tz
+
+
+# ---------------------------------------------------------------------------
+# Shared reads — every tool resolves a trip the same way, and every refusal
+# shows the same list, so error text and `list` output cannot drift apart.
+# ---------------------------------------------------------------------------
+
+
+def _trip_lines(conn: sqlite3.Connection) -> str:
+    """Every trip as one line each."""
+    rows = conn.execute(
+        "SELECT trip_id, destination, status, start_date, end_date, is_current, timezone "
+        "FROM trips ORDER BY is_current DESC, COALESCE(start_date, '9999'), trip_id"
+    ).fetchall()
+    if not rows:
+        return "(no trips yet)"
+    out = []
+    for r in rows:
+        when = (
+            f"{r['start_date']} to {r['end_date']}"
+            if r["start_date"] and r["end_date"]
+            else "no dates"
+        )
+        marks = []
+        if r["is_current"]:
+            marks.append("CURRENT")
+        if r["status"] == "archived":
+            marks.append("archived")
+        if r["timezone"]:
+            marks.append(r["timezone"])
+        suffix = f"  [{', '.join(marks)}]" if marks else ""
+        out.append(f"- {r['trip_id']}: {r['destination']} — {when}{suffix}")
+    return "\n".join(out)
+
+
+def _require_trip(conn: sqlite3.Connection, trip_id: str) -> sqlite3.Row:
+    trip_id = (trip_id or "").strip()
+    if not trip_id:
+        raise TravelError(f"A trip_id is required. Existing trips:\n{_trip_lines(conn)}")
+    row = conn.execute("SELECT * FROM trips WHERE trip_id = ?", (trip_id,)).fetchone()
+    if row is None:
+        raise TravelError(
+            f"No trip {trip_id!r}. Existing trips:\n{_trip_lines(conn)}\n"
+            "Pass one of these ids, or create the trip first."
+        )
+    return row
+
+
+def _label(row: sqlite3.Row) -> str:
+    """How an itinerary row is named back to the model. A transit leg or note
+    carries its own title; a row standing in for a place has none of its own
+    until the join, so it falls back to its id rather than reading as blank."""
+    title = row["title"] or f"entry {row['entry_id']}"
+    return f"{title} on {row['start_date']}"
+
+
+# At import, so the schema exists before the read-only connection is ever
 # opened — mode=ro fails outright on a missing file, which on a fresh instance
 # would read as a broken tool rather than an empty database.
 _init_db()
