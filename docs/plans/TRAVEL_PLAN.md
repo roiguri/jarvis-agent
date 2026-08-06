@@ -68,10 +68,12 @@ dependency; every stage leaves the tools and the tile working)*
       migrated. 164 checks; verified live, and the first saved Tokyo place came back with
       `city=Shibuya` under `destination=Tokyo` — the ward case, on the first run
 
-- [ ] **Stage 3 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`; add
+- [x] **Stage 3 — re-anchor the wishlist.** `wishlist.trip_id` became `destination_id`, plus
       `wishlist_id` addressing, `city`, `done_at`, `priority` 1–5, the second UNIQUE that stops
-      duplicate placeless rows, and `manage_wishlist(update)`. The headline fix: the list survives
-      into the next trip to the same place
+      duplicate placeless rows, and `manage_wishlist(update)` with empty-string-clears. Forced two
+      further changes: `manage_trip(delete)` no longer touches the wishlist, and `unschedule` is
+      gone — nothing is consumed, so there is nothing to put back. 170 checks; verified live by
+      deleting a trip and finding its destination's list intact
 
 - [ ] **Stage 4 — the time model.** `arrival_date` as a parameter rather than a derivation;
       `departure_timezone` / `arrival_timezone` on transit; duration shown only when both zones are

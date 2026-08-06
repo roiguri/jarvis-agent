@@ -309,7 +309,10 @@ def test_delete_cascade() -> None:
         "INSERT INTO places(title, destination_id) "
         "SELECT 'Somewhere', destination_id FROM destinations WHERE name='Shift City'"
     )
-    conn.execute("INSERT INTO wishlist(trip_id, place_id) VALUES('shift', 1)")
+    conn.execute(
+        "INSERT INTO wishlist(destination_id, place_id) "
+        "SELECT t.destination_id, 1 FROM trips t WHERE t.trip_id = 'shift'"
+    )
     conn.commit()
     conn.close()
 
@@ -318,8 +321,9 @@ def test_delete_cascade() -> None:
     # protects is tested here; that it IS behind a button is read off the code.
     from tools.travel.trips import _exec_delete_trip
 
-    check("delete reports what it removed", _exec_delete_trip("shift"),
-          contains=["deleted shift", "1 wishlist", "3 scheduled"])
+    check("delete reports what it removed, and what it spared",
+          _exec_delete_trip("shift"),
+          contains=["deleted shift", "3 scheduled", "wishlist is untouched"])
 
     check("the trip is gone",
           call(query_travel_db, sql="SELECT COUNT(*) AS n FROM trips WHERE trip_id='shift'"),
@@ -333,6 +337,10 @@ def test_delete_cascade() -> None:
     check("the saved place survived",
           call(query_travel_db, sql="SELECT title FROM places"),
           contains="Somewhere")
+
+    check("and so did the wishlist entry, which belongs to the destination",
+          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM wishlist WHERE place_id=1"),
+          contains="1")
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +620,10 @@ def test_manage_place() -> None:
     # A reference is what makes deletion refuse, so make one.
     call(manage_trip, action="create", trip_id="pl", destination="Placeville")
     conn = _raw()
-    conn.execute("INSERT INTO wishlist(trip_id, place_id) VALUES('pl', 1)")
+    conn.execute(
+        "INSERT INTO wishlist(destination_id, place_id) "
+        "SELECT destination_id, 1 FROM places WHERE place_id = 1"
+    )
     conn.commit()
     conn.close()
 
@@ -631,116 +642,129 @@ def test_manage_place() -> None:
 
 
 def test_manage_wishlist() -> None:
-    from tools.travel import places as places_mod
+    section("manage_wishlist — the list belongs to the destination")
 
-    section("manage_wishlist — a trip's list, three ways in")
-
-    call(manage_trip, action="create", trip_id="wl", destination="Wishville")
-    call(manage_trip, action="create", trip_id="wl2", destination="Otherville")
-
-    check("an empty wishlist says so, by name",
-          call(manage_wishlist, action="list", trip_id="wl"),
+    check("a list can be asked for by destination, with no trip at all",
+          call(manage_wishlist, action="list", destination="Wishville"),
           contains="nothing on its wishlist")
 
-    check("a wrong trip lists the real ones",
-          call(manage_wishlist, action="list", trip_id="nope"),
-          contains=["no trip", "wl"])
+    check("with neither destination nor trip it asks, and lists them",
+          call(manage_wishlist, action="list"),
+          contains=["which destination", "Wishville"])
 
-    check("add by existing place_id",
-          call(manage_wishlist, action="add", trip_id="wl", place_id=1,
-               notes="go before 11"),
+    check("an unknown destination is answered with the real ones",
+          call(manage_wishlist, action="list", destination="Nowhere"),
+          contains=["no destination", "Wishville"])
+
+    check("add by place_id needs no trip",
+          call(manage_wishlist, action="add", destination="Beta Town", place_id=2,
+               notes="go before 11", priority=1),
           contains="wishlist")
 
-    check("add by bare title creates the place",
-          call(manage_wishlist, action="add", trip_id="wl", title="Ana's kitchen",
-               address="a friend's flat", category="restaurant"),
-          contains="wishlist")
-
-    real_search = places_mod._search_places
-    places_mod._search_places = _fake_search
-    places_mod._TURN_SEARCHES.clear()
-    try:
-        call(manage_place, action="search", query="cafe central", near="Lisbon")
-        check("add by google_place_id, straight from a search",
-              call(manage_wishlist, action="add", trip_id="wl",
-                   google_place_id="ChIJ_branch_one"),
-              contains="wishlist")
-    finally:
-        places_mod._search_places = real_search
-
-    check("a google id nobody searched for is refused, not invented",
-          call(manage_wishlist, action="add", trip_id="wl",
-               google_place_id="ChIJ_never_seen"),
-          contains=["not from a recent search", "pass a title"])
-
-    check("add with nothing to identify a place is refused",
-          call(manage_wishlist, action="add", trip_id="wl"),
-          contains="needs a place")
+    check("add with nothing to identify anything is refused",
+          call(manage_wishlist, action="add", destination="Wishville"),
+          contains=["needs either a place_id", "title"])
 
     check("an unknown place_id lists the saved places",
-          call(manage_wishlist, action="add", trip_id="wl", place_id=999),
+          call(manage_wishlist, action="add", destination="Wishville", place_id=999),
           contains="no place with id 999")
 
-    section("manage_wishlist — grouping, duplicates, independence")
-
-    out = call(manage_wishlist, action="list", trip_id="wl")
-    check("grouped under category headings", out,
-          contains=["RESTAURANT", "CAFE"])
-    check("the fine type shows under the coarse heading", out,
-          contains="Coffee Shop")
-    check("notes are carried", out, contains="go before 11")
-
-    check("re-adding is not an error",
-          call(manage_wishlist, action="add", trip_id="wl", place_id=1),
-          contains="already on")
-
-    check("re-adding with a note updates it instead of stranding it",
-          call(manage_wishlist, action="add", trip_id="wl", place_id=1,
-               notes="actually go at dawn"),
-          contains=["already", "updated its note"])
-
-    check("and the new note is what's stored",
-          call(manage_wishlist, action="list", trip_id="wl"),
-          contains="actually go at dawn", missing="go before 11")
-
-    check("the same place can sit on a second trip's wishlist",
-          call(manage_wishlist, action="add", trip_id="wl2", place_id=1),
+    check("an intention with no place at all is allowed",
+          call(manage_wishlist, action="add", destination="Wishville",
+               title="somewhere with a view", city="Old Town", priority=2),
           contains="wishlist")
 
-    check("each trip's list is its own",
-          call(manage_wishlist, action="list", trip_id="wl2"),
-          contains="1 place(s)")
+    check("and the same intention twice is refused, which NULLs alone would not stop",
+          call(manage_wishlist, action="add", destination="Wishville",
+               title="somewhere with a view"),
+          contains="UNIQUE")
 
-    section("manage_wishlist — removal keeps the place")
+    section("manage_wishlist — a trip reaches its list through its destination")
 
-    check("remove without a place_id shows the list",
-          call(manage_wishlist, action="remove", trip_id="wl"),
-          contains=["needs a place_id", "wishlist"])
+    check("asking by trip finds the destination's list",
+          call(manage_wishlist, action="list", trip_id="beta"),
+          contains="cafe central")
 
-    check("removing something not on the list says so",
-          call(manage_wishlist, action="remove", trip_id="wl", place_id=999),
-          contains="not on")
+    check("which is the same list the destination itself gives",
+          call(manage_wishlist, action="list", destination="Beta Town"),
+          contains="cafe central")
 
-    check("remove reports the place is kept",
-          call(manage_wishlist, action="remove", trip_id="wl", place_id=1),
-          contains=["removed place 1", "kept"])
+    check("grouped by city, then category",
+          call(manage_wishlist, action="list", destination="Beta Town"),
+          contains=["LISBOA", "cafe"])
 
-    check("gone from this trip",
-          call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='wl' AND place_id=1"),
-          contains="0")
+    check("an override groups it where the owner would look",
+          call(manage_wishlist, action="update", wishlist_id=1, city="Baixa"),
+          contains="city → Baixa")
+    check("and the listing follows",
+          call(manage_wishlist, action="list", destination="Beta Town"),
+          contains="BAIXA")
 
-    check("still on the other trip's",
-          call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='wl2' AND place_id=1"),
-          contains="1")
+    section("manage_wishlist — updating, clearing, and going")
 
-    check("and the place itself survived",
+    check("notes and priority change",
+          call(manage_wishlist, action="update", wishlist_id=1,
+               notes="actually go at dawn", priority=2),
+          contains=["notes → actually go at dawn", "priority → 2"])
+
+    check("an out-of-range priority is refused",
+          call(manage_wishlist, action="update", wishlist_id=1, priority=9),
+          contains="1..5")
+
+    check("an empty string clears a field",
+          call(manage_wishlist, action="update", wishlist_id=1, notes=""),
+          contains="notes cleared")
+
+    check("update with nothing given is a no-op",
+          call(manage_wishlist, action="update", wishlist_id=1),
+          contains="nothing to change")
+
+    check("a bad done_at is refused",
+          call(manage_wishlist, action="update", wishlist_id=1, done_at="last tuesday"),
+          contains="yyyy-mm-dd")
+
+    check("marking it done says so",
+          call(manage_wishlist, action="update", wishlist_id=1, done_at="2027-05-24"),
+          contains="marked done")
+
+    # Both fixture places are called "Cafe Central"; the branch is what separates
+    # the entry marked done from the one that is not.
+    check("a done item drops out of the list",
+          call(manage_wishlist, action="list", destination="Beta Town"),
+          contains="Alfama", missing="Baixa")
+
+    check("but is still there when asked for",
+          call(manage_wishlist, action="list", destination="Beta Town", include_done=True),
+          contains=["Baixa", "(done)"])
+
+    check("and it can be retracted",
+          call(manage_wishlist, action="update", wishlist_id=1, done_at=""),
+          contains="no longer marked done")
+
+    check("re-adding an already-listed place updates rather than raising",
+          call(manage_wishlist, action="add", destination="Beta Town", place_id=1,
+               notes="new note"),
+          contains=["already on the list", "notes"])
+
+    section("manage_wishlist — removal, and what survives it")
+
+    check("remove needs the id from the listing",
+          call(manage_wishlist, action="remove"), contains="wishlist_id is required")
+
+    check("an unknown id says so",
+          call(manage_wishlist, action="remove", wishlist_id=999),
+          contains="no wishlist entry 999")
+
+    check("remove says the place is kept, and nudges toward done_at",
+          call(manage_wishlist, action="remove", wishlist_id=1),
+          contains=["saved place is kept", "done_at"])
+
+    check("the place itself survived",
           call(query_travel_db, sql="SELECT title FROM places WHERE place_id=1"),
           contains="cafe central")
 
     check("unknown action lists the real actions",
-          call(manage_wishlist, action="frobnicate", trip_id="wl"),
+          call(manage_wishlist, action="frobnicate"),
           contains=["unknown action", "add", "remove"])
 
 
@@ -820,13 +844,13 @@ def test_manage_itinerary() -> None:
     section("manage_itinerary — the wishlist is never consumed")
 
     call(manage_wishlist, action="add", trip_id="it", place_id=2)
-    before = call(query_travel_db,
-                  sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2")
+    _wl_count = ("SELECT COUNT(*) AS n FROM wishlist w JOIN trips t "
+                 "ON t.destination_id = w.destination_id "
+                 "WHERE t.trip_id='it' AND w.place_id=2")
+    before = call(query_travel_db, sql=_wl_count)
     call(manage_itinerary, action="schedule", trip_id="it", place_id=2, date="2027-03-12")
     check("scheduling a wishlisted place leaves the wishlist row alone",
-          call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2"),
-          contains="1")
+          call(query_travel_db, sql=_wl_count), contains="1")
     check("(it was there before too)", before, contains="1")
 
     check("the same place can be scheduled twice",
@@ -859,31 +883,31 @@ def test_manage_itinerary() -> None:
                date="2027-04-01"),
           contains="outside the trip window")
 
-    check("unschedule puts the place back on the wishlist",
-          call(manage_itinerary, action="unschedule", trip_id="it", entry_id=1),
-          contains=["unscheduled", "wishlist"])
+    check("removing something not on the list says nothing about one",
+          call(manage_itinerary, action="remove", trip_id="it", entry_id=1),
+          contains="removed", missing="wishlist")
 
     check("and it really is there",
           call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=1"),
+               sql="SELECT COUNT(*) AS n FROM wishlist w JOIN trips t "
+                   "ON t.destination_id = w.destination_id "
+                   "WHERE t.trip_id='it' AND w.place_id=1"),
           contains="1")
 
-    check("unscheduling a note says there was nothing to put back",
-          call(manage_itinerary, action="unschedule", trip_id="it", entry_id=2),
-          contains="nothing to put back")
+    check("removing a note says nothing about a wishlist it never had",
+          call(manage_itinerary, action="remove", trip_id="it", entry_id=2),
+          contains="removed", missing="wishlist")
 
-    check("remove deletes without touching the wishlist",
+    check("removing a wishlisted place says the list still has it",
           call(manage_itinerary, action="remove", trip_id="it", entry_id=4),
-          contains="removed")
+          contains=["removed", "still on the wishlist"])
 
     check("the place it pointed at is still wishlisted",
-          call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM wishlist WHERE trip_id='it' AND place_id=2"),
-          contains="1")
+          call(query_travel_db, sql=_wl_count), contains="1")
 
     check("unknown action lists the real actions",
           call(manage_itinerary, action="frobnicate", trip_id="it"),
-          contains=["unknown action", "schedule", "unschedule"])
+          contains=["unknown action", "schedule", "reschedule"])
 
     section("manage_itinerary — items that run past midnight")
 

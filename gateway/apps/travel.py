@@ -187,17 +187,24 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
                 "items": by_date.get(d, []),
             })
 
+        # The list hangs off the destination, so a trip reaches it through the
+        # one it points at — which is why returning finds what was left.
         wish = conn.execute(
-            "SELECT w.notes, w.priority, p.place_id, p.title, p.address, p.maps_url, "
-            "       p.lat, p.lng, p.category, p.google_type_label "
-            "FROM wishlist w JOIN places p ON p.place_id = w.place_id "
-            "WHERE w.trip_id = ?",
-            (tid,),
+            "SELECT w.wishlist_id, w.notes, w.priority, w.done_at, "
+            "       COALESCE(w.title, p.title) AS title, "
+            "       COALESCE(w.city, p.city)   AS city, "
+            "       p.place_id, p.address, p.maps_url, p.lat, p.lng, "
+            "       p.category, p.google_type_label "
+            "FROM wishlist w LEFT JOIN places p ON p.place_id = w.place_id "
+            "WHERE w.destination_id = ? AND w.done_at IS NULL",
+            (trip["destination_id"],),
         ).fetchall()
         groups: dict[str, list[dict]] = {}
         for r in wish:
             groups.setdefault(r["category"] or "unsorted", []).append({
+                "wishlist_id": r["wishlist_id"],
                 "place_id": r["place_id"],
+                "city": r["city"],
                 "title": r["title"],
                 "address": r["address"],
                 "maps_url": r["maps_url"],

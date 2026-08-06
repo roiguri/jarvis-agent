@@ -181,12 +181,11 @@ def manage_itinerary(
       only a title. ALWAYS pass confirmation_code when a booking has one — it is
       what stops the row being moved if the trip's dates shift.
     - reschedule: change an existing entry's date or times.
-    - unschedule: take it off the schedule but keep wanting to go — the place
-      goes back on the trip's wishlist.
-    - remove: delete the entry outright, wishlist untouched.
+    - remove: take it off the schedule. The wishlist is a separate list and is
+      never touched — a place removed from a day is still on it.
 
     Args:
-        action: list | schedule | reschedule | unschedule | remove
+        action: list | schedule | reschedule | remove
         trip_id: which trip. Required. Call manage_trip(action='list') if unsure.
         entry_id: the entry to change, from a listing.
         place_id: an existing place's id.
@@ -211,11 +210,11 @@ def manage_itinerary(
         notes: anything else worth remembering about this item.
     """
     action = (action or "").strip().lower()
-    if action not in ("list", "schedule", "reschedule", "unschedule", "remove",):
+    if action not in ("list", "schedule", "reschedule", "remove",):
         # Checked before anything else is required: an unknown action must not
         # be reported as a missing id, which is what the model would then try to
         # fix.
-        return f"Error: Unknown action {action!r}. Use one of: list, schedule, reschedule, unschedule, remove."
+        return f"Error: Unknown action {action!r}. Use one of: list, schedule, reschedule, remove."
     conn = _get_db()
     try:
         try:
@@ -237,25 +236,25 @@ def manage_itinerary(
             if action == "reschedule":
                 return _reschedule(conn, trip, entry, date, end_date, start_time, end_time)
 
-            if action in ("unschedule", "remove"):
+            if action == "remove":
+                # There is no `unschedule`. It existed to put a place "back" on
+                # the wishlist, which made sense only while the wishlist belonged
+                # to a trip and scheduling felt like moving something out of it.
+                # The list belongs to the destination now and was never consumed,
+                # so the row is still exactly where it was.
                 conn.execute("DELETE FROM itinerary WHERE entry_id = ?", (entry["entry_id"],))
-                if action == "remove":
-                    conn.commit()
-                    return f"Removed '{entry['label']}' from {tid}'s schedule."
-                if not entry["place_id"]:
-                    conn.commit()
-                    return (
-                        f"Removed '{entry['label']}' from {tid}'s schedule. It has no "
-                        "place behind it, so there was nothing to put back on the wishlist."
-                    )
-                conn.execute(
-                    "INSERT OR IGNORE INTO wishlist(trip_id, place_id) VALUES(?,?)",
-                    (tid, entry["place_id"]),
-                )
                 conn.commit()
-                return (
-                    f"Unscheduled '{entry['label']}' — it is back on {tid}'s wishlist."
-                )
+                kept = ""
+                if entry["place_id"]:
+                    row = conn.execute(
+                        "SELECT 1 FROM wishlist w JOIN trips t "
+                        "ON t.destination_id = w.destination_id "
+                        "WHERE t.trip_id = ? AND w.place_id = ?",
+                        (tid, entry["place_id"]),
+                    ).fetchone()
+                    if row:
+                        kept = " It is still on the wishlist."
+                return f"Removed '{entry['label']}' from {tid}'s schedule.{kept}"
 
         except TravelError as e:
             return f"Error: {e}"

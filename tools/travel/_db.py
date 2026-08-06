@@ -99,14 +99,32 @@ def _init_db():
 
         -- Wanting to go somewhere on a given trip. Independent of whether it is
         -- also scheduled — scheduling never consumes its wishlist row.
+        -- Wanting to go somewhere. Anchored to the DESTINATION, not a trip, so
+        -- returning to a city finds the list you left rather than an empty page.
         CREATE TABLE IF NOT EXISTS wishlist (
-            wishlist_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trip_id     TEXT    NOT NULL REFERENCES trips(trip_id),
-            place_id    INTEGER NOT NULL REFERENCES places(place_id),
-            notes       TEXT,
-            priority    INTEGER,
-            added_at    DATETIME DEFAULT (datetime('now')),
-            UNIQUE(trip_id, place_id)
+            wishlist_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_id INTEGER NOT NULL REFERENCES destinations(destination_id),
+            -- NULL for an intention with no place yet: "somewhere with a view".
+            place_id       INTEGER REFERENCES places(place_id),
+            -- Overrides the place's name; the row's own name when there is none.
+            title          TEXT,
+            -- Overrides the place's city, which groups the list. Google files a
+            -- Tokyo venue under its ward, so this is how one gets grouped where
+            -- the owner would look for it without touching the shared place.
+            city           TEXT,
+            notes          TEXT,
+            priority       INTEGER DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
+            -- Set when you have actually been. remove means "changed my mind";
+            -- this means "went" — without it a destination list never resolves
+            -- and reads as archaeology after the third visit.
+            done_at        DATE,
+            added_at       DATETIME DEFAULT (datetime('now')),
+            UNIQUE(destination_id, place_id),
+            -- The first UNIQUE cannot constrain placeless rows: SQLite treats
+            -- NULLs as distinct, so "somewhere with a view" could be added
+            -- unboundedly without this one.
+            UNIQUE(destination_id, title),
+            CHECK (place_id IS NOT NULL OR title IS NOT NULL)
         );
 
         -- Something happening at a time. A place may have several of these; a
@@ -133,8 +151,8 @@ def _init_db():
 
         CREATE INDEX IF NOT EXISTS itinerary_by_trip_date
             ON itinerary(trip_id, start_date);
-        CREATE INDEX IF NOT EXISTS wishlist_by_trip
-            ON wishlist(trip_id);
+        CREATE INDEX IF NOT EXISTS wishlist_by_destination
+            ON wishlist(destination_id);
         CREATE INDEX IF NOT EXISTS places_by_destination
             ON places(destination_id);
     """)

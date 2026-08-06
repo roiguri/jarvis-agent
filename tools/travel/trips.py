@@ -248,7 +248,6 @@ def _update_trip(
 
 def _delete_trip(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
     tid = trip["trip_id"]
-    n_wish = conn.execute("SELECT COUNT(*) FROM wishlist WHERE trip_id = ?", (tid,)).fetchone()[0]
     n_itin = conn.execute("SELECT COUNT(*) FROM itinerary WHERE trip_id = ?", (tid,)).fetchone()[0]
 
     from gateway.factory import get_confirmation
@@ -261,9 +260,10 @@ def _delete_trip(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
     try:
         return get_confirmation().request_confirmation_sync(
             description=(
-                f"Permanently delete trip '{tid}' ({trip['destination']}).\n\n"
-                f"This also removes {n_wish} wishlist item(s) and {n_itin} scheduled item(s).\n"
-                "Saved places are kept — they belong to no trip."
+                f"Permanently delete trip '{tid}'.\n\n"
+                f"This also removes its {n_itin} scheduled item(s).\n"
+                "The wishlist and the saved places are kept — they belong to the "
+                "destination, not to this trip."
             ),
             action_fn=_do_delete,
             result_ok_text=f"Trip '{tid}' deleted.",
@@ -275,7 +275,8 @@ def _delete_trip(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
 
 def _exec_delete_trip(trip_id: str) -> str:
     """Children first: the foreign keys are enforced, so deleting the trip while
-    a wishlist or itinerary row still points at it would be rejected.
+    an itinerary row still points at it would be rejected. The wishlist is not a
+    child — it belongs to the destination and outlives every trip there.
 
     Opens its own connection because it runs later, on another thread, only if
     the owner taps Confirm — the connection that built the request is long gone.
@@ -283,10 +284,12 @@ def _exec_delete_trip(trip_id: str) -> str:
     conn = _get_db()
     try:
         n_itin = conn.execute("DELETE FROM itinerary WHERE trip_id = ?", (trip_id,)).rowcount
-        n_wish = conn.execute("DELETE FROM wishlist WHERE trip_id = ?", (trip_id,)).rowcount
         conn.execute("DELETE FROM trips WHERE trip_id = ?", (trip_id,))
         conn.commit()
-        return f"Deleted {trip_id} with {n_wish} wishlist and {n_itin} scheduled item(s)."
+        return (
+            f"Deleted {trip_id} with {n_itin} scheduled item(s). Its destination's "
+            "wishlist is untouched."
+        )
     except Exception as e:
         return f"Delete failed: {e}"
     finally:
