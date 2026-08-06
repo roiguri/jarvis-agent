@@ -42,12 +42,12 @@ should not be implemented from.
 - [x] `category` vocabulary settled (below); no schema migration ships — instances are
       migrated by hand, as staging was
 
-**Phase 3 — app surface (agent side)** — **BUILT, pending a restart + hub declare**
+**Phase 3 — app surface (agent side)** — **SHIPPED & VERIFIED**
 - [x] `gateway/apps/travel.py` — `AppSpec(ns="travel")`, one `GET tile` entry
 - [x] One import line in `gateway/apps/specs.py`
 - [x] Every blocking call through `asyncio.to_thread` (the queue-split rule)
 - [x] `scripts/ci/check_channel_agnostic.py` green; 138 checks in `scripts/test_travel.py`
-- [ ] Live: restart, confirm the hub receives a two-app manifest, and fetch the tile
+- [x] Live: `declared 2 apps to the jarvis-app hub` on every restart, and the tile answers
 
 **Next — one destination per trip** *(target spec: `TRAVEL_TARGET_STATE.md`. Ordered by
 dependency; every stage leaves the tools and the tile working)*
@@ -98,11 +98,12 @@ dependency; every stage leaves the tools and the tile working)*
       when they land, converted to the clock of the day they land in. 206 checks; the handoff is
       rewritten against the shipped payload and is no longer provisional
 
-- [ ] Throughout: **no migration code ships.** Each stage's existing rows are migrated by hand, as
-      staging has been throughout
+- [x] Throughout: **no migration code shipped.** The schema is create-only and staging was
+      recreated clean at each shape change, which is what made the NOT NULL constraints real
 
 **Phase 4 — app client** *(handoff to `roiguri/jarvis-app`)*
-- [ ] Handoff spec written from the shipped tile payload, not from this document
+- [x] Handoff spec written from the shipped tile payload — `TRAVEL_APP_HANDOFF.md`, no longer
+      provisional
 - [ ] `ui/apps/travel/` package + one line in `AppCatalog.kt` (`ic_app_travel.webp` already ships)
 
 **Phase 5 — deep links** *(blocked; see Out of scope)*
