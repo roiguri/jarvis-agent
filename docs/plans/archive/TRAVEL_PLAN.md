@@ -1,6 +1,7 @@
 # Travel — trip planning skill, and the app tile derived from it
 
-**Status:** designed, not started.
+**Status:** SHIPPED — merged to main in #77 (2026-08-06). Archived; kept for the reasoning behind
+the decisions, not as a live plan. Multi-destination is deferred and tracked in issue #76.
 **Date:** 2026-08-05.
 **Goal:** let the owner plan and run a trip through conversation — save places, keep a per-trip
 wishlist, build a dated itinerary — and render the result as a tile in the jarvis-app. Jarvis's

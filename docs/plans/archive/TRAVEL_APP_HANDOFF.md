@@ -1,7 +1,8 @@
 # Handoff — Travel app screen (`roiguri/jarvis-app`)
 
-**For:** the Android client. **Agent side is shipped**: `travel` is declared in the manifest and
-`GET tile` answers today.
+**For:** the Android client. **Agent side is shipped and merged** (#77): `travel` is declared in
+the manifest and `GET tile` answers today. This document is archived alongside the plan it came
+from, but it is **live for the client work** — it describes an endpoint that is running.
 **Written from the payload that actually ships**, not from a design sketch — sample below is a real
 response, trimmed to two populated days plus one empty one.
 **Source of truth for the data:** `gateway/apps/travel.py` in `roiguri/jarvis-agent`. If this
