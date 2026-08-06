@@ -49,22 +49,43 @@ should not be implemented from.
 - [x] `scripts/ci/check_channel_agnostic.py` green; 138 checks in `scripts/test_travel.py`
 - [ ] Live: restart, confirm the hub receives a two-app manifest, and fetch the tile
 
-**Next — multi-city trips, and the times that go with them** *(shape settled; staged below.
-Stage 0 stands alone and can ship any time; the rest are ordered by dependency)*
+**Next — one destination per trip** *(target spec: `TRAVEL_TARGET_STATE.md`. Ordered by
+dependency; every stage leaves the tools and the tile working)*
+
 - [x] **Stage 0 — the overnight bug** — fixed, plus a second one it uncovered: `reschedule` had no
       time-order check and left `end_date` behind when an item moved. 143 checks; verified live
-- [ ] Stage 1 — `city` + `country` on `places` from `addressComponents` (Essentials tier, no SKU
-      change). Collects the key Stage 2 resolves on; changes nothing visible
-- [ ] Stage 2 — `destinations` table; `trips.destination_id` replaces the free-text destination;
-      `timezone` moves from trip to destination
-- [ ] Stage 3 — **wishlist re-anchors to the destination** — the headline fix: the list survives
-      into the next trip to the same city
-- [ ] Stage 4 — `trip_legs` generalises one destination into many; "a leg starts on the date you
-      arrive"; `manage_trip`'s date shift has to move legs with the trip
-- [ ] Stage 5 — tile: per-day `timezone`, city grouping, leg-aware days. Handoff addendum covers
-      the destination clock and the flight card
-- [ ] Throughout: **every stage leaves the tile answering** — it joins `wishlist` on `trip_id` and
-      reads `trip.timezone`, so stages 2–4 each repair it as they go rather than leaving it to 5
+
+- [ ] **Stage 1 — collect what the rest needs.** `city` + `country` on `places` from
+      `addressComponents` (Essentials tier, no SKU change). Changes no behaviour
+
+- [ ] **Stage 2 — `destinations`, and a tool for them.** Table with `name UNIQUE COLLATE NOCASE`
+      and `timezone NOT NULL`; `manage_destination` (list · create · update · merge).
+      `places.destination_id` resolved on save from the caller, else the trip in context, else by
+      asking — never from Google's locality, which is a ward as often as a city.
+      `trips.destination_id` replaces the free-text destination; `timezone` moves off `trips`
+
+- [ ] **Stage 3 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`; add
+      `wishlist_id` addressing, `city`, `done_at`, `priority` 1–5, the second UNIQUE that stops
+      duplicate placeless rows, and `manage_wishlist(update)`. The headline fix: the list survives
+      into the next trip to the same place
+
+- [ ] **Stage 4 — the time model.** `arrival_date` as a parameter rather than a derivation;
+      `departure_timezone` / `arrival_timezone` on transit; duration shown only when both zones are
+      known; single-inference rule limited to a same-zone overnight
+
+- [ ] **Stage 5 — the gaps the reviews found.** `manage_itinerary(update)` incl. `trip_id` and
+      `place_id`; `schedule` accepting `wishlist_id`; empty string clears a field; the domain
+      CHECKs (`item_type`, `status`, `kind`, `priority`, `end_date >= start_date`, no end without a
+      start); `archive` clearing `is_current`; re-adding a listed place reporting rather than
+      raising
+
+- [ ] **Stage 6 — reads.** Day-strip range = min over `start_date` / max over
+      `COALESCE(end_date, start_date)`, unioned with the trip window; intra-day ordering incl.
+      arrivals positioned by resolved instant; spanning roles in both the tool listing and the tile;
+      wishlist grouped by city then category
+
+- [ ] Throughout: **no migration code ships.** Each stage's existing rows are migrated by hand, as
+      staging has been throughout
 
 **Phase 4 — app client** *(handoff to `roiguri/jarvis-app`)*
 - [ ] Handoff spec written from the shipped tile payload, not from this document
@@ -574,6 +595,76 @@ to.
 
 This also condemns the current text rendering, which should change with this work:
 `[1] 22:00-06:00 LIS->NRT` reads as an eight-hour flight travelling backwards.
+
+### The target schema
+
+Where the five stages end up. Two new tables, three columns onto `places`, one column swapped on
+`wishlist`, two columns off `trips`. `itinerary` is untouched.
+
+```sql
+destinations                          -- NEW
+  destination_id   INTEGER PK
+  name             TEXT NOT NULL      -- "Lisbon", "Greece"
+  kind             TEXT               -- city | region | country
+  country          TEXT
+  timezone         TEXT               -- expected on a city; a country has none
+  lat, lng         REAL
+  google_locality  TEXT UNIQUE        -- the canonical key get-or-create resolves on
+  created_at
+
+trip_legs                             -- NEW (exactly one per trip from Stage 2; many from Stage 4)
+  leg_id           INTEGER PK
+  trip_id          TEXT    FK -> trips
+  destination_id   INTEGER FK -> destinations
+  start_date       DATE               -- a leg starts on the date you arrive
+  end_date         DATE
+
+trips                                 -- destination + timezone REMOVED
+  trip_id          TEXT PK
+  title            TEXT               -- optional; derived from the legs when absent
+  start_date, end_date   DATE
+  status           draft | archived
+  is_current       INTEGER            -- partial unique index, unchanged
+  notes            TEXT
+  created_at
+
+places                                -- + city, country, destination_id
+  place_id, google_place_id, title, address, maps_url, lat, lng,
+  category, google_type, google_type_label, google_types,
+  city, country,                      -- Stage 1: raw from Google
+  destination_id   INTEGER FK NULL,   -- Stage 2: the resolved row
+  created_at
+
+wishlist                              -- trip_id -> destination_id
+  wishlist_id      INTEGER PK
+  destination_id   INTEGER FK -> destinations
+  place_id         INTEGER FK -> places
+  notes, priority, added_at
+  UNIQUE(destination_id, place_id)
+
+itinerary                             -- UNCHANGED
+  entry_id, trip_id, place_id, item_type, title,
+  start_date, end_date, start_time, end_time,
+  origin, destination_loc, confirmation_code, notes, created_at
+```
+
+**`trip_legs` arrives in Stage 2, not Stage 4.** The alternative was a `trips.destination_id` column
+added in Stage 2 and deleted in Stage 4 once legs subsumed it — a migration that undoes a migration.
+Introducing the table early with a one-leg-per-trip invariant costs a little more in Stage 2 and
+makes Stage 4 mostly a matter of relaxing that invariant.
+
+**`itinerary` gets no `leg_id`.** A day's city is derived by matching `start_date` against the legs,
+for the same reason `day_number` is derived: a stored reference can disagree with the dates, a
+derived one cannot. The cost is that a day belonging to no leg resolves to nothing — worth flagging
+to the owner rather than preventing, since a gap between legs is expressible and probably a mistake.
+
+**`places.city` and `places.destination_id` coexist**, exactly as `google_type` sits under
+`category`: the raw value Google returned, and the row it resolved to. Keeping the raw one is what
+makes re-resolution possible later without paying for the lookup again.
+
+**`destinations.timezone` is nullable**, because "Greece" has no single one. So "what time is it
+there" has no answer for a country-level destination. That is correct rather than a gap, but the
+tile has to render it rather than assume a timezone exists.
 
 ### The upgrade, staged
 
