@@ -1,8 +1,8 @@
 # Travel — target state
 
-**Status:** specification. The current build is Phases 1–3 plus Stage 0; this describes where the
-next work lands. Rationale lives in `TRAVEL_PLAN.md`, which also carries the staged route from one
-to the other.
+**Status:** SHIPPED — this describes what was built, not what was planned. Merged in #77
+(2026-08-06) and archived. The code is the source of truth; where this and the code disagree, the
+code is right. Rationale lives in `TRAVEL_PLAN.md` alongside it.
 
 **Scope:** one destination per trip. A destination may be a city or a country, and carries the
 trip's timezone. A country is **preferred where it applies** — it holds every city's places under

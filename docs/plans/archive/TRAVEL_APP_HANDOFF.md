@@ -1,7 +1,8 @@
 # Handoff — Travel app screen (`roiguri/jarvis-app`)
 
-**For:** the Android client. **Agent side is shipped**: `travel` is declared in the manifest and
-`GET tile` answers today.
+**For:** the Android client. **Agent side is shipped and merged** (#77): `travel` is declared in
+the manifest and `GET tile` answers today. This document is archived alongside the plan it came
+from, but it is **live for the client work** — it describes an endpoint that is running.
 **Written from the payload that actually ships**, not from a design sketch — sample below is a real
 response, trimmed to two populated days plus one empty one.
 **Source of truth for the data:** `gateway/apps/travel.py` in `roiguri/jarvis-agent`. If this
@@ -90,6 +91,50 @@ A real response, trimmed to the populated days plus one empty one.
   ]
 }
 ```
+
+### Nullability — every field, so a DTO can be written from this
+
+Anything not listed as nullable is **always present and non-null**. Arrays are always present and
+may be empty.
+
+| Always present | Nullable |
+|---|---|
+| `trip.trip_id` · `destination` · `destination_name` · `timezone` · `status` · `is_current` · `today` · `position` | `trip.country` · `notes` · `start_date` · `end_date` |
+| `days[].date` · `outside_window` · `is_today` · `items` | `days[].day_number` |
+| item `entry_id` · `item_type` · `title` · `start_date` · `crosses_midnight` · `role` | item `end_date` · `start_time` · `end_time` · `from_location` · `to_location` · `confirmation_code` · `notes` · `place` |
+| `place.place_id` · `title` | `place.address` · `maps_url` · `lat` · `lng` · `category` · `type_label` |
+| wishlist group `category` · `items`; item `wishlist_id` · `title` · `priority` | wishlist item `place_id` · `city` · `address` · `maps_url` · `lat` · `lng` · `type_label` · `notes` |
+
+Two that look nullable and are not:
+
+- **`trip.destination` is never null.** It is the trip's own title when it has one and the
+  destination's name otherwise, and a destination's name cannot be null. The comment in the sample
+  says where the value comes from, not that it can be absent.
+- **`role` is on `lodging` entries too**, as `"stay"`. Both arrays carry the same item shape, so one
+  type reads both. A stay is never placed inside a day, which is what `"stay"` says.
+
+### `position: "undated"` — a real state, and what it looks like
+
+A trip exists before its dates do; that is the "someday bucket" the wishlist is for. The payload:
+
+```json
+{ "trip": { "trip_id": "someday", "destination": "Somewhere",
+            "start_date": null, "end_date": null,
+            "timezone": "Asia/Tokyo", "position": "undated", "…": "…" },
+  "days": [], "lodging": [], "wishlist": [ … ] }
+```
+
+So: **no date range to draw, no strip, no day to open on.** The itinerary tab has nothing to show
+and cannot have — scheduling into an undated trip is refused agent-side.
+
+Suggested rendering, though this is the client's call:
+
+- Header shows the destination with "no dates yet" in place of the range.
+- **Open on the wishlist tab**, since it is the only one with content.
+- The itinerary tab, if reachable, says the trip needs dates and that they can be set in chat.
+
+The "pick the day to open on" rule in the notes below therefore applies only to `before`, `during`
+and `after`.
 
 ### Field notes that matter for rendering
 
