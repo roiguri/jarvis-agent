@@ -912,9 +912,10 @@ def test_manage_itinerary() -> None:
                sql="SELECT start_date, end_date FROM itinerary WHERE title='Night bus'"),
           contains=["2027-03-11", "2027-03-12"])
 
-    check("it renders with a +1 rather than reading backwards",
-          call(manage_itinerary, action="list", trip_id="it"),
-          contains="22:00-06:00+1")
+    out = call(manage_itinerary, action="list", trip_id="it")
+    check("it departs on the day it leaves", out, contains="22:00 →")
+    check("and arrives on the day it lands, rather than reading backwards", out,
+          contains="→ 06:00")
 
     check("the rollover applies to any item type, not just transit",
           call(manage_itinerary, action="schedule", trip_id="it", title="Late bar",
@@ -993,6 +994,9 @@ def test_tile() -> None:
     dates = [x["date"] for x in d["days"]]
     check("every day of the trip is present, including empty ones",
           str(len(dates)), contains="6")   # 5 in-window + 1 edge day
+
+    check("the edge day is the one the item DEPARTS on, not the one it ends on",
+          str(dates[0]), contains="2027-06-09")
     check("empty middle days are not skipped",
           str([x["date"] for x in d["days"] if not x["items"]]),
           contains=["2027-06-12", "2027-06-13", "2027-06-14"])
@@ -1031,6 +1035,30 @@ def test_tile() -> None:
           contains="cafe central")
     check("every item has a title the client can render",
           "ok" if all(i["title"] for i in items) else "missing", contains="ok")
+    section("travel tile — an item is on every day it touches")
+
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Sleeper train",
+         item_type="transit", date="2027-06-12", arrival_date="2027-06-14",
+         start_time="21:00", end_time="07:30")
+    d2 = tile(trip_id="tile")
+    by_day = {x["date"]: x["items"] for x in d2["days"]}
+
+    check("it appears on the day it leaves, as a start",
+          str([i["role"] for i in by_day["2027-06-12"] if i["title"] == "Sleeper train"]),
+          contains="start")
+    check("on the day in between, as a continuation",
+          str([i["role"] for i in by_day["2027-06-13"] if i["title"] == "Sleeper train"]),
+          contains="continuation")
+    check("and on the day it arrives, as an end",
+          str([i["role"] for i in by_day["2027-06-14"] if i["title"] == "Sleeper train"]),
+          contains="end")
+    check("so no day it touches reads as empty",
+          "ok" if all(by_day[d] for d in ("2027-06-12", "2027-06-13", "2027-06-14"))
+          else "a day was empty", contains="ok")
+    check("a stay is still not placed in any day",
+          str([i["item_type"] for day in d2["days"] for i in day["items"]]),
+          missing="lodging")
+
     check("an untimed item still appears, sorted after timed ones",
           str([i["title"] for day in d["days"] if day["date"] == "2027-06-11"
                for i in day["items"]]),
@@ -1249,6 +1277,49 @@ def test_itinerary_update() -> None:
     conn.close()
 
 
+def test_arrival_ordering() -> None:
+    """An arrival sorts by when it lands, on the clock of the day it lands in."""
+    section("manage_itinerary — an arrival sorts by the right clock")
+
+    call(manage_destination, action="create", name="Sortland", timezone="Europe/Lisbon")
+    call(manage_trip, action="create", trip_id="sort", destination="Sortland",
+         start_date="2027-07-01", end_date="2027-07-05")
+
+    # Lands 06:00 Lisbon time on the 2nd, having left Tokyo at 22:00 on the 1st.
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Red-eye in",
+         item_type="transit", date="2027-07-01", arrival_date="2027-07-02",
+         start_time="22:00", end_time="06:00",
+         departure_timezone="Asia/Tokyo", arrival_timezone="Europe/Lisbon")
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Lunch",
+         date="2027-07-02", start_time="13:00")
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Museum",
+         date="2027-07-02", start_time="09:00")
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Pack",
+         date="2027-07-02")
+
+    out = call(manage_itinerary, action="list", trip_id="sort")
+    day2 = out.split("Day 2")[1]
+    order = [w for w in ("Red-eye in", "Museum", "Lunch", "Pack") if w in day2]
+    check("the arrival leads the day it lands on, not the day it left",
+          str(order), contains="['Red-eye in', 'Museum', 'Lunch', 'Pack']")
+
+    check("and the departure day shows it departing",
+          out.split("Day 1")[1].split("Day 2")[0], contains="22:00 →")
+
+    # Same flight, arrival stored in a zone 9h ahead of the trip's: 06:00 there
+    # is 22:00 the evening before here, so it must not sort to the top.
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Late arrival",
+         item_type="transit", date="2027-07-03", arrival_date="2027-07-04",
+         start_time="10:00", end_time="06:00",
+         departure_timezone="Europe/Lisbon", arrival_timezone="Asia/Tokyo")
+    call(manage_itinerary, action="schedule", trip_id="sort", title="Breakfast",
+         date="2027-07-04", start_time="08:00")
+    day4 = call(manage_itinerary, action="list", trip_id="sort").split("Day 4")[1]
+    check("an arrival in another zone is placed by the local clock, not its own",
+          str([w for w in ("Breakfast", "Late arrival") if w in day4]),
+          contains="['Breakfast', 'Late arrival']")
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -1276,6 +1347,7 @@ def main() -> int:
         test_manage_itinerary()
         test_crossing_timezones()
         test_itinerary_update()
+        test_arrival_ordering()
         test_tile()
         test_trip_date_shift()
         test_delete_cascade()

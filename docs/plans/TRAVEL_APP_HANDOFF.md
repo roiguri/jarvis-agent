@@ -7,10 +7,6 @@ response, trimmed to two populated days plus one empty one.
 **Source of truth for the data:** `gateway/apps/travel.py` in `roiguri/jarvis-agent`. If this
 document and the payload disagree, the payload is right.
 
-> **PROVISIONAL — not yet handed over.** The multi-city work (destinations, legs, per-day timezone)
-> changes this payload, and the flight/clock conventions are not built yet. Hand this over only
-> once that lands and this document has been rewritten against the payload that ships then.
-
 ---
 
 ## 1. Wiring
@@ -41,101 +37,88 @@ param. Both are caller mistakes. Anything else is an internal fault and should r
 
 ## 2. The payload
 
+A real response, trimmed to the populated days plus one empty one.
+
 ```json
 {
   "trip": {
-    "trip_id": "lisbon_2027",
-    "destination": "Lisbon, Portugal",
-    "start_date": "2027-05-22",
-    "end_date": "2027-05-29",
+    "trip_id": "portugal_2027",
+    "destination": "Lisbon & Porto",      // the trip's own title, when it has one
+    "destination_name": "Portugal",       // the destination it belongs to
+    "country": "Portugal",
+    "start_date": "2027-05-02", "end_date": "2027-05-05",
     "timezone": "Europe/Lisbon",
-    "status": "draft",
-    "is_current": true,
-    "notes": "Focus on food.",
-    "today": "2026-08-05",
-    "position": "before"
+    "status": "draft", "is_current": true, "notes": null,
+    "today": "2026-08-06", "position": "before"
   },
   "days": [
-    {
-      "date": "2027-05-24",
-      "day_number": 3,
-      "outside_window": false,
-      "is_today": false,
+    { "date": "2027-05-01", "day_number": 0, "outside_window": true, "is_today": false,
       "items": [
-        {
-          "entry_id": 4,
-          "item_type": "transit",
-          "title": "Airport metro to city",
-          "start_date": "2027-05-24",
-          "end_date": null,
-          "start_time": "09:00",
-          "end_time": null,
-          "origin": "Airport",
-          "destination_loc": "Baixa",
-          "confirmation_code": null,
-          "notes": null,
-          "place": null
-        }
-      ]
-    },
-    { "date": "2027-05-26", "day_number": 5, "outside_window": false,
+        { "entry_id": 1, "item_type": "transit", "title": "Night flight in",
+          "start_date": "2027-05-01", "end_date": "2027-05-02",
+          "start_time": "22:40", "end_time": "06:10",
+          "from_location": "Tel Aviv", "to_location": "Lisbon",
+          "confirmation_code": "XY-9988", "notes": null,
+          "crosses_midnight": true, "place": null,
+          "role": "start" }
+      ] },
+    { "date": "2027-05-02", "day_number": 1, "outside_window": false, "is_today": false,
+      "items": [
+        { "entry_id": 1, "role": "end",    "title": "Night flight in", "…": "…" },
+        { "entry_id": 3, "role": "single", "title": "Cervejaria Ramiro",
+          "start_time": "20:00", "end_time": null,
+          "place": { "place_id": 1, "title": "Cervejaria Ramiro",
+                     "address": "Av. Alm. Reis 1 H, Lisboa",
+                     "maps_url": "https://maps.google.com/?cid=1",
+                     "lat": null, "lng": null,
+                     "category": "restaurant", "type_label": null } }
+      ] },
+    { "date": "2027-05-03", "day_number": 2, "outside_window": false,
       "is_today": false, "items": [] }
   ],
   "lodging": [
-    {
-      "entry_id": 5, "item_type": "lodging", "title": "Hotel do Chiado",
-      "start_date": "2027-05-22", "end_date": "2027-05-25",
-      "start_time": null, "end_time": null,
-      "confirmation_code": "BK-99812", "notes": null,
-      "place": { "place_id": 9, "title": "Hotel do Chiado", "address": "...",
-                 "maps_url": "https://maps.google.com/?cid=...", "lat": 38.71, "lng": -9.14,
-                 "category": "lodging", "type_label": "Hotel" }
-    }
+    { "entry_id": 2, "item_type": "lodging", "title": "Hotel do Chiado",
+      "start_date": "2027-05-02", "end_date": "2027-05-05",
+      "confirmation_code": "BK-9", "place": null }
   ],
   "wishlist": [
-    {
-      "category": "restaurant",
-      "items": [
-        { "place_id": 6, "title": "Cervejaria Ramiro", "address": "...",
-          "maps_url": "...", "lat": 38.7, "lng": -9.1,
-          "type_label": "Seafood Restaurant", "notes": null, "priority": null }
-      ]
-    }
+    { "category": "restaurant",
+      "items": [ { "wishlist_id": 1, "place_id": 1, "title": "Cervejaria Ramiro",
+                   "city": null, "address": "Av. Alm. Reis 1 H, Lisboa",
+                   "maps_url": "…", "lat": null, "lng": null,
+                   "type_label": null, "notes": "go early", "priority": 2 } ] }
   ]
 }
 ```
 
 ### Field notes that matter for rendering
 
-- **`trip` may be `null`.** That means no trip is pinned — a legitimate empty state, not an error.
-  Draw an empty screen inviting the owner to start a trip in chat.
-- **`position`** is `before | during | after | undated`. Use it to choose the initially selected
-  day: `is_today` when `during`, otherwise the first day.
-- **`today` is computed in the trip's timezone**, not the device's and not the server's. Don't
-  recompute it locally — for the first hours of a morning abroad they disagree, which is exactly
-  when the screen is being used.
-- **`days` is the whole strip.** Every day of the trip is present *including empty ones*; do not
-  filter them out or the strip will skip a free Wednesday. Days outside the trip window (a night
-  train the evening before, a late checkout after) appear at the edges with
-  `outside_window: true` and a `day_number` below 1 — render them as edge chips, and never as
-  "Day 0".
-- **`lodging` is separate on purpose** and never appears inside `days`. A multi-night stay is not a
-  slot in a day. Render it as the sticky banner above the timeline.
-- **`place` is `null` for `transit` and `note` items** — they are not places and have no address or
-  map link. Use `origin` / `destination_loc` for a transit leg instead.
-- **`title` is always populated**, for every item, whether or not it has a place. Render it
-  directly; no fallback logic needed.
-- **`start_time` may be `null`.** Untimed items are already sorted after timed ones within their
-  day. An untimed item is *not* a midnight item — render it without a time badge rather than as
-  00:00.
-- **`type_label`** is Google's human label ("Seafood Restaurant", "Pastry Shop"). `category` is the
-  coarse bucket used for grouping. Show the label on the card and group by the category.
-- **`category`** is one of: `restaurant, cafe, dessert, bar, market, sights, outdoors, shopping,
-  lodging, transit, other` — plus `unsorted` in the wishlist for places nothing could classify.
-  Groups arrive **pre-sorted** in that order, with `unsorted` last; keep the given order.
-- **Rows saved before a schema change may have `type_label: null`.** Handle absence, don't assume.
-
----
+- **`trip` may be `null`** — no trip is pinned. A legitimate empty state, not an error.
+- **`destination` is what to show**; `destination_name` is the destination it belongs to, which may
+  be a country while the trip is titled after its cities.
+- **`position`** is `before | during | after | undated`. Use it to pick the day to open on:
+  `is_today` when `during`, otherwise the first.
+- **`today` is computed in the trip's timezone**, not the device's. Don't recompute it — abroad,
+  for the first hours of a morning, they disagree, which is exactly when the screen is read.
+- **`role` is the important one.** An item appears on **every day it touches**:
+  `single` (begins and ends that day) · `start` (leaves that day) · `continuation` (in progress all
+  day) · `end` (arrives that day). Render the time accordingly — `22:40 →` on a start, `→ 06:10` on
+  an end, no time badge on a continuation. Items are **already ordered** within a day; keep the
+  order given.
+- **`days` is the whole strip.** Every day of the trip is present including empty ones, plus any
+  day outside the window an item touches, flagged `outside_window` with a `day_number` below 1.
+  Render those as edge chips; never as "Day 0".
+- **`lodging` never appears inside `days`.** A stay is not a slot. It is the banner.
+- **`place` is `null` for `transit` and `note`** — use `from_location`/`to_location` instead.
+- **`title` is always populated.** No fallback logic needed.
+- **`start_time` may be `null`** — untimed, already sorted after timed items. Render without a time
+  badge, not as 00:00.
+- **`crosses_midnight`** is explicit because `end_date` means two different things: a span for a
+  stay, a rollover for anything in a day.
+- **`category`** is one of `restaurant · cafe · dessert · bar · market · sights · outdoors ·
+  shopping · lodging · transit · other`, plus `unsorted` in the wishlist. Groups arrive pre-sorted;
+  keep the order. `type_label` is Google's finer label and may be `null` on older rows.
+- **Done wishlist items are omitted** from the payload entirely.
 
 ## 3. Screen
 
@@ -147,8 +130,9 @@ Two tabs.
   map action. Only show stays covering the selected day if you prefer; the array is small enough to
   render whole.
 - Horizontal date strip from `days` — chip per day, `Day N · date`, edge days visibly distinct.
-- Vertical list for the selected day from `days[].items`: time badge (`start_time`–`end_time`, or
-  none), item-type badge, title, address or origin→destination, confirmation code when present.
+- Vertical list for the selected day from `days[].items`, in the order given: time badge from the
+  item's `role` (`22:40 →`, `→ 06:10`, `all day`, or `start–end`), item-type badge, title, address
+  or from→to, confirmation code when present.
 
 **Tab B — Wishlist**
 - Sections from `wishlist`, in the order given, heading = category.
@@ -168,3 +152,5 @@ Two tabs.
   change first. Not a client task yet.
 - **Multi-trip browsing.** v1 shows one trip. `trip_id` is already accepted by the entry, so a
   switcher is additive when a `trips` entry lands.
+- **Trips spanning several destinations.** One destination per trip for now; a country destination
+  holds every city's places, and the wishlist groups by city.

@@ -26,6 +26,9 @@ from gateway.apps.registry import AppEntry, AppNotFound, AppSpec, register_app
 # _init_db at import), which is what lets the read-only connection below open at
 # all on an instance that has never used the skill.
 from tools.travel._db import TRAVEL_RO_URI
+# The same placement the tools use, imported rather than reimplemented: a second
+# copy of "which days does this touch" is one that can disagree with the first.
+from tools.travel.itinerary import day_span, place_rows
 from tools.travel.places import CATEGORIES
 
 # Where "today" falls when a trip names no timezone. Matches the tools: right for
@@ -121,17 +124,6 @@ def _entry(r: sqlite3.Row) -> dict[str, Any]:
         "place": _place_of(r),
     }
 
-
-def _day_span(start: str | None, end: str | None) -> list[str]:
-    if not start or not end:
-        return []
-    d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
-    return [
-        date.fromordinal(d0.toordinal() + n).isoformat()
-        for n in range((d1 - d0).days + 1)
-    ]
-
-
 def _tile_sync(trip_id: str) -> dict[str, Any]:
     conn = _connect()
     try:
@@ -163,28 +155,25 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
         ).fetchall()
 
         lodging = [_entry(r) for r in rows if r["item_type"] == "lodging"]
-        scheduled = [r for r in rows if r["item_type"] != "lodging"]
 
-        # Every day of the trip, plus any day outside it that actually holds
-        # something. The date strip is drawn from this, so an empty middle day
-        # has to be present or the strip would skip it.
-        window = _day_span(trip["start_date"], trip["end_date"])
-        extra = sorted({r["start_date"] for r in scheduled} - set(window))
-        by_date: dict[str, list[dict]] = {}
-        for r in scheduled:
-            by_date.setdefault(r["start_date"], []).append(_entry(r))
-
+        # Every day of the trip, plus every day any item touches — so an empty
+        # middle day still gets a chip, and a day an item merely arrives on is
+        # not reported as free.
+        placed = place_rows(rows, trip)
         days = []
-        for d in sorted(set(window) | set(extra)):
+        for d in day_span(rows, trip):
             n = None
             if trip["start_date"]:
                 n = (date.fromisoformat(d) - date.fromisoformat(trip["start_date"])).days + 1
+            outside = bool(
+                trip["start_date"] and (d < trip["start_date"] or d > trip["end_date"])
+            )
             days.append({
                 "date": d,
                 "day_number": n,
-                "outside_window": d in extra,
+                "outside_window": outside,
                 "is_today": d == today,
-                "items": by_date.get(d, []),
+                "items": [dict(_entry(r), role=role) for role, r in placed.get(d, [])],
             })
 
         # The list hangs off the destination, so a trip reaches it through the

@@ -91,10 +91,12 @@ dependency; every stage leaves the tools and the tile working)*
       itinerary CHECKs; and the same place on the same day reported with the existing entry rather
       than duplicated. 196 checks; verified live
 
-- [ ] **Stage 6 — reads.** Day-strip range = min over `start_date` / max over
-      `COALESCE(end_date, start_date)`, unioned with the trip window; intra-day ordering incl.
-      arrivals positioned by resolved instant; spanning roles in both the tool listing and the tile;
-      wishlist grouped by city then category
+- [x] **Stage 6 — reads.** Day-strip range takes its min over `start_date` alone, so the
+      night-before departure it exists for is no longer dropped. An item is placed on every day it
+      touches with a `single`/`start`/`continuation`/`end` role, in the tool listing and the tile
+      alike — placement lives in one function both import, so they cannot disagree. Arrivals sort by
+      when they land, converted to the clock of the day they land in. 206 checks; the handoff is
+      rewritten against the shipped payload and is no longer provisional
 
 - [ ] Throughout: **no migration code ships.** Each stage's existing rows are migrated by hand, as
       staging has been throughout

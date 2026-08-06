@@ -92,14 +92,24 @@ def _day_number(trip: sqlite3.Row, when: str) -> int | None:
     return (date.fromisoformat(when) - date.fromisoformat(trip["start_date"])).days + 1
 
 
-def _entry_line(r: sqlite3.Row) -> str:
-    """One scheduled thing, as the model reads it back."""
+def _entry_line(r: sqlite3.Row, role: str = "single") -> str:
+    """One scheduled thing, as the model reads it back.
+
+    A spanning item shows only the end that belongs to this day, so the day it
+    lands on says when it lands rather than when it left.
+    """
     when = r["start_time"] or ""
-    if r["start_time"] and r["end_time"]:
-        # +1 marks the date rollover, the way a boarding pass does. Without it a
-        # night flight reads as though it travelled backwards.
-        roll = "+1" if r["end_date"] and r["end_date"] > r["start_date"] else ""
-        when = f"{r['start_time']}-{r['end_time']}{roll}"
+    if role == "start":
+        when = f"{r['start_time'] or ''} →".strip()
+    elif role == "end":
+        when = f"→ {r['end_time'] or ''}".strip()
+    elif role == "continuation":
+        when = "all day"
+    elif r["start_time"] and r["end_time"]:
+        # No rollover marker is needed here: anything ending on a later date is
+        # placed on both days and takes the start/end roles above, so a single
+        # item always begins and ends within one day.
+        when = f"{r['start_time']}-{r['end_time']}"
     head = f"  [{r['entry_id']}] {when:<11} {r['label']}"
     bits = []
     if r["arrival_timezone"] and r["arrival_timezone"] != r["departure_timezone"]:
@@ -120,6 +130,103 @@ def _entry_line(r: sqlite3.Row) -> str:
     return out
 
 
+def _in_trip_clock(day: str, t: str | None, from_tz: str | None, trip_tz: str | None) -> str | None:
+    """A time expressed on the clock the day is being read in.
+
+    An arrival is stored in the zone it lands in, so sorting it against the rest
+    of a day would compare two different clocks as strings. This converts it to
+    the trip's clock for ordering only — what is displayed stays as the schedule
+    prints it.
+    """
+    if not t:
+        return None
+    if not from_tz or not trip_tz or from_tz == trip_tz:
+        return t
+    try:
+        dt = datetime.combine(
+            date.fromisoformat(day), time.fromisoformat(t), tzinfo=ZoneInfo(from_tz)
+        )
+        return dt.astimezone(ZoneInfo(trip_tz)).strftime("%H:%M")
+    except (ValueError, ZoneInfoNotFoundError):
+        return t
+
+
+def day_span(rows, trip) -> list[str]:
+    """Every date the strip covers: the trip's own window, plus every day any
+    item touches.
+
+    The minimum is taken over start_date ALONE. end_date is never earlier, so
+    including it here would drop exactly the case this exists for — the red-eye
+    that departs the night before the trip and lands on its first morning.
+    """
+    edges: list[str] = []
+    for r in rows:
+        edges.append(r["start_date"])
+        edges.append(r["end_date"] or r["start_date"])
+    if trip["start_date"]:
+        edges += [trip["start_date"], trip["end_date"]]
+    if not edges:
+        return []
+    lo, hi = min(edges), max(edges)
+    d0, d1 = date.fromisoformat(lo), date.fromisoformat(hi)
+    return [
+        date.fromordinal(d0.toordinal() + n).isoformat()
+        for n in range((d1 - d0).days + 1)
+    ]
+
+
+def place_rows(rows, trip) -> dict[str, list[tuple[str, object]]]:
+    """date -> [(role, row)] for every day each item touches.
+
+    An item placed only on its start date leaves the day it arrives looking
+    empty — land at 06:00 and the morning reads free. So a row appears on every
+    day it covers, tagged with what it is doing there: `single`, `start`,
+    `continuation`, or `end`.
+
+    Lodging is excluded. It is rendered as a banner precisely because a stay is
+    not a slot in a day, and repeating it under every night would bury the days
+    it does not cover.
+    """
+    trip_tz = trip["timezone"]
+    by_date: dict[str, list[tuple[str, object]]] = {}
+    for r in rows:
+        if r["item_type"] == "lodging":
+            continue
+        start = r["start_date"]
+        finish = r["end_date"] or start
+        d0, d1 = date.fromisoformat(start), date.fromisoformat(finish)
+        n_days = (d1 - d0).days
+        for n in range(n_days + 1):
+            day = date.fromordinal(d0.toordinal() + n).isoformat()
+            role = (
+                "single" if n_days == 0
+                else "start" if n == 0
+                else "end" if n == n_days
+                else "continuation"
+            )
+            by_date.setdefault(day, []).append((role, r))
+
+    for day, items in by_date.items():
+        items.sort(key=lambda ri: _sort_key(day, ri[0], ri[1], trip_tz))
+    return by_date
+
+
+def _sort_key(day: str, role: str, r, trip_tz: str | None):
+    """Ordering inside one day.
+
+    Something already under way comes first; then everything with a time, an
+    arrival taking its arrival time rather than the departure that started it a
+    day earlier; then untimed items, which are not midnight items.
+    """
+    if role == "continuation":
+        return (0, "", r["entry_id"])
+    if role == "end":
+        t = _in_trip_clock(day, r["end_time"], r["arrival_timezone"] or trip_tz, trip_tz)
+        return (1, t or "", r["entry_id"]) if t else (2, "", r["entry_id"])
+    t = r["start_time"]
+    return (1, t, r["entry_id"]) if t else (2, "", r["entry_id"])
+
+
 def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
     """The trip's schedule: stays first, then a section per day.
 
@@ -138,7 +245,6 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
         return f"{tid} has nothing scheduled yet."
 
     stays = [r for r in rows if r["item_type"] == "lodging"]
-    rest = [r for r in rows if r["item_type"] != "lodging"]
     out = [f"{tid} itinerary ({len(rows)} item(s)):"]
 
     if stays:
@@ -148,21 +254,21 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
             code = f"  (conf {r['confirmation_code']})" if r["confirmation_code"] else ""
             out.append(f"  [{r['entry_id']}] {span}  {r['label']}{code}")
 
-    current = object()
-    for r in rest:
-        if r["start_date"] != current:
-            current = r["start_date"]
-            n = _day_number(trip, r["start_date"])
-            if n is None:
-                head = r["start_date"]
-            elif n < 1:
-                head = f"{r['start_date']}  (before day 1)"
-            else:
-                head = f"Day {n} · {r['start_date']}"
-            if trip["end_date"] and r["start_date"] > trip["end_date"]:
-                head += "  (after the trip ends)"
-            out.append(f"\n{head}")
-        out.append(_entry_line(r))
+    placed = place_rows(rows, trip)
+    for day in day_span(rows, trip):
+        n = _day_number(trip, day)
+        if n is None:
+            head = day
+        elif n < 1:
+            head = f"{day}  (before day 1)"
+        else:
+            head = f"Day {n} · {day}"
+        if trip["end_date"] and day > trip["end_date"]:
+            head += "  (after the trip ends)"
+        items = placed.get(day, [])
+        out.append(f"\n{head}" + ("" if items else "   (nothing scheduled)"))
+        for role, r in items:
+            out.append(_entry_line(r, role))
     return "\n".join(out)
 
 
