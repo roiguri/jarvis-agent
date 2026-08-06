@@ -319,7 +319,11 @@ def _schedule(
         if not title.strip():
             raise TravelError(f"a {kind} needs a title.")
     elif place_id or google_place_id.strip() or (kind in ("place", "lodging")):
-        pid = _resolve_place(conn, place_id, google_place_id, title, "", "", "")
+        # The trip supplies the destination when the caller did not name one —
+        # a hotel scheduled on a Lisbon trip is a place in Lisbon.
+        pid = _resolve_place(
+            conn, place_id, google_place_id, title, "", "", "", trip_id=tid
+        )
     elif title.strip():
         kind = kind or "note"
     else:

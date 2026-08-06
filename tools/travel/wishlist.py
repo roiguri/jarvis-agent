@@ -119,8 +119,11 @@ def manage_wishlist(
                 return _wishlist_lines(conn, tid)
 
             if action == "add":
+                # The trip is the context that answers "which destination" when
+                # the caller did not name one.
                 pid = _resolve_place(
-                    conn, place_id, google_place_id, title, address, maps_url, category
+                    conn, place_id, google_place_id, title, address, maps_url,
+                    category, trip_id=tid,
                 )
                 existing = conn.execute(
                     "SELECT wishlist_id FROM wishlist WHERE trip_id = ? AND place_id = ?",

@@ -38,41 +38,57 @@ def _get_db() -> sqlite3.Connection:
 def _init_db():
     conn = _get_db()
     conn.executescript("""
+        -- Somewhere you travel to. A city or a country, whichever granularity
+        -- suits the trip; it carries the timezone every local time is read in.
+        CREATE TABLE IF NOT EXISTS destinations (
+            destination_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- Case-insensitively unique, so "Tokyo" and "tokyo" cannot become
+            -- two rows and strand a returning trip with an empty wishlist.
+            name            TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            kind            TEXT CHECK(kind IN ('city', 'region', 'country')),
+            country         TEXT,
+            -- NOT NULL because the whole time model defaults to it: an item's
+            -- local time is meaningless without knowing whose local it is.
+            timezone        TEXT NOT NULL,
+            lat             REAL,
+            lng             REAL,
+            -- What Google called the area. Evidence about a place, never used
+            -- to decide which destination it belongs to.
+            google_locality TEXT,
+            created_at      DATETIME DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS trips (
-            trip_id     TEXT PRIMARY KEY,
-            destination TEXT NOT NULL,
-            timezone    TEXT,
-            start_date  DATE,
-            end_date    DATE,
-            status      TEXT NOT NULL DEFAULT 'draft'
-                            CHECK(status IN ('draft', 'archived')),
-            is_current  INTEGER NOT NULL DEFAULT 0,
-            notes       TEXT,
-            created_at  DATETIME DEFAULT (datetime('now'))
+            trip_id        TEXT PRIMARY KEY,
+            title          TEXT,
+            destination_id INTEGER NOT NULL REFERENCES destinations(destination_id),
+            start_date     DATE,
+            end_date       DATE,
+            status         TEXT NOT NULL DEFAULT 'draft'
+                               CHECK(status IN ('draft', 'archived')),
+            is_current     INTEGER NOT NULL DEFAULT 0,
+            notes          TEXT,
+            created_at     DATETIME DEFAULT (datetime('now')),
+            CHECK (end_date IS NULL OR start_date IS NULL OR end_date >= start_date)
         );
 
         -- One current trip, enforced by the database rather than by discipline.
-        -- Partial index: only rows with is_current = 1 participate, so any
-        -- number of trips may sit at 0.
         CREATE UNIQUE INDEX IF NOT EXISTS one_current_trip
             ON trips(is_current) WHERE is_current = 1;
 
-        -- A place is a fact about the world, so it carries no trip: the same
-        -- place is reachable from every trip that ever references it, and its
-        -- address is corrected in one row rather than in each mention.
+        -- A place is a fact about the world and carries no trip, so the same
+        -- place is reachable from every trip that references it and its address
+        -- is corrected in one row rather than in each mention.
         CREATE TABLE IF NOT EXISTS places (
             place_id        INTEGER PRIMARY KEY AUTOINCREMENT,
             google_place_id TEXT UNIQUE,
+            destination_id  INTEGER NOT NULL REFERENCES destinations(destination_id),
             title           TEXT NOT NULL,
             address         TEXT,
             maps_url        TEXT,
             lat             REAL,
             lng             REAL,
             category        TEXT,
-            -- What Google says this is, kept at three levels of fidelity because
-            -- the display vocabulary is not settled and a re-fetch costs a
-            -- billed lookup: the primary type, its human label, and the full
-            -- types array verbatim.
             google_type       TEXT,
             google_type_label TEXT,
             google_types      TEXT,
@@ -82,7 +98,7 @@ def _init_db():
         );
 
         -- Wanting to go somewhere on a given trip. Independent of whether it is
-        -- also scheduled — scheduling a place never consumes its wishlist row.
+        -- also scheduled — scheduling never consumes its wishlist row.
         CREATE TABLE IF NOT EXISTS wishlist (
             wishlist_id INTEGER PRIMARY KEY AUTOINCREMENT,
             trip_id     TEXT    NOT NULL REFERENCES trips(trip_id),
@@ -93,10 +109,9 @@ def _init_db():
             UNIQUE(trip_id, place_id)
         );
 
-        -- Something happening at a time. A place may have several of these (the
-        -- same cafe on two mornings); a transit leg or a note has none at all,
-        -- which is why place_id is nullable and title covers those rows.
-        -- end_date NULL means a single day; a stay spans start_date..end_date.
+        -- Something happening at a time. A place may have several of these; a
+        -- transit leg or a note has none, which is why place_id is nullable and
+        -- title covers those rows.
         CREATE TABLE IF NOT EXISTS itinerary (
             entry_id          INTEGER PRIMARY KEY AUTOINCREMENT,
             trip_id           TEXT    NOT NULL REFERENCES trips(trip_id),
@@ -113,8 +128,6 @@ def _init_db():
             confirmation_code TEXT,
             notes             TEXT,
             created_at        DATETIME DEFAULT (datetime('now')),
-            -- A row with neither a place nor a title cannot be rendered or
-            -- described; refused here rather than surfacing as a blank card.
             CHECK (place_id IS NOT NULL OR title IS NOT NULL)
         );
 
@@ -122,6 +135,8 @@ def _init_db():
             ON itinerary(trip_id, start_date);
         CREATE INDEX IF NOT EXISTS wishlist_by_trip
             ON wishlist(trip_id);
+        CREATE INDEX IF NOT EXISTS places_by_destination
+            ON places(destination_id);
     """)
     conn.commit()
     conn.close()
@@ -175,8 +190,10 @@ def _validate_tz(timezone: str) -> str | None:
 def _trip_lines(conn: sqlite3.Connection) -> str:
     """Every trip as one line each."""
     rows = conn.execute(
-        "SELECT trip_id, destination, status, start_date, end_date, is_current, timezone "
-        "FROM trips ORDER BY is_current DESC, COALESCE(start_date, '9999'), trip_id"
+        "SELECT t.trip_id, t.title, t.status, t.start_date, t.end_date, t.is_current, "
+        "       d.name AS destination, d.timezone "
+        "FROM trips t JOIN destinations d ON d.destination_id = t.destination_id "
+        "ORDER BY t.is_current DESC, COALESCE(t.start_date, '9999'), t.trip_id"
     ).fetchall()
     if not rows:
         return "(no trips yet)"
@@ -195,7 +212,8 @@ def _trip_lines(conn: sqlite3.Connection) -> str:
         if r["timezone"]:
             marks.append(r["timezone"])
         suffix = f"  [{', '.join(marks)}]" if marks else ""
-        out.append(f"- {r['trip_id']}: {r['destination']} — {when}{suffix}")
+        label = r["title"] or r["destination"]
+        out.append(f"- {r['trip_id']}: {label} — {when}{suffix}")
     return "\n".join(out)
 
 

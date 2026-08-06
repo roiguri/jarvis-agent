@@ -5,7 +5,9 @@ next work lands. Rationale lives in `TRAVEL_PLAN.md`, which also carries the sta
 to the other.
 
 **Scope:** one destination per trip. A destination may be a city or a country, and carries the
-trip's timezone. Cities within it are labels used to group the wishlist. Trips spanning several
+trip's timezone. A country is **preferred where it applies** — it holds every city's places under
+one name, and country names barely vary in spelling where city names do. A city or region is right
+when the country spans several timezones, since the destination is what carries one. Cities within it are labels used to group the wishlist. Trips spanning several
 destinations are out of scope; §5 states what extending costs.
 
 ---

@@ -60,11 +60,13 @@ dependency; every stage leaves the tools and the tile working)*
       administrative_area_level_2, so the most specific answer wins. 146 checks; verified live —
       a real save returned Lisboa/Portugal, a hand-added place stayed NULL without erroring
 
-- [ ] **Stage 2 — `destinations`, and a tool for them.** Table with `name UNIQUE COLLATE NOCASE`
+- [x] **Stage 2 — `destinations`, and a tool for them.** Table with `name UNIQUE COLLATE NOCASE`
       and `timezone NOT NULL`; `manage_destination` (list · create · update · merge).
-      `places.destination_id` resolved on save from the caller, else the trip in context, else by
-      asking — never from Google's locality, which is a ward as often as a city.
-      `trips.destination_id` replaces the free-text destination; `timezone` moves off `trips`
+      `places.destination_id` resolved from the caller, else the trip in context, else by asking —
+      never from Google's locality. `trips.destination_id` replaces the free-text destination and
+      `timezone` moves off `trips`. Schema is create-only; staging was recreated clean rather than
+      migrated. 164 checks; verified live, and the first saved Tokyo place came back with
+      `city=Shibuya` under `destination=Tokyo` — the ward case, on the first run
 
 - [ ] **Stage 3 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`; add
       `wishlist_id` addressing, `city`, `done_at`, `priority` 1–5, the second UNIQUE that stops

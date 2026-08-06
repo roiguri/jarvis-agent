@@ -31,7 +31,8 @@ os.environ["JARVIS_ROOT"] = _SCRATCH
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.travel import (  # noqa: E402
-    manage_itinerary, manage_place, manage_trip, manage_wishlist, query_travel_db,
+    manage_destination, manage_itinerary, manage_place, manage_trip, manage_wishlist,
+    query_travel_db,
 )
 
 VERBOSE = False
@@ -77,6 +78,88 @@ def section(title: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_manage_destination() -> None:
+    section("manage_destination — the thing trips and places hang off")
+
+    check("an empty list says so", call(manage_destination, action="list"),
+          contains="no destinations yet")
+
+    check("create needs a name", call(manage_destination, action="create"),
+          contains="needs a name")
+
+    check("create needs a timezone, and says why",
+          call(manage_destination, action="create", name="Nowhere"),
+          contains=["needs a timezone", "every local time"])
+
+    check("an unknown timezone is refused",
+          call(manage_destination, action="create", name="Nowhere",
+               timezone="Mars/Olympus"),
+          contains="unknown timezone")
+
+    check("an unknown kind lists the real ones",
+          call(manage_destination, action="create", name="Nowhere",
+               timezone="Asia/Tokyo", kind="planet"),
+          contains=["unknown kind", "city", "country"])
+
+    check("creating reports the timezone it will be read in",
+          call(manage_destination, action="create", name="Alpha City",
+               timezone="Asia/Tokyo", kind="city", country="Alphaland"),
+          contains=["created destination", "Asia/Tokyo"])
+
+    check("the same name again is refused, not forked",
+          call(manage_destination, action="create", name="Alpha City",
+               timezone="Asia/Tokyo"),
+          contains="already exists")
+
+    check("and case does not fork it either",
+          call(manage_destination, action="create", name="alpha city",
+               timezone="Asia/Tokyo"),
+          contains="already exists")
+
+    for nm, tz in (("Beta Town", "Europe/Lisbon"), ("Shift City", "Europe/Lisbon"),
+                   ("Itinerary City", "Europe/Lisbon"), ("Undated Town", "Europe/Lisbon"),
+                   ("Wishville", "Europe/Lisbon"), ("Otherville", "Europe/Lisbon"),
+                   ("Tileburg", "Europe/Lisbon"), ("Placeville", "Europe/Lisbon"),
+                   ("Strayville", "Europe/Lisbon")):
+        call(manage_destination, action="create", name=nm, timezone=tz)
+
+    check("list shows what depends on each", call(manage_destination, action="list"),
+          contains=["Alpha City", "0 place(s), 0 trip(s)"])
+
+    check("an unknown name is answered with the real ones",
+          call(manage_destination, action="update", name="Nowhere", timezone="Asia/Tokyo"),
+          contains=["no destination", "Alpha City"])
+
+    check("update says it reaches every trip and place",
+          call(manage_destination, action="update", name="Strayville",
+               country="Strayland", kind="city"),
+          contains=["updated strayville", "every trip and place"])
+
+    check("renaming onto an existing name is refused, with the way out",
+          call(manage_destination, action="update", name="Strayville",
+               new_name="Alpha City"),
+          contains=["already exists", "merge into it"])
+
+    check("update with no fields is a no-op",
+          call(manage_destination, action="update", name="Strayville"),
+          contains="nothing to update")
+
+    check("a destination cannot be merged into itself",
+          call(manage_destination, action="merge", name="Strayville", into="Strayville"),
+          contains="into itself")
+
+    check("merge moves what depended on it and removes the row",
+          call(manage_destination, action="merge", name="Strayville", into="Alpha City"),
+          contains=["merged strayville into alpha city", "no longer exists"])
+
+    check("and it is really gone", call(manage_destination, action="list"),
+          missing="Strayville")
+
+    check("unknown action lists the real actions",
+          call(manage_destination, action="frobnicate"),
+          contains=["unknown action", "merge"])
+
+
 def test_manage_trip() -> None:
     section("manage_trip — creation and the current-trip pointer")
 
@@ -85,7 +168,7 @@ def test_manage_trip() -> None:
 
     check("create claims current when nothing holds it",
           call(manage_trip, action="create", trip_id="alpha", destination="Alpha City",
-               start_date="2026-10-10", end_date="2026-10-15", timezone="Asia/Tokyo"),
+               start_date="2026-10-10", end_date="2026-10-15"),
           contains=["created", "now the current trip"])
 
     check("second create does NOT steal the pointer",
@@ -99,7 +182,7 @@ def test_manage_trip() -> None:
           contains="no dates")
 
     check("duplicate id refused",
-          call(manage_trip, action="create", trip_id="alpha", destination="Dup"),
+          call(manage_trip, action="create", trip_id="alpha", destination="Alpha City"),
           contains="already exists")
 
     check("create needs a destination",
@@ -133,9 +216,9 @@ def test_manage_trip() -> None:
                start_date="10/11/2026", end_date="2026-11-01"),
           contains="yyyy-mm-dd")
 
-    check("unknown timezone refused",
-          call(manage_trip, action="update", trip_id="beta", timezone="Mars/Olympus"),
-          contains="unknown timezone")
+    check("an unknown destination lists the real ones",
+          call(manage_trip, action="update", trip_id="beta", destination="Nowhere"),
+          contains=["no destination", "Alpha City"])
 
     section("manage_trip — set_current, archive")
 
@@ -222,7 +305,10 @@ def test_delete_cascade() -> None:
     section("manage_trip — delete cascades to rows, spares places")
 
     conn = _raw()
-    conn.execute("INSERT INTO places(title) VALUES('Somewhere')")
+    conn.execute(
+        "INSERT INTO places(title, destination_id) "
+        "SELECT 'Somewhere', destination_id FROM destinations WHERE name='Shift City'"
+    )
     conn.execute("INSERT INTO wishlist(trip_id, place_id) VALUES('shift', 1)")
     conn.commit()
     conn.close()
@@ -330,7 +416,8 @@ def test_categories() -> None:
           contains="ok")
 
     check("a category outside the vocabulary is refused",
-          call(manage_place, action="save", title="X", category="delicious"),
+          call(manage_place, action="save", title="X", category="delicious",
+               destination="Beta Town"),
           contains=["unknown category", "restaurant", "other"])
 
 
@@ -439,7 +526,7 @@ def test_manage_place() -> None:
 
         check("saving a candidate reports a new place",
               call(manage_place, action="save", google_place_id="ChIJ_branch_one",
-                   title="Cafe Central — Baixa"),
+                   title="Cafe Central — Baixa", destination="Beta Town"),
               contains="saved place")
 
         check("coordinates and type came from the search, not the arguments",
@@ -457,7 +544,7 @@ def test_manage_place() -> None:
 
         check("re-saving the same google id does not duplicate",
               call(manage_place, action="save", google_place_id="ChIJ_branch_one",
-                   title="Cafe Central — Baixa"),
+                   title="Cafe Central — Baixa", destination="Beta Town"),
               contains=["already saved", "nothing duplicated"])
 
         check("still exactly one row for it",
@@ -467,7 +554,7 @@ def test_manage_place() -> None:
 
         check("the other branch is a separate place",
               call(manage_place, action="save", google_place_id="ChIJ_branch_two",
-                   title="Cafe Central — Alfama"),
+                   title="Cafe Central — Alfama", destination="Beta Town"),
               contains="saved place")
         check("the locality and country are kept",
               call(query_travel_db,
@@ -485,8 +572,12 @@ def test_manage_place() -> None:
 
     check("a hand-added place needs no google id",
           call(manage_place, action="save", title="Ana's kitchen",
-               address="a friend's flat"),
+               address="a friend's flat", destination="Beta Town"),
           contains="saved place")
+
+    check("saving without a destination asks which one, and lists them",
+          call(manage_place, action="save", title="Floating"),
+          contains=["which destination", "Alpha City"])
 
     check("save needs at least a title", call(manage_place, action="save"),
           contains="needs at least a title")
@@ -963,6 +1054,7 @@ def main() -> int:
 
     print(f"scratch root: {_SCRATCH}")
     try:
+        test_manage_destination()
         test_manage_trip()
         test_manage_place()
         test_categories()

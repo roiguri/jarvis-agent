@@ -35,6 +35,15 @@ _FALLBACK_TZ = "Asia/Jerusalem"
 _CATEGORY_ORDER = {name: i for i, name in enumerate(CATEGORIES)}
 
 
+# The timezone and the display name live on the destination now, so every read
+# of a trip joins to it. One place, so a screen can never render a trip whose
+# timezone it had to guess.
+_TRIP_SQL = (
+    "SELECT t.*, d.name AS destination, d.timezone, d.country, d.kind "
+    "FROM trips t JOIN destinations d ON d.destination_id = t.destination_id "
+)
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(TRAVEL_RO_URI, uri=True)
     conn.row_factory = sqlite3.Row
@@ -127,13 +136,11 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
     conn = _connect()
     try:
         if trip_id:
-            trip = conn.execute(
-                "SELECT * FROM trips WHERE trip_id = ?", (trip_id,)
-            ).fetchone()
+            trip = conn.execute(_TRIP_SQL + "WHERE t.trip_id = ?", (trip_id,)).fetchone()
             if trip is None:
                 raise AppNotFound(f"No trip {trip_id!r}")
         else:
-            trip = conn.execute("SELECT * FROM trips WHERE is_current = 1").fetchone()
+            trip = conn.execute(_TRIP_SQL + "WHERE t.is_current = 1").fetchone()
             if trip is None:
                 # Not an error: having no trip pinned is a legitimate state, and
                 # a 404 would make an empty screen indistinguishable from a
@@ -217,7 +224,9 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
         return {
             "trip": {
                 "trip_id": tid,
-                "destination": trip["destination"],
+                "destination": trip["title"] or trip["destination"],
+                "destination_name": trip["destination"],
+                "country": trip["country"],
                 "start_date": trip["start_date"],
                 "end_date": trip["end_date"],
                 "timezone": trip["timezone"],

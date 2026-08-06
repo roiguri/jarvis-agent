@@ -368,11 +368,12 @@ def _upsert_place(conn: sqlite3.Connection, fields: dict) -> tuple[int, bool]:
         if existing:
             return existing["place_id"], False
     cur = conn.execute(
-        "INSERT INTO places(google_place_id, title, address, maps_url, lat, lng, "
-        "category, google_type, google_type_label, google_types, city, country) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO places(google_place_id, destination_id, title, address, maps_url, "
+        "lat, lng, category, google_type, google_type_label, google_types, city, country) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             gid,
+            fields["destination_id"],
             fields["title"],
             fields.get("address"),
             fields.get("maps_url"),
@@ -401,6 +402,7 @@ def manage_place(
     address: str = "",
     maps_url: str = "",
     category: str = "",
+    destination: str = "",
 ) -> str:
     """Look up and keep places — restaurants, sights, hotels, stations.
 
@@ -496,6 +498,9 @@ def manage_place(
                 fields.setdefault("google_types", None)
                 fields.setdefault("city", None)
                 fields.setdefault("country", None)
+                fields["destination_id"] = _resolve_destination(
+                    conn, destination, "", fields
+                )
                 pid, created = _upsert_place(conn, fields)
                 conn.commit()
                 if not created:
@@ -558,6 +563,36 @@ def _delete_place(conn: sqlite3.Connection, place: sqlite3.Row) -> str:
     conn.commit()
     return f"Deleted place {pid} — {place['title']}."
 
+def _resolve_destination(
+    conn, destination: str, trip_id: str = "", place_fields: dict | None = None
+) -> int:
+    """Which destination a place being saved belongs to.
+
+    Named by the caller, else taken from the trip in context, else refused. It is
+    deliberately NOT guessed from the place's own city: Google reports a ward for
+    a Tokyo venue — Shibuya, Shinjuku — so guessing would file one city under
+    several names, and the wishlist that hangs off a destination would quietly
+    split in two between one visit and the next. Asking costs one turn; guessing
+    costs a list.
+    """
+    from tools.travel.destinations import _destination_lines, _require_destination
+
+    if destination.strip():
+        return _require_destination(conn, destination.strip())["destination_id"]
+    if trip_id:
+        row = conn.execute(
+            "SELECT destination_id FROM trips WHERE trip_id = ?", (trip_id,)
+        ).fetchone()
+        if row:
+            return row["destination_id"]
+    city = (place_fields or {}).get("city")
+    hint = f" Google filed it under {city!r}, which may or may not be the name you use." if city else ""
+    raise TravelError(
+        "Which destination is this place in? Pass destination=<name>." + hint
+        + "\nExisting:\n" + _destination_lines(conn)
+    )
+
+
 def _resolve_place(
     conn: sqlite3.Connection,
     place_id: int,
@@ -566,6 +601,8 @@ def _resolve_place(
     address: str,
     maps_url: str,
     category: str,
+    destination: str = "",
+    trip_id: str = "",
 ) -> int:
     """Find or create the place this wishlist row will point at.
 
@@ -609,5 +646,6 @@ def _resolve_place(
     for k in ("lat", "lng", "google_type", "google_type_label", "google_types",
               "city", "country"):
         fields.setdefault(k, None)
+    fields["destination_id"] = _resolve_destination(conn, destination, trip_id, fields)
     new_id, _ = _upsert_place(conn, fields)
     return new_id

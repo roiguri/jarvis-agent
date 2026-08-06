@@ -6,13 +6,13 @@ from datetime import date
 from langchain_core.tools import tool
 
 from tools.registry import tool_register
+from tools.travel.destinations import _require_destination
 from tools.travel._db import (
     TravelError,
     _get_db,
     _label,
     _require_trip,
     _trip_lines,
-    _validate_tz,
     _validate_window,
 )
 
@@ -68,8 +68,8 @@ def manage_trip(
     destination: str = "",
     start_date: str = "",
     end_date: str = "",
-    timezone: str = "",
     notes: str = "",
+    title: str = "",
 ) -> str:
     """Create and manage trips. One trip is 'current' at a time — that is the one
     the travel tile shows.
@@ -78,14 +78,14 @@ def manage_trip(
     - list: every trip, with dates, timezone, and which is current. Call this
       first whenever you don't already know the exact trip_id.
     - create: needs trip_id and destination. trip_id is a short slug you choose
-      (e.g. 'lisbon_spring'). ALWAYS set timezone here too — you know the
-      destination's timezone, and a trip created without one silently reads
-      "today" in Israel time, which is wrong the moment the owner is abroad.
+      (e.g. 'lisbon_spring'). destination must be one that already exists — call
+      manage_destination(action='list') to see them, and create it there first if
+      it is new. The timezone comes from the destination, so it is not set here.
       Dates are optional — a trip with no dates is a "someday" bucket you can
       add wishlist places to but cannot schedule into. Becomes current only if
       no other trip is; creating a trip never steals the pointer from the trip
       the owner is currently looking at.
-    - update: change destination, dates, timezone or notes. Moving a dated trip
+    - update: change destination, dates, title or notes. Moving a dated trip
       by a fixed offset drags its scheduled items along, EXCEPT items holding a
       confirmation_code — a booking does not move because plans changed, so
       those are listed for rebooking instead.
@@ -99,13 +99,10 @@ def manage_trip(
     Args:
         action: list | create | update | set_current | archive | delete
         trip_id: the trip's id — required for everything except list.
-        destination: free text, e.g. "Lisbon, Portugal".
+        destination: the name of an existing destination. Never invent one — list
+            them first, and create a missing one with manage_destination.
         start_date: YYYY-MM-DD. Give both dates or neither.
         end_date: YYYY-MM-DD.
-        timezone: IANA name, e.g. "Europe/Lisbon". Decides only which date counts
-            as "today" when reading the itinerary. Set it whenever you create or
-            learn a destination — blank falls back to Israel time, which is right
-            only for a domestic trip.
         notes: free text about the trip as a whole.
     """
     action = (action or "").strip().lower()
@@ -122,7 +119,7 @@ def manage_trip(
 
             if action == "create":
                 return _create_trip(
-                    conn, trip_id, destination, start_date, end_date, timezone, notes
+                    conn, trip_id, destination, start_date, end_date, notes, title
                 )
 
             trip = _require_trip(conn, trip_id)
@@ -145,7 +142,7 @@ def manage_trip(
                 return f"Archived {tid}.{freed}"
 
             if action == "update":
-                return _update_trip(conn, trip, destination, start_date, end_date, timezone, notes)
+                return _update_trip(conn, trip, destination, start_date, end_date, notes, title)
 
             if action == "delete":
                 return _delete_trip(conn, trip)
@@ -162,30 +159,33 @@ def _create_trip(
     destination: str,
     start_date: str,
     end_date: str,
-    timezone: str,
     notes: str,
+    title: str,
 ) -> str:
     tid = (trip_id or "").strip()
     if not tid or not destination.strip():
         raise TravelError("create needs both trip_id and destination.")
+    dest = _require_destination(conn, destination.strip())
     if conn.execute("SELECT 1 FROM trips WHERE trip_id = ?", (tid,)).fetchone():
         raise TravelError(
             f"Trip {tid!r} already exists. Use action='update', or pick another id."
         )
     s, e = _validate_window(start_date, end_date)
-    tz = _validate_tz(timezone)
     # Claimed only when nothing holds it: a new trip must not yank the tile away
     # from the one being looked at.
     held = conn.execute("SELECT 1 FROM trips WHERE is_current = 1").fetchone()
     conn.execute(
-        "INSERT INTO trips(trip_id, destination, timezone, start_date, end_date, "
+        "INSERT INTO trips(trip_id, title, destination_id, start_date, end_date, "
         "notes, is_current) VALUES(?,?,?,?,?,?,?)",
-        (tid, destination.strip(), tz, s, e, notes.strip() or None, 0 if held else 1),
+        (tid, title.strip() or None, dest["destination_id"], s, e,
+         notes.strip() or None, 0 if held else 1),
     )
     conn.commit()
     claim = "" if held else " It is now the current trip."
     when = f"{s} to {e}" if s else "no dates yet (cannot schedule until dates are set)"
-    return f"Created trip {tid!r} — {destination.strip()}, {when}.{claim}"
+    return (
+        f"Created trip {tid!r} — {dest['name']} ({dest['timezone']}), {when}.{claim}"
+    )
 
 
 def _update_trip(
@@ -194,22 +194,22 @@ def _update_trip(
     destination: str,
     start_date: str,
     end_date: str,
-    timezone: str,
     notes: str,
+    title: str,
 ) -> str:
     tid = trip["trip_id"]
     sets, args, said = [], [], []
 
     if destination.strip():
-        sets.append("destination = ?"); args.append(destination.strip())
-        said.append(f"destination → {destination.strip()}")
+        dest = _require_destination(conn, destination.strip())
+        sets.append("destination_id = ?"); args.append(dest["destination_id"])
+        said.append(f"destination → {dest['name']}")
+    if title.strip():
+        sets.append("title = ?"); args.append(title.strip())
+        said.append(f"title → {title.strip()}")
     if notes.strip():
         sets.append("notes = ?"); args.append(notes.strip())
         said.append("notes updated")
-    if timezone.strip():
-        tz = _validate_tz(timezone)
-        sets.append("timezone = ?"); args.append(tz)
-        said.append(f"timezone → {tz}")
 
     if start_date.strip() or end_date.strip():
         new_s, new_e = _validate_window(start_date, end_date)
