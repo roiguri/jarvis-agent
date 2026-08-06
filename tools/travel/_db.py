@@ -146,12 +146,18 @@ def _init_db():
             -- everything internal and wrong only for the flights in and out.
             departure_timezone TEXT,
             arrival_timezone   TEXT,
-            origin            TEXT,
-            destination_loc   TEXT,
+            -- from_/to_ rather than origin/destination_loc: `destination` names
+            -- a destinations row everywhere else in this schema, and one word
+            -- meaning two kinds of thing is what gets them crossed.
+            from_location     TEXT,
+            to_location       TEXT,
             confirmation_code TEXT,
             notes             TEXT,
             created_at        DATETIME DEFAULT (datetime('now')),
-            CHECK (place_id IS NOT NULL OR title IS NOT NULL)
+            CHECK (place_id IS NOT NULL OR title IS NOT NULL),
+            CHECK (end_date IS NULL OR end_date >= start_date),
+            -- An end with no start is not a time, it is half of one.
+            CHECK (start_time IS NOT NULL OR end_time IS NULL)
         );
 
         CREATE INDEX IF NOT EXISTS itinerary_by_trip_date

@@ -107,8 +107,8 @@ def _entry(r: sqlite3.Row) -> dict[str, Any]:
         "end_date": r["end_date"],
         "start_time": r["start_time"],
         "end_time": r["end_time"],
-        "origin": r["origin"],
-        "destination_loc": r["destination_loc"],
+        "from_location": r["from_location"],
+        "to_location": r["to_location"],
         "confirmation_code": r["confirmation_code"],
         "notes": r["notes"],
         # Explicit rather than left to the client, because end_date means two

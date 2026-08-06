@@ -106,8 +106,8 @@ def _entry_line(r: sqlite3.Row) -> str:
         # Say whose clock the arrival is on. Without it two different clocks sit
         # side by side in one line and read as one.
         bits.append(f"arr {r['arrival_timezone'].split('/')[-1].replace('_', ' ')} time")
-    if r["item_type"] == "transit" and (r["origin"] or r["destination_loc"]):
-        bits.append(f"{r['origin'] or '?'} → {r['destination_loc'] or '?'}")
+    if r["item_type"] == "transit" and (r["from_location"] or r["to_location"]):
+        bits.append(f"{r['from_location'] or '?'} → {r['to_location'] or '?'}")
     if r["item_type"] != "place":
         bits.append(r["item_type"])
     if r["confirmation_code"]:
@@ -212,7 +212,7 @@ def manage_itinerary(
     entry_id: int = 0,
     place_id: int = 0,
     google_place_id: str = "",
-    title: str = "",
+    title: str = "__unset__",
     item_type: str = "",
     date: str = "",
     end_date: str = "",
@@ -221,10 +221,12 @@ def manage_itinerary(
     end_time: str = "",
     departure_timezone: str = "",
     arrival_timezone: str = "",
-    origin: str = "",
-    destination_loc: str = "",
-    confirmation_code: str = "",
-    notes: str = "",
+    from_location: str = "__unset__",
+    to_location: str = "__unset__",
+    confirmation_code: str = "__unset__",
+    notes: str = "__unset__",
+    wishlist_id: int = 0,
+    move_to_trip: str = "",
 ) -> str:
     """Build and adjust a trip's day-by-day schedule.
 
@@ -240,11 +242,16 @@ def manage_itinerary(
       worked out from the clocks, and the duration cannot be shown without the
       zones.
     - reschedule: change an existing entry's date or times.
+    - update: change anything reschedule does not — title, notes,
+      confirmation_code, the transit endpoints, item_type, which place it points
+      at, or which trip it belongs to. An EMPTY STRING clears a field; omitting
+      an argument leaves it alone. This is how a booking reference learned after
+      the fact gets recorded.
     - remove: take it off the schedule. The wishlist is a separate list and is
       never touched — a place removed from a day is still on it.
 
     Args:
-        action: list | schedule | reschedule | remove
+        action: list | schedule | reschedule | update | remove
         trip_id: which trip. Required. Call manage_trip(action='list') if unsure.
         entry_id: the entry to change, from a listing.
         place_id: an existing place's id.
@@ -270,18 +277,24 @@ def manage_itinerary(
             "Asia/Jerusalem". Set it on the flights into and out of the trip;
             leave it blank for anything inside the destination.
         arrival_timezone: IANA zone the arrival time is local to.
-        origin: where a transit leg starts.
-        destination_loc: where a transit leg ends.
+        from_location: where a transit leg starts — free text, e.g. "Tel Aviv".
+        to_location: where it ends. Not a destination row; just a label.
         confirmation_code: booking reference. Also marks the row as booked, so a
             trip date change reports it for rebooking instead of moving it.
         notes: anything else worth remembering about this item.
+        wishlist_id: schedule something straight off the wishlist, using the id
+            its listing shows. The wishlist entry is not consumed.
+        move_to_trip: on update, the trip_id to move this entry to.
     """
     action = (action or "").strip().lower()
-    if action not in ("list", "schedule", "reschedule", "remove",):
+    if action not in ("list", "schedule", "reschedule", "update", "remove",):
         # Checked before anything else is required: an unknown action must not
         # be reported as a missing id, which is what the model would then try to
         # fix.
-        return f"Error: Unknown action {action!r}. Use one of: list, schedule, reschedule, remove."
+        return (
+            f"Error: Unknown action {action!r}. Use one of: "
+            "list, schedule, reschedule, update, remove."
+        )
     conn = _get_db()
     try:
         try:
@@ -292,17 +305,41 @@ def manage_itinerary(
                 return _itinerary_lines(conn, trip)
 
             if action == "schedule":
+                if wishlist_id:
+                    # "Book the thing on my list" is the commonest flow, and the
+                    # listing hands back a wishlist_id, not a place_id. Taking
+                    # one avoids asking the model for an id it never saw.
+                    row = conn.execute(
+                        "SELECT place_id, title FROM wishlist WHERE wishlist_id = ?",
+                        (wishlist_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise TravelError(f"No wishlist entry {wishlist_id}.")
+                    if row["place_id"] is None:
+                        raise TravelError(
+                            f"Wishlist entry {wishlist_id} ({row['title']}) has no place "
+                            "behind it yet — save the place first, then schedule it."
+                        )
+                    place_id = row["place_id"]
                 return _schedule(
-                    conn, trip, place_id, google_place_id, title, item_type, date,
-                    end_date or arrival_date, start_time, end_time, origin,
-                    destination_loc, confirmation_code, notes,
+                    conn, trip, place_id, google_place_id, _plain(title), item_type, date,
+                    end_date or arrival_date, start_time, end_time,
+                    _plain(from_location), _plain(to_location),
+                    _plain(confirmation_code), _plain(notes),
                     departure_timezone, arrival_timezone,
                 )
 
             entry = _require_entry(conn, trip, entry_id)
 
             if action == "reschedule":
-                return _reschedule(conn, trip, entry, date, end_date, start_time, end_time)
+                return _reschedule(conn, trip, entry, date, end_date or arrival_date,
+                                   start_time, end_time)
+
+            if action == "update":
+                return _update_entry(
+                    conn, entry, title, notes, confirmation_code, from_location,
+                    to_location, item_type, move_to_trip, place_id,
+                )
 
             if action == "remove":
                 # There is no `unschedule`. It existed to put a place "back" on
@@ -330,6 +367,85 @@ def manage_itinerary(
         conn.close()
 
 
+def _plain(value: str) -> str:
+    """The sentinel means "not given" to anything that isn't an update. Without
+    this, schedule stores the literal string."""
+    return "" if value == "__unset__" else (value or "")
+
+
+def _clearable(value: str) -> tuple[bool, str | None]:
+    """An update argument as (was it given, what to store). The empty string
+    means clear; an omitted argument means leave alone. With flat scalars there
+    is no other way to say "remove this"."""
+    if value == "__unset__" or value is None:
+        return False, None
+    return True, value.strip() or None
+
+
+def _update_entry(
+    conn: sqlite3.Connection,
+    entry: sqlite3.Row,
+    title: str,
+    notes: str,
+    confirmation_code: str,
+    from_location: str,
+    to_location: str,
+    item_type: str,
+    move_to_trip: str,
+    place_id: int,
+) -> str:
+    """Everything reschedule does not touch."""
+    sets, args, said = [], [], []
+    for col, raw in (
+        ("title", title), ("notes", notes), ("confirmation_code", confirmation_code),
+        ("from_location", from_location), ("to_location", to_location),
+    ):
+        given, value = _clearable(raw)
+        if given:
+            sets.append(f"{col} = ?"); args.append(value)
+            said.append(f"{col} {'cleared' if value is None else '→ ' + value}")
+
+    kind = (item_type or "").strip().lower()
+    if kind:
+        if kind not in ITEM_TYPES:
+            raise TravelError(
+                f"Unknown item_type {kind!r}. Use one of: {', '.join(ITEM_TYPES)}."
+            )
+        sets.append("item_type = ?"); args.append(kind)
+        said.append(f"item_type → {kind}")
+
+    if place_id:
+        if conn.execute(
+            "SELECT 1 FROM places WHERE place_id = ?", (place_id,)
+        ).fetchone() is None:
+            raise TravelError(f"No place with id {place_id}.")
+        sets.append("place_id = ?"); args.append(place_id)
+        said.append(f"now points at place {place_id}")
+
+    if move_to_trip.strip():
+        dest = _require_trip(conn, move_to_trip.strip())
+        sets.append("trip_id = ?"); args.append(dest["trip_id"])
+        said.append(f"moved to trip {dest['trip_id']}")
+
+    if not sets:
+        return (
+            f"Nothing to change on '{entry['label']}' — pass a field. "
+            "Dates and times are reschedule's job."
+        )
+    # The row must still name something after a title is cleared.
+    if "title = ?" in sets and args[sets.index("title = ?")] is None and not entry["place_id"]:
+        raise TravelError(
+            "This entry has no place behind it, so clearing its title would leave "
+            "nothing to show. Give it a place_id first, or remove it."
+        )
+    conn.execute(
+        f"UPDATE itinerary SET {', '.join(sets)} WHERE entry_id = ?",
+        (*args, entry["entry_id"]),
+    )
+    conn.commit()
+    return f"Updated '{entry['label']}': " + "; ".join(said) + "."
+
+
 def _schedule(
     conn: sqlite3.Connection,
     trip: sqlite3.Row,
@@ -341,8 +457,8 @@ def _schedule(
     end_date: str,
     start_time: str,
     end_time: str,
-    origin: str,
-    destination_loc: str,
+    from_location: str,
+    to_location: str,
     confirmation_code: str,
     notes: str,
     departure_timezone: str = "",
@@ -412,14 +528,30 @@ def _schedule(
     if not kind:
         kind = "place" if pid else "note"
 
+    if pid:
+        clash = conn.execute(
+            "SELECT entry_id, start_time FROM itinerary WHERE trip_id = ? AND place_id = ? "
+            "AND start_date = ?",
+            (tid, pid, start),
+        ).fetchone()
+        if clash:
+            # Scheduling the same place on the same day twice is nearly always a
+            # repeat of the request, not a second visit. Say so rather than
+            # quietly building two identical cards.
+            at = f" at {clash['start_time']}" if clash["start_time"] else ""
+            raise TravelError(
+                f"That place is already on {start}{at} [entry {clash['entry_id']}]. "
+                "Reschedule that entry, or pick another day — the same place on two "
+                "different days is fine."
+            )
     cur = conn.execute(
         "INSERT INTO itinerary(trip_id, place_id, item_type, title, start_date, end_date, "
-        "start_time, end_time, departure_timezone, arrival_timezone, origin, "
-        "destination_loc, confirmation_code, notes) "
+        "start_time, end_time, departure_timezone, arrival_timezone, from_location, "
+        "to_location, confirmation_code, notes) "
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             tid, pid, kind, title.strip() or None, start, finish, st, et,
-            dep_tz, arr_tz, origin.strip() or None, destination_loc.strip() or None,
+            dep_tz, arr_tz, from_location.strip() or None, to_location.strip() or None,
             confirmation_code.strip() or None, notes.strip() or None,
         ),
     )

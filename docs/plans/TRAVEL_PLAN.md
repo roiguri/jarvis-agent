@@ -84,11 +84,12 @@ dependency; every stage leaves the tools and the tile working)*
       changes the dates and names what now falls outside, and a booked item and an unbooked one
       behave identically. `confirmation_code` drives nothing and is reference data. 179 checks
 
-- [ ] **Stage 5 — the gaps the reviews found.** `manage_itinerary(update)` incl. `trip_id` and
-      `place_id`; `schedule` accepting `wishlist_id`; empty string clears a field; the domain
-      CHECKs (`item_type`, `status`, `kind`, `priority`, `end_date >= start_date`, no end without a
-      start); `archive` clearing `is_current`; re-adding a listed place reporting rather than
-      raising
+- [x] **Stage 5 — the gaps the reviews found.** `manage_itinerary(update)` covering everything
+      reschedule does not, including `place_id` and moving an entry to another trip; `schedule`
+      accepting `wishlist_id`; empty string clears; `origin`/`destination_loc` renamed to
+      `from_location`/`to_location` so one word stops meaning two kinds of thing; the two missing
+      itinerary CHECKs; and the same place on the same day reported with the existing entry rather
+      than duplicated. 196 checks; verified live
 
 - [ ] **Stage 6 — reads.** Day-strip range = min over `start_date` / max over
       `COALESCE(end_date, start_date)`, unioned with the trip window; intra-day ordering incl.

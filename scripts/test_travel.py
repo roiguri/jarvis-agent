@@ -811,7 +811,7 @@ def test_manage_itinerary() -> None:
     check("a night-before item is accepted and flagged, not refused",
           call(manage_itinerary, action="schedule", trip_id="it", title="Red-eye out",
                item_type="transit", date="2027-03-09", start_time="23:40",
-               origin="Home", destination_loc="Airport"),
+               from_location="Home", to_location="Airport"),
           contains=["scheduled", "outside the trip window", "edge day"])
 
     check("a booking says it will not be moved",
@@ -904,7 +904,7 @@ def test_manage_itinerary() -> None:
     check("an overnight is inferred, not refused",
           call(manage_itinerary, action="schedule", trip_id="it", title="Night bus",
                item_type="transit", date="2027-03-11", start_time="22:00",
-               end_time="06:00", origin="A", destination_loc="B"),
+               end_time="06:00", from_location="A", to_location="B"),
           contains=["scheduled", "next day", "2027-03-12"])
 
     check("the rollover is stored as the arrival date",
@@ -963,7 +963,7 @@ def test_tile() -> None:
          start_date="2027-06-10", end_date="2027-06-14", timezone="Europe/Lisbon")
     call(manage_itinerary, action="schedule", trip_id="tile", title="Night train in",
          item_type="transit", date="2027-06-09", start_time="23:10",
-         origin="Home", destination_loc="Tileburg Centraal")
+         from_location="Home", to_location="Tileburg Centraal")
     call(manage_itinerary, action="schedule", trip_id="tile", title="Hotel Tile",
          item_type="lodging", date="2027-06-10", end_date="2027-06-14",
          confirmation_code="BK-TILE")
@@ -1023,7 +1023,7 @@ def test_tile() -> None:
 
     items = [i for day in d["days"] for i in day["items"]]
     check("a transit leg has no place object, and keeps its endpoints",
-          str([(i["place"], i["origin"], i["destination_loc"])
+          str([(i["place"], i["from_location"], i["to_location"])
                for i in items if i["item_type"] == "transit"]),
           contains=["None", "Tileburg Centraal"])
     check("a place-backed item carries its place",
@@ -1124,6 +1124,131 @@ def test_crossing_timezones() -> None:
           contains="arr Los Angeles time")
 
 
+def test_itinerary_update() -> None:
+    """The gaps two design reviews found: everything except dates was write-once,
+    the commonest flow needed an id the listing never showed, and there was no
+    way to say "remove this value"."""
+    section("manage_itinerary — update, and scheduling off the list")
+
+    call(manage_destination, action="create", name="Fixland", timezone="Europe/Lisbon")
+    call(manage_trip, action="create", trip_id="fix", destination="Fixland",
+         start_date="2027-04-01", end_date="2027-04-10")
+    call(manage_trip, action="create", trip_id="fix2", destination="Fixland",
+         start_date="2027-04-01", end_date="2027-04-10")
+    call(manage_wishlist, action="add", destination="Fixland", place_id=1,
+         notes="the one on the list")
+    wl = call(query_travel_db,
+              sql="SELECT wishlist_id FROM wishlist w JOIN destinations d "
+                  "ON d.destination_id=w.destination_id WHERE d.name='Fixland'").split("\n")[1]
+
+    check("schedule takes the id the wishlist listing actually shows",
+          call(manage_itinerary, action="schedule", trip_id="fix",
+               wishlist_id=int(wl), date="2027-04-02", start_time="09:00"),
+          contains="scheduled")
+
+    check("and the wishlist entry is not consumed",
+          call(manage_wishlist, action="list", destination="Fixland"),
+          contains="the one on the list")
+
+    check("an unknown wishlist id says so",
+          call(manage_itinerary, action="schedule", trip_id="fix", wishlist_id=999,
+               date="2027-04-02"),
+          contains="no wishlist entry 999")
+
+    check("an intention with no place cannot be scheduled, and says why",
+          call(manage_wishlist, action="add", destination="Fixland",
+               title="somewhere quiet") and
+          call(manage_itinerary, action="schedule", trip_id="fix",
+               wishlist_id=int(wl) + 1, date="2027-04-03"),
+          contains=["no place behind it", "save the place first"])
+
+    check("the same place on the same day is reported, not duplicated",
+          call(manage_itinerary, action="schedule", trip_id="fix", place_id=1,
+               date="2027-04-02", start_time="18:00"),
+          contains=["already on 2027-04-02", "another day"])
+
+    check("but the same place on another day is fine",
+          call(manage_itinerary, action="schedule", trip_id="fix", place_id=1,
+               date="2027-04-04"),
+          contains="scheduled")
+
+    section("manage_itinerary — update covers what reschedule does not")
+
+    eid = int(call(query_travel_db,
+                   sql="SELECT entry_id FROM itinerary WHERE trip_id='fix' "
+                       "AND start_date='2027-04-02'").split("\n")[1])
+
+    check("a booking reference learned later has somewhere to go",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid,
+               confirmation_code="BK-LATE"),
+          contains="confirmation_code → BK-LATE")
+
+    check("an empty string clears it again",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid,
+               confirmation_code=""),
+          contains="confirmation_code cleared")
+
+    check("endpoints and item_type change too",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid,
+               item_type="transit", from_location="Home", to_location="Airport"),
+          contains=["item_type → transit", "from_location → Home"])
+
+    check("an unknown item_type lists the real ones",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid,
+               item_type="teleport"),
+          contains=["unknown item_type", "lodging"])
+
+    check("update with nothing given says what it is for",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid),
+          contains=["nothing to change", "reschedule"])
+
+    check("an entry added to the wrong trip can move rather than be retyped",
+          call(manage_itinerary, action="update", trip_id="fix", entry_id=eid,
+               move_to_trip="fix2"),
+          contains="moved to trip fix2")
+
+    check("and it really moved",
+          call(manage_itinerary, action="list", trip_id="fix2"),
+          contains="Cafe Central")
+
+    check("clearing the title of a row with no place is refused",
+          call(manage_itinerary, action="schedule", trip_id="fix", title="A note",
+               item_type="note", date="2027-04-05") and
+          call(manage_itinerary, action="update", trip_id="fix",
+               entry_id=int(call(query_travel_db,
+                   sql="SELECT entry_id FROM itinerary WHERE title='A note'").split("\n")[1]),
+               title=""),
+          contains=["nothing to show", "remove it"])
+
+    # The sentinel that distinguishes "clear this" from "leave it alone" is an
+    # implementation detail of update. It reached the database once; this is
+    # here so it cannot again.
+    check("no sentinel value ever reaches a stored row",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM itinerary WHERE title LIKE '%unset%' "
+                   "OR notes LIKE '%unset%' OR confirmation_code LIKE '%unset%' "
+                   "OR from_location LIKE '%unset%' OR to_location LIKE '%unset%'"),
+          contains="0")
+
+    section("manage_itinerary — the states the schema now refuses")
+
+    conn = _raw()
+    for label, sql in (
+        ("an end before its start",
+         "INSERT INTO itinerary(trip_id,item_type,title,start_date,end_date) "
+         "VALUES('fix','note','x','2027-04-05','2027-04-01')"),
+        ("an end time with no start time",
+         "INSERT INTO itinerary(trip_id,item_type,title,start_date,end_time) "
+         "VALUES('fix','note','x','2027-04-05','10:00')"),
+    ):
+        try:
+            conn.execute(sql); conn.commit(); got = "NO ERROR"
+        except Exception as e:
+            conn.rollback(); got = f"rejected: {e}"
+        check(label, got, contains="rejected")
+    conn.close()
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -1150,6 +1275,7 @@ def main() -> int:
         test_manage_wishlist()
         test_manage_itinerary()
         test_crossing_timezones()
+        test_itinerary_update()
         test_tile()
         test_trip_date_shift()
         test_delete_cascade()
