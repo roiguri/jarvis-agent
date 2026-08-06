@@ -75,7 +75,8 @@ list below is the set that exists **today**, not a fixed ceiling:
 
 | Tool group | What it does |
 |------------|--------------|
-| **Core** (always on) | Long-term memory, web search, reminders/scheduling, chat history |
+| **Core** (always on) | Long-term memory, reminders/scheduling, chat history |
+| **Web** (skill) | Search the web; read the page at a URL |
 | **Media** (skill) | Search, request, and manage TV/movies across Sonarr, Radarr, Prowlarr, Jellyseerr; aggregated download-ready notifications from webhooks |
 | **Fitness** (skill) | Gym class schedule/booking (Arbox), workout & running logging |
 | **Health** (skill) | Sleep, workouts, resting HR, and HRV from a Pixel Watch (Google Health) |

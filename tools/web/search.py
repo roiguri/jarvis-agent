@@ -4,13 +4,16 @@ from langchain_core.tools import tool
 from tools.registry import tool_register
 
 
-@tool_register(namespace="core")
+@tool_register(namespace="web")
 @tool
 def web_search(query: str) -> str:
     """Search the web for current information using Tavily.
 
     Use this for questions about recent events, news, release dates, or anything
     that may have changed since the model's training cutoff.
+
+    Use this only when you do NOT already have a URL. If you have a link, read it
+    with fetch_url — searching for a URL or a post id cannot find it.
 
     Args:
         query: The search query string.

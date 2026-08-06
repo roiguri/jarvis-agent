@@ -56,9 +56,12 @@ GOOGLE_HEALTH_REFRESH_TOKEN=...    # minted once — see tools/google_health/SET
 
 Sonarr/Radarr/Prowlarr API keys: **Settings → General → API Key** in each web UI.
 Jellyseerr: **Settings → General → API Key**. Tavily: sign up at
-https://app.tavily.com — free "Researcher" plan, 1,000 credits/month, 1 credit per
-search, no card. On quota exhaustion `web_search` returns a graceful error telling
-Jarvis to fall back to training knowledge rather than failing.
+https://app.tavily.com — free "Researcher" plan, no card. One shared 1,000-credit
+monthly balance across all endpoints: 1 credit per `web_search`, and 1 credit per
+*five* URLs for `fetch_url` (both `web` skill tools use the same key). On quota
+exhaustion each returns a graceful error — `web_search` tells Jarvis to fall back to
+training knowledge; `fetch_url` tells it to say it could not read the page, never to
+guess the content.
 
 GitHub: generate a **classic** Personal Access Token at GitHub → Settings →
 Developer settings → Tokens (classic), with the **repo** scope. Without

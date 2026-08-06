@@ -38,7 +38,6 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 | Module (`tools/core/`) | Tools | Notes |
 |---|---|---|
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
-| `search.py` | `web_search` | |
 | `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
 | `scheduling.py` | `manage_reminder` | create / list / delete reminders. |
 | `activate_skill.py` | `activate_skill`, `deactivate_skill` | The meta-tools that expose Tier 2. |
@@ -55,6 +54,7 @@ Tools grouped by **namespace**. A namespace is a skill — and a namespace may b
 | `media/prowlarr` | `tools/media/prowlarr/` | Indexer search: `search_prowlarr`. |
 | `media/jellyseerr` | `tools/media/jellyseerr/` | Requests: `search_jellyseerr`, `get_jellyseerr_requests`, `request_media`. |
 | `media/system` | `tools/media/system/` | Stack health / overview: `get_library_overview`, `get_media_system_health`. |
+| `web` | `tools/web/` | `web_search`, `fetch_url`. Grouped deliberately: search bound without fetch is what made a turn search 14 times for a URL it could not look up (#7). |
 | `fitness` | `tools/fitness/` | Arbox + training: `manage_fitness_plan`, `fetch_upcoming_arbox_classes`, `fetch_weekly_gym_schedule`, `sync_arbox_attendance`, `log_exercise_stats`, `log_running_session`, `log_wod_result`, `query_exercise_history`, `get_today_workout_id`, `get_weekly_fitness_summary`, `get_adherence_report`, `query_fitness_db` (read-only ad-hoc SQL). |
 
 ⚠ = `destructive`. **No `home` placeholder** — namespaces are added when their tools exist, not before. The registry is extensible: a new top-level skill is a new directory plus `namespace="<name>"` on its tools; a new sub-skill is a `tools/<parent>/<child>/` subpackage plus `namespace="<parent>/<child>"`. Nothing else.
