@@ -11,7 +11,6 @@ from tools.core.memory import (
     list_memory,
     delete_memory,
 )
-from tools.core.search import web_search
 from tools.core.history import (
     NOTIFICATION_LOG,
     CHAT_LOG,
@@ -36,7 +35,6 @@ __all__ = [
     "read_memory",
     "list_memory",
     "delete_memory",
-    "web_search",
     "NOTIFICATION_LOG",
     "CHAT_LOG",
     "trim_log",
