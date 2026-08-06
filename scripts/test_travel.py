@@ -1061,6 +1061,79 @@ def test_tile() -> None:
           contains=["it0", "days=0", "undated"])
 
 
+def test_crossing_timezones() -> None:
+    """The cases wall-clock times alone cannot answer, and the one they can."""
+    section("manage_itinerary — crossing timezones")
+
+    call(manage_destination, action="create", name="Farland", timezone="Asia/Tokyo")
+    call(manage_trip, action="create", trip_id="tz", destination="Farland",
+         start_date="2027-06-01", end_date="2027-06-10")
+
+    check("a same-zone overnight is still inferred, as before",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="Night bus",
+               item_type="transit", date="2027-06-02", start_time="22:00",
+               end_time="06:00"),
+          contains=["scheduled", "next day"])
+
+    check("crossing zones refuses to guess, and says why",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="LAX to Sydney",
+               item_type="transit", date="2027-06-03", start_time="22:30",
+               end_time="06:15", departure_timezone="America/Los_Angeles",
+               arrival_timezone="Australia/Sydney"),
+          contains=["crosses timezones", "may be the same day or two days later",
+                    "arrival_date"])
+
+    check("with the date stated it is accepted, two days out and all",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="LAX to Sydney",
+               item_type="transit", date="2027-06-03", arrival_date="2027-06-05",
+               start_time="22:30", end_time="06:15",
+               departure_timezone="America/Los_Angeles",
+               arrival_timezone="Australia/Sydney"),
+          contains=["scheduled", "duration"])
+
+    check("the westbound case the old rule got a day wrong",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="Tokyo to LAX",
+               item_type="transit", date="2027-06-04", arrival_date="2027-06-04",
+               start_time="17:00", end_time="10:00",
+               departure_timezone="Asia/Tokyo",
+               arrival_timezone="America/Los_Angeles"),
+          contains=["scheduled", "duration 9h"])
+
+    check("and it landed on the same calendar day, not the next",
+          call(query_travel_db,
+               sql="SELECT start_date, end_date FROM itinerary WHERE title='Tokyo to LAX'"),
+          contains="2027-06-04 | 2027-06-04")
+
+    check("a six-hour flight reports six hours, not four",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="TLV to Lisbon",
+               item_type="transit", date="2027-06-06", start_time="06:15",
+               end_time="10:15", departure_timezone="Asia/Jerusalem",
+               arrival_timezone="Europe/Lisbon"),
+          contains="duration 6h")
+
+    # An unset zone means the trip's own, so a hop inside the destination needs
+    # no zones at all and still reports honestly.
+    check("an unset arrival zone falls back to the trip's",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="Local hop",
+               item_type="transit", date="2027-06-07", start_time="09:00",
+               end_time="11:00"),
+          contains="duration 2h")
+
+    check("and the fallback is not claimed as a stated zone in the listing",
+          call(manage_itinerary, action="list", trip_id="tz"),
+          missing="arr Tokyo time")
+
+    check("a bad zone is refused before anything is written",
+          call(manage_itinerary, action="schedule", trip_id="tz", title="Nowhere",
+               item_type="transit", date="2027-06-08", start_time="09:00",
+               end_time="11:00", departure_timezone="Mars/Olympus"),
+          contains="not an iana name")
+
+    check("the listing says whose clock the arrival is on",
+          call(manage_itinerary, action="list", trip_id="tz"),
+          contains="arr Los Angeles time")
+
+
 def _raw():
     """A direct connection, for arranging rows that the tools under test don't
     write yet. Replaced by the real tools as later commits add them."""
@@ -1086,6 +1159,7 @@ def main() -> int:
         test_search_guards()
         test_manage_wishlist()
         test_manage_itinerary()
+        test_crossing_timezones()
         test_tile()
         test_trip_date_shift()
         test_delete_cascade()

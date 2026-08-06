@@ -7,7 +7,8 @@ which puts a place back on it deliberately.
 
 import re
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.tools import tool
 
@@ -27,6 +28,55 @@ def _parse_time(value: str, field: str) -> str | None:
     if not _TIME_RE.match(t):
         raise TravelError(f"{field} must be 24-hour HH:MM, got {value!r}.")
     return t
+
+
+def _validate_tz(value: str, field: str) -> str | None:
+    tz = (value or "").strip()
+    if not tz:
+        return None
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise TravelError(f"{field} {tz!r} is not an IANA name, e.g. 'Asia/Tokyo'.")
+    return tz
+
+
+def _zones(entry, trip_tz: str | None) -> tuple[str | None, str | None]:
+    """The two ends' timezones, each falling back to the trip's own."""
+    return (
+        (entry["departure_timezone"] or trip_tz),
+        (entry["arrival_timezone"] or trip_tz),
+    )
+
+
+def _duration(
+    start_date: str, start_time: str | None, end_date: str | None,
+    end_time: str | None, dep_tz: str | None, arr_tz: str | None,
+) -> str | None:
+    """How long something actually takes, once both ends are resolved.
+
+    Wall-clock times alone cannot answer this across zones: NYC 22:00 to London
+    10:00 is twelve hours of clock and seven of flying, and the difference is
+    exactly the offset the clocks discard. So this returns None unless both
+    zones are known — a wrong duration is worse than none.
+    """
+    if not (start_time and end_time and dep_tz and arr_tz):
+        return None
+    try:
+        dep = datetime.combine(
+            date.fromisoformat(start_date), time.fromisoformat(start_time),
+            tzinfo=ZoneInfo(dep_tz),
+        )
+        arr = datetime.combine(
+            date.fromisoformat(end_date or start_date), time.fromisoformat(end_time),
+            tzinfo=ZoneInfo(arr_tz),
+        )
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
+    minutes = int((arr - dep).total_seconds() // 60)
+    if minutes <= 0:
+        return None
+    return f"{minutes // 60}h" + (f" {minutes % 60:02d}m" if minutes % 60 else "")
 
 
 def _day_number(trip: sqlite3.Row, when: str) -> int | None:
@@ -52,6 +102,10 @@ def _entry_line(r: sqlite3.Row) -> str:
         when = f"{r['start_time']}-{r['end_time']}{roll}"
     head = f"  [{r['entry_id']}] {when:<11} {r['label']}"
     bits = []
+    if r["arrival_timezone"] and r["arrival_timezone"] != r["departure_timezone"]:
+        # Say whose clock the arrival is on. Without it two different clocks sit
+        # side by side in one line and read as one.
+        bits.append(f"arr {r['arrival_timezone'].split('/')[-1].replace('_', ' ')} time")
     if r["item_type"] == "transit" and (r["origin"] or r["destination_loc"]):
         bits.append(f"{r['origin'] or '?'} → {r['destination_loc'] or '?'}")
     if r["item_type"] != "place":
@@ -162,8 +216,11 @@ def manage_itinerary(
     item_type: str = "",
     date: str = "",
     end_date: str = "",
+    arrival_date: str = "",
     start_time: str = "",
     end_time: str = "",
+    departure_timezone: str = "",
+    arrival_timezone: str = "",
     origin: str = "",
     destination_loc: str = "",
     confirmation_code: str = "",
@@ -178,8 +235,10 @@ def manage_itinerary(
     - list: the whole schedule, stays first then a section per day.
     - schedule: put something on a day. Needs a dated trip. Identify a place by
       place_id, google_place_id, or a bare title; a transit leg or a note needs
-      only a title. ALWAYS pass confirmation_code when a booking has one — it is
-      what stops the row being moved if the trip's dates shift.
+      only a title. For a flight or train that crosses timezones, pass
+      arrival_date and BOTH timezone arguments — the arrival date cannot be
+      worked out from the clocks, and the duration cannot be shown without the
+      zones.
     - reschedule: change an existing entry's date or times.
     - remove: take it off the schedule. The wishlist is a separate list and is
       never touched — a place removed from a day is still on it.
@@ -197,12 +256,20 @@ def manage_itinerary(
             transit for a leg between two points.
         date: the day it happens, YYYY-MM-DD.
         end_date: last day, for a stay spanning several days.
+        arrival_date: the day a transit leg lands, when that is not the day it
+            left. The same column as end_date, named for the case it fits. Give
+            it whenever the journey crosses timezones — read it off the ticket
+            rather than leaving it to be guessed.
         start_time: 24-hour HH:MM, local where the item starts.
         end_time: 24-hour HH:MM. For a transit leg this is the arrival time
             LOCAL TO THE DESTINATION, the way a flight schedule prints it — so a
             22:00 departure arriving 06:00 is normal, not a mistake. An end
             earlier than its start is read as running past midnight and the
             arrival date is set for you.
+        departure_timezone: IANA zone the departure time is local to, e.g.
+            "Asia/Jerusalem". Set it on the flights into and out of the trip;
+            leave it blank for anything inside the destination.
+        arrival_timezone: IANA zone the arrival time is local to.
         origin: where a transit leg starts.
         destination_loc: where a transit leg ends.
         confirmation_code: booking reference. Also marks the row as booked, so a
@@ -227,8 +294,9 @@ def manage_itinerary(
             if action == "schedule":
                 return _schedule(
                     conn, trip, place_id, google_place_id, title, item_type, date,
-                    end_date, start_time, end_time, origin, destination_loc,
-                    confirmation_code, notes,
+                    end_date or arrival_date, start_time, end_time, origin,
+                    destination_loc, confirmation_code, notes,
+                    departure_timezone, arrival_timezone,
                 )
 
             entry = _require_entry(conn, trip, entry_id)
@@ -277,8 +345,12 @@ def _schedule(
     destination_loc: str,
     confirmation_code: str,
     notes: str,
+    departure_timezone: str = "",
+    arrival_timezone: str = "",
 ) -> str:
     tid = trip["trip_id"]
+    dep_tz = _validate_tz(departure_timezone, "departure_timezone")
+    arr_tz = _validate_tz(arrival_timezone, "arrival_timezone")
     if not trip["start_date"]:
         raise TravelError(
             f"{tid} has no dates yet, so nothing can be scheduled into it. Set them "
@@ -295,12 +367,19 @@ def _schedule(
     et = _parse_time(end_time, "end_time")
     rolled = False
     if st and et and not finish and et < st:
-        # An end earlier than its start has exactly one sensible reading: it ran
-        # past midnight. Refusing it was wrong for the case it arises in most —
-        # a night flight — and the refusal did not even hint that end_date was
-        # the way through, so the likely outcome was an item recorded with no
-        # arrival at all. No item type is special-cased: a 22:00-01:00 bar reads
-        # the same way as a red-eye.
+        # An end earlier than its start, IN ONE ZONE, has exactly one reading:
+        # it ran past midnight. Across zones it has none — Tokyo 17:00 to Los
+        # Angeles 10:00 is an ordinary same-day westbound flight that this test
+        # would put a day out. So when the ends are in different zones the date
+        # is asked for rather than guessed; the model is reading a ticket and
+        # knows when it lands. Deriving it instead is circular anyway: resolving
+        # the arrival instant needs the very date being derived.
+        if dep_tz and arr_tz and dep_tz != arr_tz:
+            raise TravelError(
+                f"This crosses timezones ({dep_tz} to {arr_tz}), so the arrival date "
+                "cannot be guessed from the clock — an arrival earlier than its "
+                "departure may be the same day or two days later. Pass arrival_date."
+            )
         finish = (date.fromisoformat(start) + timedelta(days=1)).isoformat()
         rolled = True
 
@@ -335,11 +414,12 @@ def _schedule(
 
     cur = conn.execute(
         "INSERT INTO itinerary(trip_id, place_id, item_type, title, start_date, end_date, "
-        "start_time, end_time, origin, destination_loc, confirmation_code, notes) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "start_time, end_time, departure_timezone, arrival_timezone, origin, "
+        "destination_loc, confirmation_code, notes) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             tid, pid, kind, title.strip() or None, start, finish, st, et,
-            origin.strip() or None, destination_loc.strip() or None,
+            dep_tz, arr_tz, origin.strip() or None, destination_loc.strip() or None,
             confirmation_code.strip() or None, notes.strip() or None,
         ),
     )
@@ -352,9 +432,11 @@ def _schedule(
     at = f" at {st}" if st else ""
     booked = " Booked — it will not be moved if the trip's dates change." if confirmation_code.strip() else ""
     over = f" Ends {et} the next day ({finish})." if rolled else ""
+    dur = _duration(start, st, finish, et, dep_tz or trip["timezone"], arr_tz or trip["timezone"])
+    took = f" Duration {dur}." if dur else ""
     return (
         f"Scheduled '{label}' ({kind}) on {where}{at} [entry {cur.lastrowid}]."
-        + over + _window_note(trip, start, finish) + booked
+        + over + took + _window_note(trip, start, finish) + booked
     )
 
 

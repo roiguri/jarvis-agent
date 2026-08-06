@@ -278,6 +278,8 @@ manage_wishlist(update, wishlist_id=12, done_at="")     → cleared
 3. Scheduling a place does not remove it from the wishlist, and a place may be scheduled twice.
 4. Times are local wall-clock and are never converted.
 5. A trip with no dates cannot be scheduled into; collect wishlist places instead.
+5b. Never invent a detail that was not given — a date, a time, an address, a confirmation code —
+   even when a tool requires it. Stop and ask.
 6. Never change a trip's dates as a side effect of adding an item — schedule it outside the window
    and say so.
 7. For a flight that crosses timezones, give `arrival_date` and both timezone columns. Only an

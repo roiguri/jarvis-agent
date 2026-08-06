@@ -75,9 +75,15 @@ dependency; every stage leaves the tools and the tile working)*
       gone — nothing is consumed, so there is nothing to put back. 170 checks; verified live by
       deleting a trip and finding its destination's list intact
 
-- [ ] **Stage 4 — the time model.** `arrival_date` as a parameter rather than a derivation;
-      `departure_timezone` / `arrival_timezone` on transit; duration shown only when both zones are
-      known; single-inference rule limited to a same-zone overnight
+- [x] **Stage 4 — the time model.** `arrival_date` as a parameter rather than a derivation;
+      `departure_timezone` / `arrival_timezone` on transit; duration computed from both resolved
+      instants; the inference limited to a same-zone overnight, and a crossing refused rather than
+      guessed. 180 checks; verified live — the model volunteered both zones unprompted and got the
+      date-line case right without the refusal firing
+- [ ] **Stage 4b — retire the date shift.** `manage_trip(update)` still moves scheduled items when
+      a trip's dates translate, which the target state says it should not: changing dates should
+      change dates and report what now falls outside. `confirmation_code` becomes reference data
+      only, and `SKILL.md` rule 13 loses its claim about keeping items in place
 
 - [ ] **Stage 5 — the gaps the reviews found.** `manage_itinerary(update)` incl. `trip_id` and
       `place_id`; `schedule` accepting `wishlist_id`; empty string clears a field; the domain

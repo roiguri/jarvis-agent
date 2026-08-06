@@ -141,6 +141,11 @@ def _init_db():
             end_date          DATE,
             start_time        TEXT,
             end_time          TEXT,
+            -- Transit is the only thing with two ends, so it is the only thing
+            -- that carries zones. NULL means the trip's own, which is right for
+            -- everything internal and wrong only for the flights in and out.
+            departure_timezone TEXT,
+            arrival_timezone   TEXT,
             origin            TEXT,
             destination_loc   TEXT,
             confirmation_code TEXT,
@@ -239,7 +244,14 @@ def _require_trip(conn: sqlite3.Connection, trip_id: str) -> sqlite3.Row:
     trip_id = (trip_id or "").strip()
     if not trip_id:
         raise TravelError(f"A trip_id is required. Existing trips:\n{_trip_lines(conn)}")
-    row = conn.execute("SELECT * FROM trips WHERE trip_id = ?", (trip_id,)).fetchone()
+    # Joined, not raw: the timezone lives on the destination now, and every
+    # caller that has a trip needs it. One place, so nothing has to remember.
+    row = conn.execute(
+        "SELECT t.*, d.name AS destination, d.timezone, d.country, d.kind "
+        "FROM trips t JOIN destinations d ON d.destination_id = t.destination_id "
+        "WHERE t.trip_id = ?",
+        (trip_id,),
+    ).fetchone()
     if row is None:
         raise TravelError(
             f"No trip {trip_id!r}. Existing trips:\n{_trip_lines(conn)}\n"
