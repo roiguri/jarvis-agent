@@ -266,6 +266,11 @@ FAKE_PLACES = [
         "primaryType": "coffee_shop",
         "primaryTypeDisplayName": {"text": "Coffee Shop"},
         "googleMapsUri": "https://maps.google.com/?cid=1",
+        "addressComponents": [
+            {"longText": "Rua Augusta", "types": ["route"]},
+            {"longText": "Lisboa", "types": ["locality", "political"]},
+            {"longText": "Portugal", "types": ["country", "political"]},
+        ],
     },
     {
         "id": "ChIJ_branch_two",
@@ -276,6 +281,10 @@ FAKE_PLACES = [
         "primaryType": "italian_restaurant",
         "primaryTypeDisplayName": {"text": "Italian Restaurant"},
         "googleMapsUri": "https://maps.google.com/?cid=2",
+        "addressComponents": [
+            {"longText": "Lisboa", "types": ["locality", "political"]},
+            {"longText": "Portugal", "types": ["country", "political"]},
+        ],
     },
 ]
 
@@ -329,6 +338,36 @@ def _TYPE_VALUES():
     from tools.travel.places import _TYPE_TO_CATEGORY, _SUFFIX_RULES
 
     return list(_TYPE_TO_CATEGORY.values()) + [b for _, b in _SUFFIX_RULES]
+
+
+def test_locality() -> None:
+    """Where a place's city comes from, and what stands in when Google has no
+    `locality` — the UK uses postal_town, and some places give neither."""
+    from tools.travel.places import _locality_of
+
+    section("manage_place — locality, and its stand-ins")
+
+    cases = [
+        ([{"longText": "Lisboa", "types": ["locality"]},
+          {"longText": "Portugal", "types": ["country"]}],            ("Lisboa", "Portugal")),
+        # No locality: the UK files cities under postal_town.
+        ([{"longText": "London", "types": ["postal_town"]},
+          {"longText": "United Kingdom", "types": ["country"]}],      ("London", "United Kingdom")),
+        # Neither: fall back to the county-level component.
+        ([{"longText": "Kerry", "types": ["administrative_area_level_2"]},
+          {"longText": "Ireland", "types": ["country"]}],             ("Kerry", "Ireland")),
+        # locality wins over the stand-ins when both are present.
+        ([{"longText": "Real City", "types": ["locality"]},
+          {"longText": "Fallback", "types": ["postal_town"]}],        ("Real City", None)),
+        ([], (None, None)),
+    ]
+    wrong = [(p, _locality_of({"addressComponents": p}), want)
+             for p, want in cases if _locality_of({"addressComponents": p}) != want]
+    check(f"{len(cases)} component shapes", "ok" if not wrong else f"wrong: {wrong}",
+          contains="ok")
+
+    check("a place with no components at all is not an error",
+          str(_locality_of({})), contains="(None, None)")
 
 
 def test_search_guards() -> None:
@@ -430,6 +469,12 @@ def test_manage_place() -> None:
               call(manage_place, action="save", google_place_id="ChIJ_branch_two",
                    title="Cafe Central — Alfama"),
               contains="saved place")
+        check("the locality and country are kept",
+              call(query_travel_db,
+                   sql="SELECT city, country FROM places "
+                       "WHERE google_place_id='ChIJ_branch_one'"),
+              contains=["Lisboa", "Portugal"])
+
         check("the full types array survives, so nothing finer is lost",
               call(query_travel_db,
                    sql="SELECT google_types FROM places "
@@ -921,6 +966,7 @@ def main() -> int:
         test_manage_trip()
         test_manage_place()
         test_categories()
+        test_locality()
         test_search_guards()
         test_manage_wishlist()
         test_manage_itinerary()

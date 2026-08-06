@@ -55,8 +55,10 @@ dependency; every stage leaves the tools and the tile working)*
 - [x] **Stage 0 — the overnight bug** — fixed, plus a second one it uncovered: `reschedule` had no
       time-order check and left `end_date` behind when an item moved. 143 checks; verified live
 
-- [ ] **Stage 1 — collect what the rest needs.** `city` + `country` on `places` from
-      `addressComponents` (Essentials tier, no SKU change). Changes no behaviour
+- [x] **Stage 1 — collect what the rest needs.** `city` + `country` on `places` from
+      `addressComponents` (Essentials tier, no SKU change). Locality, then postal_town, then
+      administrative_area_level_2, so the most specific answer wins. 146 checks; verified live —
+      a real save returned Lisboa/Portugal, a hand-added place stayed NULL without erroring
 
 - [ ] **Stage 2 — `destinations`, and a tool for them.** Table with `name UNIQUE COLLATE NOCASE`
       and `timezone NOT NULL`; `manage_destination` (list · create · update · merge).

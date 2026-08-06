@@ -34,6 +34,7 @@ _FIELD_MASK = ",".join((
     "places.primaryType",
     "places.primaryTypeDisplayName",
     "places.googleMapsUri",
+    "places.addressComponents",
 ))
 
 # Enough to choose between branches of a chain without turning the reply into a
@@ -107,6 +108,7 @@ def _flatten(candidate: dict) -> dict:
     """
     loc = candidate.get("location") or {}
     types = candidate.get("types") or []
+    city, country = _locality_of(candidate)
     # primaryType is Google's own single answer to "what is this"; types[0] only
     # happens to be it most of the time. Falling back to types[0] keeps a place
     # classified when Google declines to name a primary one.
@@ -126,7 +128,36 @@ def _flatten(candidate: dict) -> dict:
         # have not answered yet — so none of it is thrown away at write time,
         # when re-fetching it would mean paying for the lookup twice.
         "google_types": json.dumps(types) if types else None,
+        # What Google calls the surrounding area. Evidence about a place, never
+        # used to decide which destination it belongs to — for a Tokyo venue the
+        # locality is a ward (Shibuya, Shinjuku), so choosing on it would file
+        # one city under several names.
+        "city": city,
+        "country": country,
     }
+
+
+def _locality_of(candidate: dict) -> tuple[str | None, str | None]:
+    """(city, country) from addressComponents, or (None, None).
+
+    `locality` is the ordinary city component. `postal_town` is its stand-in
+    where a country doesn't use locality (the UK, mainly), and
+    administrative_area_level_2 catches the rest — tried in that order, so the
+    most specific answer available wins rather than the first one present.
+    """
+    parts = candidate.get("addressComponents") or []
+
+    def _first(*wanted: str) -> str | None:
+        for want in wanted:
+            for c in parts:
+                if want in (c.get("types") or []):
+                    return (c.get("longText") or "").strip() or None
+        return None
+
+    return (
+        _first("locality", "postal_town", "administrative_area_level_2"),
+        _first("country"),
+    )
 
 
 # The display vocabulary — what the wishlist groups by and the tile draws icons
@@ -338,8 +369,8 @@ def _upsert_place(conn: sqlite3.Connection, fields: dict) -> tuple[int, bool]:
             return existing["place_id"], False
     cur = conn.execute(
         "INSERT INTO places(google_place_id, title, address, maps_url, lat, lng, "
-        "category, google_type, google_type_label, google_types) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "category, google_type, google_type_label, google_types, city, country) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             gid,
             fields["title"],
@@ -351,6 +382,8 @@ def _upsert_place(conn: sqlite3.Connection, fields: dict) -> tuple[int, bool]:
             fields.get("google_type"),
             fields.get("google_type_label"),
             fields.get("google_types"),
+            fields.get("city"),
+            fields.get("country"),
         ),
     )
     return cur.lastrowid, True
@@ -461,6 +494,8 @@ def manage_place(
                 fields.setdefault("google_type", None)
                 fields.setdefault("google_type_label", None)
                 fields.setdefault("google_types", None)
+                fields.setdefault("city", None)
+                fields.setdefault("country", None)
                 pid, created = _upsert_place(conn, fields)
                 conn.commit()
                 if not created:
@@ -571,7 +606,8 @@ def _resolve_place(
         "maps_url": maps_url.strip() or fields.get("maps_url"),
         "category": _validate_category(category) or _categorize(fields.get("google_type")),
     })
-    for k in ("lat", "lng", "google_type", "google_type_label", "google_types"):
+    for k in ("lat", "lng", "google_type", "google_type_label", "google_types",
+              "city", "country"):
         fields.setdefault(k, None)
     new_id, _ = _upsert_place(conn, fields)
     return new_id

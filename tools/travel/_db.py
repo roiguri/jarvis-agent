@@ -76,6 +76,8 @@ def _init_db():
             google_type       TEXT,
             google_type_label TEXT,
             google_types      TEXT,
+            city              TEXT,
+            country           TEXT,
             created_at      DATETIME DEFAULT (datetime('now'))
         );
 
