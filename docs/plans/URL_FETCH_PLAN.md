@@ -9,7 +9,8 @@ guessed at, and close the loop that let a single unreadable link cost 4m44s and 
 
 ## Context
 
-On 2026-08-06 the owner sent a bare `x.com` status URL with "add this as well". Turn
+On 2026-08-06 the owner sent a bare `x.com` status URL with "add this as well" — the same request
+shape that had already failed at least twice before (see "This is a recurrence" below). Turn
 `b068e543` ran **283.7 s**, made **16 LLM calls** and **14 consecutive `web_search` calls**, burned
 **494,962 input / 65,994 output tokens** (64,321 of them reasoning) — ~10× the median user turn
 (~59k total) and the 3rd most expensive user turn in two weeks. It then wrote a **fabricated**
@@ -49,6 +50,47 @@ exactly where the content was guessable. **Fixing these entries is part of this 
 follow-up.**
 
 ---
+
+## This is a recurrence, and it is already filed
+
+**The 2026-08-06 incident is at least the third occurrence of the same failure.** Discovered while
+reviewing open issues *after* the plan was drafted:
+
+- **[#7 — Add a URL fetch & summarize tool](../../../../issues/7)** (enhancement, priority: medium,
+  filed 2026-07-04) is this plan's Phase 1, already specified. Its acceptance criteria — "fetches a
+  given URL and returns a usable summary" and "handles timeouts, blocked, and non-HTML fetches
+  gracefully" — anticipated both halves of what this plan builds.
+- **[#36 — Turns are unbounded, terminate abnormally, and leave no legible trace](../../../../issues/36)**
+  (bug, priority: **high**) records incident 2 on **2026-07-30**: the same x.com-link request, the
+  same **14 consecutive `web_search` calls**, then a single LLM call burning **65,668 output tokens
+  over 6m48s**, ending in `MALFORMED_FUNCTION_CALL`. 7m43s, ~$0.31, `error: null`, and
+  `reading_list.md` never updated. #7's comment notes the same 14-search flail had already run
+  *the previous evening* and happened to recover.
+
+**The failure mode has been getting worse, not better.** On 2026-07-30 the turn died and delivered
+nothing — loud, visible, no memory written. On 2026-08-06 the turn *succeeded*: it completed
+normally, reported confidently, and wrote a fabrication into `reading_list.md` that survived until
+the owner happened to catch it. A silent corruption of stored memory is the worse outcome of the
+two, and it is what the same root cause produces once the model gets slightly luckier with its
+token budget.
+
+**One premise in #7 needs correcting.** Its comment states that *"x.com blocks unauthenticated
+fetches, so this exact URL will still fail"*, and therefore treats failing cleanly as the criterion
+that prevents recurrence. Measured, that is no longer true: Tavily `extract` reads that exact URL
+in full, tweet body and author handle included. The acceptance criteria can be strengthened from
+"fails cleanly on x.com" to "**succeeds** on x.com" — with clean failure still required for the
+genuinely unreadable cases (nasdaq.com was measured as failing on both extract depths).
+
+**Relationship to the other open issues:**
+
+| Issue | Relationship |
+|---|---|
+| [#7](../../../../issues/7) | **Closed by this plan's Phase 1.** Should be linked from the PR. |
+| [#36](../../../../issues/36) | **Partially addressed** by Phase 2's repeat-call cap, which bounds the 14-search flail. #36 is broader — unbounded turns in *both* scopes, `GraphRecursionError`, and no legible trace — so it stays open. |
+| [#59](../../../../issues/59) | Split out of #36: non-STOP finish reasons collapsing to an empty reply. Adjacent, not addressed here. The 08-06 turn terminated *normally*, so #59's path did not fire — same head, different tail. |
+| [#17](../../../../issues/17) | Load-time tool gating by required env vars. More attractive once `web` is a skill: with no `TAVILY_API_KEY`, the whole skill could be skipped at registration rather than failing per-call. Still low priority; current deploys always have the key. |
+| [#67](../../../../issues/67) | Staging shares prod's real external services, **explicitly including web search**. `fetch_url` adds a second consumer of the same 1,000-credit Tavily pool from staging. Minor, but it makes the shared-quota point slightly sharper. |
+| [#18](../../../../issues/18) | Reduce token spend. The `max_chars` decision and the N3 history-stripping follow-up both feed it. |
 
 ## Evidence gathered during planning
 
