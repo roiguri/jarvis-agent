@@ -102,6 +102,13 @@ def _entry(r: sqlite3.Row) -> dict[str, Any]:
         "destination_loc": r["destination_loc"],
         "confirmation_code": r["confirmation_code"],
         "notes": r["notes"],
+        # Explicit rather than left to the client, because end_date means two
+        # different things: for a stay it is a span, for anything inside a day it
+        # is the date the item rolled over into. A client deriving it would have
+        # to know that rule; this way it does not.
+        "crosses_midnight": bool(
+            r["end_date"] and r["end_date"] > r["start_date"] and r["item_type"] != "lodging"
+        ),
         "place": _place_of(r),
     }
 

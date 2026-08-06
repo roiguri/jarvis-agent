@@ -49,30 +49,22 @@ should not be implemented from.
 - [x] `scripts/ci/check_channel_agnostic.py` green; 138 checks in `scripts/test_travel.py`
 - [ ] Live: restart, confirm the hub receives a two-app manifest, and fetch the tile
 
-**Next — multi-city trips** *(shape settled: destinations + legs; staged below)*
-- [ ] Stage 1 — `city` + `country` on `places` from Google's `addressComponents` (Essentials tier,
-      no SKU change). Additive and useful on its own, so it ships before anything structural
-- [ ] Stage 2 — `destinations` table; places resolve to one; `timezone` moves here
-- [ ] Stage 3 — `trip_legs`; a trip becomes a sequence of dated stays in destinations
-- [ ] Stage 4 — re-anchor the wishlist from trip to destination
-- [ ] Stage 5 — tile payload carries the leg; handoff addendum for the app
-
-**Also next — times that cross midnight or a timezone** *(one shipped bug plus a convention;
-the first item is independent of multi-city and can go any time)*
-- [ ] **Bug:** an overnight transit is refused outright — `22:00 → 06:00` fails validation, and the
-      error does not hint that `end_date` is the way through. Infer +1 day for a transit whose
-      arrival precedes its departure instead of refusing
-- [ ] Adopt the arrival convention: `end_time` on a transit row is wall-clock **at the
-      destination**; document it in the tool docstring and `SKILL.md`
-- [ ] Carry a `crosses_midnight` (or equivalent) marker in the tile payload so the client can render
-      `22:00 → 06:00 ⁺¹` rather than a flight that appears to go backwards
-- [ ] Disambiguate `end_date`'s two meanings — a lodging *span* versus a transit *arrival date*
-- [ ] Per-day `timezone` in the tile payload — **needs Stage 3 legs**, so it lands with them
-- [ ] Client: a destination clock in the header, following the **selected day** — an actual clock
-      ("14:32 in Lisbon"), never an offset badge
-- [ ] Client: a flight card carrying both local times itself rather than inheriting the day's clock
-- [ ] Adopt "a leg starts on the date you arrive" once legs exist (Stage 3)
-- [ ] Addendum to `TRAVEL_APP_HANDOFF.md` once the payload changes
+**Next — multi-city trips, and the times that go with them** *(shape settled; staged below.
+Stage 0 stands alone and can ship any time; the rest are ordered by dependency)*
+- [x] **Stage 0 — the overnight bug** — fixed, plus a second one it uncovered: `reschedule` had no
+      time-order check and left `end_date` behind when an item moved. 143 checks; verified live
+- [ ] Stage 1 — `city` + `country` on `places` from `addressComponents` (Essentials tier, no SKU
+      change). Collects the key Stage 2 resolves on; changes nothing visible
+- [ ] Stage 2 — `destinations` table; `trips.destination_id` replaces the free-text destination;
+      `timezone` moves from trip to destination
+- [ ] Stage 3 — **wishlist re-anchors to the destination** — the headline fix: the list survives
+      into the next trip to the same city
+- [ ] Stage 4 — `trip_legs` generalises one destination into many; "a leg starts on the date you
+      arrive"; `manage_trip`'s date shift has to move legs with the trip
+- [ ] Stage 5 — tile: per-day `timezone`, city grouping, leg-aware days. Handoff addendum covers
+      the destination clock and the flight card
+- [ ] Throughout: **every stage leaves the tile answering** — it joins `wishlist` on `trip_id` and
+      reads `trip.timezone`, so stages 2–4 each repair it as they go rather than leaving it to 5
 
 **Phase 4 — app client** *(handoff to `roiguri/jarvis-app`)*
 - [ ] Handoff spec written from the shipped tile payload, not from this document
@@ -414,7 +406,7 @@ above, which is a design aid and will drift.
 
 ---
 
-## Multi-city trips — the problem, and what is not yet decided
+## Multi-city trips, and the times that go with them
 
 **Raised 2026-08-05, after the tools shipped.** Wanted now, not deferred. The schema is an open
 decision: nothing below is settled, and the candidates differ enough that building the wrong one is
@@ -485,47 +477,8 @@ the owner never declares; the cost is that a day with nothing scheduled belongs 
 - **Migrating what exists.** `trips.destination` is free text today and `trips.timezone` is shipped;
   both need a one-time manual migration into `destinations`, as with every earlier schema change.
 
-### The upgrade, staged
 
-Five stages, each independently shippable, testable and commit-sized — the rhythm Phase 2 used. No
-migration code ships with any of them; each one's existing rows are migrated by hand, as staging
-has been throughout.
-
-**Stage 1 — `places.city` / `places.country`.** Add `addressComponents` to the field mask
-(Essentials, so the SKU does not move) and store Google's own locality and country on each place.
-Changes no behaviour: it only starts collecting the fact everything later needs. Ships alone.
-
-**Stage 2 — `destinations`.** `destination_id, name, country, timezone, lat, lng`, and a nullable
-`places.destination_id`. A new `manage_destination` tool (create / list / update) owns it, and
-`timezone` moves here from `trips`.
-
-> Get-or-create on a destination is keyed on **Google's own locality string**, not on free text the
-> model typed. That is not the string matching the trip-resolution decision rejected — it is a
-> canonical value Google returns identically every time, which is the same reason `google_place_id`
-> is trusted for place dedupe. A place Google could not localise leaves `destination_id` NULL and
-> the agent may set it explicitly.
-
-**Stage 3 — `trip_legs`.** `leg_id, trip_id, destination_id, start_date, end_date`. A trip becomes a
-sequence of dated stays. `manage_trip` gains leg actions, and its date-shift logic has to move legs
-with the trip — reusing the reasoning already there for scheduled items rather than growing a second
-one. `trips.destination` and `trips.timezone` are retired here, migrated into a first leg.
-
-**Stage 4 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`, so a list belongs
-to the place and survives the next visit. `manage_wishlist` still takes a `trip_id` for convenience
-and resolves it through the trip's legs: one leg is unambiguous, several means the refusal names
-them and the agent picks — the same pattern every other id resolution uses.
-
-**Stage 5 — the tile.** `days` carry their leg, so the strip can section a long trip by city and
-`today` resolves in the right timezone per day. Wishlist groups by city, then category. Lodging is
-per leg. Ends with an addendum to `TRAVEL_APP_HANDOFF.md`, written from the payload that ships.
-
-**Order matters:** stages 1–3 are additive and leave every current behaviour working, so the tools
-keep functioning throughout. Stage 4 is the only one that changes an existing table's meaning, and
-by then destinations and legs already exist to migrate onto.
-
----
-
-## Times that cross midnight or a timezone
+### Times that cross midnight or a timezone
 
 **Raised 2026-08-05**, while reviewing how the timezone decision holds up for a multi-country trip.
 Probing the shipped tools turned up one outright bug and two representation gaps.
@@ -621,6 +574,55 @@ to.
 
 This also condemns the current text rendering, which should change with this work:
 `[1] 22:00-06:00 LIS->NRT` reads as an eight-hour flight travelling backwards.
+
+### The upgrade, staged
+
+Ordered by dependency, each step commit-sized and testable — the rhythm Phase 2 used. No migration
+code ships with any of them; each one's existing rows are migrated by hand, as staging has been
+throughout.
+
+**Stage 0 — the overnight bug.** Independent of everything below and shippable any time. Infer +1
+day for a transit whose arrival precedes its departure, instead of refusing it. Adopt the arrival
+convention in the docstring and `SKILL.md`, and carry a date-rollover marker so the tile can render
+`22:00 → 06:00 ⁺¹`.
+
+**Stage 1 — `places.city` / `places.country`.** Add `addressComponents` to the field mask
+(Essentials, so the SKU does not move) and store Google's own locality and country. Changes no
+behaviour: it only starts collecting the key Stage 2 resolves on.
+
+**Stage 2 — `destinations`.** `destination_id, name, country, timezone, lat, lng`, a nullable
+`places.destination_id`, and a `manage_destination` tool. `trips.destination` — free text today —
+becomes `trips.destination_id`, still one per trip, and `timezone` moves from trip to destination.
+Behaviour is unchanged; the destination is simply a row rather than a string.
+
+> Get-or-create on a destination is keyed on **Google's own locality string**, not on free text the
+> model typed. That is not the string matching the trip-resolution decision rejected — it is a
+> canonical value Google returns identically every time, the same property that makes
+> `google_place_id` trustworthy for place dedupe. A place Google could not localise leaves
+> `destination_id` NULL and the agent may set it explicitly.
+
+**Stage 3 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`, so a list belongs
+to the place and survives the next visit. This is the headline fix and it lands here, not last:
+resolving `trip → destination` needs only Stage 2, never legs. `manage_wishlist` still takes a
+`trip_id` for convenience and resolves it through the trip's destination.
+
+**Stage 4 — `trip_legs`.** `leg_id, trip_id, destination_id, start_date, end_date` generalises one
+destination into many, and a trip becomes a sequence of dated stays. **A leg starts on the date you
+arrive**, so the evening you fly out still belongs to the city you are leaving. `manage_trip`'s date
+shift has to move legs with the trip — reusing the reasoning already there for scheduled items
+rather than growing a second one. `manage_wishlist`'s resolution widens from "the trip's
+destination" to "the trip's legs' destinations", with a refusal that names them when several fit.
+
+**Stage 5 — the tile.** Days carry their leg and their own `timezone`, so the strip can section a
+long trip by city and `today` resolves per day. Wishlist groups by city, then category. Lodging is
+per leg. Ends with an addendum to `TRAVEL_APP_HANDOFF.md` covering the destination clock and the
+flight card, written from the payload that ships.
+
+**Two constraints across all of it.** Stages 1–2 are additive and leave every current behaviour
+working. Stage 3 is the only one that changes an existing table's meaning, and by then destinations
+exist to migrate onto. And **every stage leaves the tile answering**: it joins `wishlist` on
+`trip_id` and reads `trip.timezone`, so stages 2–4 each repair it as they go — Stage 5 is about new
+capability, not about fixing what earlier stages broke.
 
 ---
 

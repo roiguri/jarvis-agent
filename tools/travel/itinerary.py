@@ -7,7 +7,7 @@ which puts a place back on it deliberately.
 
 import re
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 from langchain_core.tools import tool
 
@@ -46,7 +46,10 @@ def _entry_line(r: sqlite3.Row) -> str:
     """One scheduled thing, as the model reads it back."""
     when = r["start_time"] or ""
     if r["start_time"] and r["end_time"]:
-        when = f"{r['start_time']}-{r['end_time']}"
+        # +1 marks the date rollover, the way a boarding pass does. Without it a
+        # night flight reads as though it travelled backwards.
+        roll = "+1" if r["end_date"] and r["end_date"] > r["start_date"] else ""
+        when = f"{r['start_time']}-{r['end_time']}{roll}"
     head = f"  [{r['entry_id']}] {when:<11} {r['label']}"
     bits = []
     if r["item_type"] == "transit" and (r["origin"] or r["destination_loc"]):
@@ -195,8 +198,12 @@ def manage_itinerary(
             transit for a leg between two points.
         date: the day it happens, YYYY-MM-DD.
         end_date: last day, for a stay spanning several days.
-        start_time: 24-hour HH:MM.
-        end_time: 24-hour HH:MM.
+        start_time: 24-hour HH:MM, local where the item starts.
+        end_time: 24-hour HH:MM. For a transit leg this is the arrival time
+            LOCAL TO THE DESTINATION, the way a flight schedule prints it — so a
+            22:00 departure arriving 06:00 is normal, not a mistake. An end
+            earlier than its start is read as running past midnight and the
+            arrival date is set for you.
         origin: where a transit leg starts.
         destination_loc: where a transit leg ends.
         confirmation_code: booking reference. Also marks the row as booked, so a
@@ -287,8 +294,16 @@ def _schedule(
         raise TravelError(f"end_date {finish} is before date {start}.")
     st = _parse_time(start_time, "start_time")
     et = _parse_time(end_time, "end_time")
+    rolled = False
     if st and et and not finish and et < st:
-        raise TravelError(f"end_time {et} is before start_time {st} on the same day.")
+        # An end earlier than its start has exactly one sensible reading: it ran
+        # past midnight. Refusing it was wrong for the case it arises in most —
+        # a night flight — and the refusal did not even hint that end_date was
+        # the way through, so the likely outcome was an item recorded with no
+        # arrival at all. No item type is special-cased: a 22:00-01:00 bar reads
+        # the same way as a red-eye.
+        finish = (date.fromisoformat(start) + timedelta(days=1)).isoformat()
+        rolled = True
 
     kind = (item_type or "").strip().lower()
     if kind and kind not in ITEM_TYPES:
@@ -333,9 +348,10 @@ def _schedule(
     where = f"day {n}, {start}" if n and n >= 1 else start
     at = f" at {st}" if st else ""
     booked = " Booked — it will not be moved if the trip's dates change." if confirmation_code.strip() else ""
+    over = f" Ends {et} the next day ({finish})." if rolled else ""
     return (
         f"Scheduled '{label}' ({kind}) on {where}{at} [entry {cur.lastrowid}]."
-        + _window_note(trip, start, finish) + booked
+        + over + _window_note(trip, start, finish) + booked
     )
 
 
@@ -356,12 +372,21 @@ def _reschedule(
         start = _parse_date(when, "date").isoformat()
         sets.append("start_date = ?"); args.append(start)
         said.append(f"date → {start}")
+        # Moving something preserves how long it lasts. Without this a stay
+        # keeps its old checkout and a night flight keeps its old arrival —
+        # which, once the item moves past it, is a date before its own start.
+        if finish and not end_date.strip():
+            delta = date.fromisoformat(start) - date.fromisoformat(entry["start_date"])
+            finish = (date.fromisoformat(finish) + delta).isoformat()
+            sets.append("end_date = ?"); args.append(finish)
+            said.append(f"ending {finish}")
     if end_date.strip():
         finish = _parse_date(end_date, "end_date").isoformat()
         sets.append("end_date = ?"); args.append(finish)
         said.append(f"end date → {finish}")
     if finish and finish < start:
         raise TravelError(f"end_date {finish} is before date {start}.")
+    st, et = entry["start_time"], entry["end_time"]
     if start_time.strip():
         st = _parse_time(start_time, "start_time")
         sets.append("start_time = ?"); args.append(st)
@@ -370,6 +395,13 @@ def _reschedule(
         et = _parse_time(end_time, "end_time")
         sets.append("end_time = ?"); args.append(et)
         said.append(f"until {et}")
+    # Same rollover reading as schedule. This path had no time-order check at
+    # all, so it silently stored an end before its start — the two ways in must
+    # agree or an item means something different depending on how it was made.
+    if st and et and et < st and not finish:
+        finish = (date.fromisoformat(start) + timedelta(days=1)).isoformat()
+        sets.append("end_date = ?"); args.append(finish)
+        said.append(f"ending the next day ({finish})")
 
     if not sets:
         return (

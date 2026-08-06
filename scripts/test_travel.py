@@ -641,11 +641,6 @@ def test_manage_itinerary() -> None:
                date="2027-03-11", start_time="9am"),
           contains="24-hour hh:mm")
 
-    check("an end before a start on one day is refused",
-          call(manage_itinerary, action="schedule", trip_id="it", title="X",
-               date="2027-03-11", start_time="14:00", end_time="09:00"),
-          contains="before start_time")
-
     check("an unknown item_type lists the real ones",
           call(manage_itinerary, action="schedule", trip_id="it", title="X",
                date="2027-03-11", item_type="reservation"),
@@ -753,6 +748,41 @@ def test_manage_itinerary() -> None:
     check("unknown action lists the real actions",
           call(manage_itinerary, action="frobnicate", trip_id="it"),
           contains=["unknown action", "schedule", "unschedule"])
+
+    section("manage_itinerary — items that run past midnight")
+
+    check("an overnight is inferred, not refused",
+          call(manage_itinerary, action="schedule", trip_id="it", title="Night bus",
+               item_type="transit", date="2027-03-11", start_time="22:00",
+               end_time="06:00", origin="A", destination_loc="B"),
+          contains=["scheduled", "next day", "2027-03-12"])
+
+    check("the rollover is stored as the arrival date",
+          call(query_travel_db,
+               sql="SELECT start_date, end_date FROM itinerary WHERE title='Night bus'"),
+          contains=["2027-03-11", "2027-03-12"])
+
+    check("it renders with a +1 rather than reading backwards",
+          call(manage_itinerary, action="list", trip_id="it"),
+          contains="22:00-06:00+1")
+
+    check("the rollover applies to any item type, not just transit",
+          call(manage_itinerary, action="schedule", trip_id="it", title="Late bar",
+               date="2027-03-11", start_time="22:30", end_time="01:00"),
+          contains="next day")
+
+    check("an explicit end_date is respected, not overwritten",
+          call(manage_itinerary, action="schedule", trip_id="it", title="Long haul",
+               item_type="transit", date="2027-03-11", end_date="2027-03-13",
+               start_time="22:00", end_time="06:00"),
+          contains="scheduled", missing="next day")
+
+    ov = call(query_travel_db,
+              sql="SELECT entry_id FROM itinerary WHERE title='Night bus'").split("\n")[1]
+    check("moving it carries its arrival along",
+          call(manage_itinerary, action="reschedule", trip_id="it",
+               entry_id=int(ov), date="2027-03-13"),
+          contains=["moved", "2027-03-14"])
 
 
 # ---------------------------------------------------------------------------
