@@ -25,27 +25,6 @@ def _set_current(conn: sqlite3.Connection, trip_id: str) -> None:
     conn.execute("UPDATE trips SET is_current = 1 WHERE trip_id = ?", (trip_id,))
 
 
-def _shift_itinerary(conn: sqlite3.Connection, trip_id: str, delta_days: int) -> tuple[int, list[str]]:
-    """Move this trip's scheduled rows by delta_days, leaving booked ones put.
-
-    A row carrying a confirmation_code is a reservation someone else holds: the
-    trip moving does not move the flight, so those are reported for rebooking
-    rather than quietly re-dated into a lie. Returns (moved, [booked labels])."""
-    booked = conn.execute(
-        "SELECT entry_id, title, place_id, start_date, confirmation_code FROM itinerary "
-        "WHERE trip_id = ? AND confirmation_code IS NOT NULL AND TRIM(confirmation_code) != ''",
-        (trip_id,),
-    ).fetchall()
-    labels = [_label(r) + f" ({r['confirmation_code']})" for r in booked]
-    cur = conn.execute(
-        "UPDATE itinerary SET "
-        "  start_date = date(start_date, ?), "
-        "  end_date   = CASE WHEN end_date IS NULL THEN NULL ELSE date(end_date, ?) END "
-        "WHERE trip_id = ? "
-        "  AND (confirmation_code IS NULL OR TRIM(confirmation_code) = '')",
-        (f"{delta_days:+d} days", f"{delta_days:+d} days", trip_id),
-    )
-    return cur.rowcount, labels
 
 
 def _outside_window(conn: sqlite3.Connection, trip_id: str, start: str, end: str) -> list[str]:
@@ -85,10 +64,10 @@ def manage_trip(
       add wishlist places to but cannot schedule into. Becomes current only if
       no other trip is; creating a trip never steals the pointer from the trip
       the owner is currently looking at.
-    - update: change destination, dates, title or notes. Moving a dated trip
-      by a fixed offset drags its scheduled items along, EXCEPT items holding a
-      confirmation_code — a booking does not move because plans changed, so
-      those are listed for rebooking instead.
+    - update: change destination, dates, title or notes. Changing the dates does
+      NOT move anything already scheduled — what is on a day stays on that day,
+      and anything now outside the trip's window is listed so it can be dealt
+      with deliberately.
     - set_current: point the tile at this trip. Use when the owner asks to look
       at a different trip.
     - archive: mark a trip finished. Destroys nothing and is reversible via
@@ -218,26 +197,17 @@ def _update_trip(
         sets.append("end_date = ?"); args.append(new_e)
         said.append(f"dates → {new_s} to {new_e}")
 
-        if old_s and old_e:
-            delta = (date.fromisoformat(new_s) - date.fromisoformat(old_s)).days
-            same_length = (
-                date.fromisoformat(new_e) - date.fromisoformat(new_s)
-            ) == (date.fromisoformat(old_e) - date.fromisoformat(old_s))
-            if delta and same_length:
-                moved, booked = _shift_itinerary(conn, tid, delta)
-                said.append(f"moved {moved} scheduled item(s) by {delta:+d} day(s)")
-                if booked:
-                    said.append(
-                        "did NOT move these — they carry a confirmation code and need "
-                        "rebooking:\n  " + "\n  ".join(booked)
-                    )
-            elif not same_length:
-                stray = _outside_window(conn, tid, new_s, new_e)
-                said.append("trip length changed, so no items were moved")
-                if stray:
-                    said.append(
-                        "these now fall outside the trip window:\n  " + "\n  ".join(stray)
-                    )
+        # Changing a trip's dates changes the trip's dates. It used to drag
+        # unbooked items along by the same offset, which was clever and wrong:
+        # it acted on more than was asked, and the decision about what to do
+        # with each item belongs to the owner. What is scheduled stays where it
+        # is, and anything now outside the window is named so nothing goes quiet.
+        stray = _outside_window(conn, tid, new_s, new_e)
+        said.append("nothing scheduled was moved")
+        if stray:
+            said.append(
+                "these now fall outside the trip window:\n  " + "\n  ".join(stray)
+            )
 
     if not sets:
         return f"Nothing to update on {tid} — pass a field to change."

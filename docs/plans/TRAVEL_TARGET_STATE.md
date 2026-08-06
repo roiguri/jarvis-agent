@@ -286,7 +286,8 @@ manage_wishlist(update, wishlist_id=12, done_at="")     → cleared
    ordinary overnight in one zone may be left to inference.
 8. Record a booking's confirmation code when there is one; add it later with `update` if it arrives
    after the item does.
-9. Changing a trip's dates does not move what is scheduled — say what now falls outside.
+9. Changing a trip's dates does not move what is scheduled — say what now falls outside, and ask
+   what should happen to it.
 10. When the owner says they've been somewhere on the list, set `done_at` rather than removing it.
 11. An empty string clears a field; omitting an argument leaves it alone.
 

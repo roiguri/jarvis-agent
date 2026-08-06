@@ -80,10 +80,9 @@ dependency; every stage leaves the tools and the tile working)*
       instants; the inference limited to a same-zone overnight, and a crossing refused rather than
       guessed. 180 checks; verified live — the model volunteered both zones unprompted and got the
       date-line case right without the refusal firing
-- [ ] **Stage 4b — retire the date shift.** `manage_trip(update)` still moves scheduled items when
-      a trip's dates translate, which the target state says it should not: changing dates should
-      change dates and report what now falls outside. `confirmation_code` becomes reference data
-      only, and `SKILL.md` rule 13 loses its claim about keeping items in place
+- [x] **Stage 4b — retire the date shift.** `_shift_itinerary` deleted: changing a trip's dates
+      changes the dates and names what now falls outside, and a booked item and an unbooked one
+      behave identically. `confirmation_code` drives nothing and is reference data. 179 checks
 
 - [ ] **Stage 5 — the gaps the reviews found.** `manage_itinerary(update)` incl. `trip_id` and
       `place_id`; `schedule` accepting `wishlist_id`; empty string clears a field; the domain

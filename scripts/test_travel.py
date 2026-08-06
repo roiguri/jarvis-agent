@@ -248,57 +248,47 @@ def test_manage_trip() -> None:
 
 
 def test_trip_date_shift() -> None:
-    section("manage_trip — moving a trip drags plans but not bookings")
+    section("manage_trip — changing dates moves nothing")
 
-    call(manage_trip, action="create", trip_id="shift", destination="Shift City",
+    call(manage_destination, action="create", name="Shiftland", timezone="Europe/Lisbon")
+    call(manage_trip, action="create", trip_id="shift", destination="Shiftland",
          start_date="2026-10-10", end_date="2026-10-15")
 
-    conn = _raw()
-    conn.execute(
-        "INSERT INTO itinerary(trip_id, item_type, title, start_date, start_time) "
-        "VALUES('shift','note','Free walking tour','2026-10-11','09:00')"
-    )
-    conn.execute(
-        "INSERT INTO itinerary(trip_id, item_type, title, start_date, end_date) "
-        "VALUES('shift','lodging','Hotel','2026-10-10','2026-10-15')"
-    )
-    conn.execute(
-        "INSERT INTO itinerary(trip_id, item_type, title, start_date, confirmation_code) "
-        "VALUES('shift','transit','Flight out','2026-10-10','PNR-1')"
-    )
-    conn.commit()
-    conn.close()
+    for title, kind, s_date, e_date, code in (
+        ("Free walking tour", "note",    "2026-10-11", None, None),
+        ("Hotel",             "lodging", "2026-10-10", "2026-10-15", None),
+        ("Flight out",        "transit", "2026-10-10", None, "PNR-1"),
+    ):
+        call(manage_itinerary, action="schedule", trip_id="shift", title=title,
+             item_type=kind, date=s_date, end_date=e_date or "",
+             confirmation_code=code or "")
 
     out = call(manage_trip, action="update", trip_id="shift",
                start_date="2026-10-17", end_date="2026-10-22")
-    check("pure translation moves the unbooked items", out,
-          contains=["moved 2", "+7"])
-    check("the booked item is reported, not moved", out,
-          contains=["did not move", "flight out", "PNR-1"])
+    check("it says plainly that nothing moved", out,
+          contains="nothing scheduled was moved")
+    check("and names everything now outside the window", out,
+          contains=["outside the trip window", "free walking tour", "hotel", "flight out"])
 
-    check("unbooked dates advanced by exactly 7 days",
+    check("an unbooked item kept its date",
           call(query_travel_db,
-               sql="SELECT title, start_date FROM itinerary WHERE trip_id='shift' "
-                   "AND title='Free walking tour'"),
-          contains="2026-10-18")
+               sql="SELECT start_date FROM itinerary WHERE title='Free walking tour'"),
+          contains="2026-10-11")
 
-    check("a stay's end date moved with its start",
+    check("a booking kept its date too — the code no longer decides anything",
           call(query_travel_db,
-               sql="SELECT end_date FROM itinerary WHERE trip_id='shift' AND title='Hotel'"),
-          contains="2026-10-22")
-
-    check("the booking kept its original date",
-          call(query_travel_db,
-               sql="SELECT start_date FROM itinerary WHERE trip_id='shift' "
-                   "AND title='Flight out'"),
+               sql="SELECT start_date FROM itinerary WHERE title='Flight out'"),
           contains="2026-10-10")
 
-    out = call(manage_trip, action="update", trip_id="shift",
-               start_date="2026-10-17", end_date="2026-10-30")
-    check("changing trip length moves nothing", out,
-          contains="length changed", missing="moved 2")
-    check("but names what now falls outside the window", out,
-          contains=["outside", "flight out"])
+    check("a stay kept both of its dates",
+          call(query_travel_db,
+               sql="SELECT start_date, end_date FROM itinerary WHERE title='Hotel'"),
+          contains="2026-10-10 | 2026-10-15")
+
+    check("moving the trip back over them stops reporting them",
+          call(manage_trip, action="update", trip_id="shift",
+               start_date="2026-10-09", end_date="2026-10-16"),
+          contains="nothing scheduled was moved", missing="outside the trip window")
 
 
 def test_delete_cascade() -> None:
