@@ -56,11 +56,11 @@ follow-up.**
 **The 2026-08-06 incident is at least the third occurrence of the same failure.** Discovered while
 reviewing open issues *after* the plan was drafted:
 
-- **[#7 — Add a URL fetch & summarize tool](../../../../issues/7)** (enhancement, priority: medium,
+- **[#7 — Add a URL fetch & summarize tool](../../../../../issues/7)** (enhancement, priority: medium,
   filed 2026-07-04) is this plan's Phase 1, already specified. Its acceptance criteria — "fetches a
   given URL and returns a usable summary" and "handles timeouts, blocked, and non-HTML fetches
   gracefully" — anticipated both halves of what this plan builds.
-- **[#36 — Turns are unbounded, terminate abnormally, and leave no legible trace](../../../../issues/36)**
+- **[#36 — Turns are unbounded, terminate abnormally, and leave no legible trace](../../../../../issues/36)**
   (bug, priority: **high**) records incident 2 on **2026-07-30**: the same x.com-link request, the
   same **14 consecutive `web_search` calls**, then a single LLM call burning **65,668 output tokens
   over 6m48s**, ending in `MALFORMED_FUNCTION_CALL`. 7m43s, ~$0.31, `error: null`, and
@@ -85,12 +85,12 @@ genuinely unreadable cases (nasdaq.com was measured as failing on both extract d
 
 | Issue | Relationship |
 |---|---|
-| [#7](../../../../issues/7) | **Closed by this plan's Phase 1.** Should be linked from the PR. |
-| [#36](../../../../issues/36) | **Partially addressed** by Phase 2's repeat-call cap, which bounds the 14-search flail. #36 is broader — unbounded turns in *both* scopes, `GraphRecursionError`, and no legible trace — so it stays open. |
-| [#59](../../../../issues/59) | Split out of #36: non-STOP finish reasons collapsing to an empty reply. Adjacent, not addressed here. The 08-06 turn terminated *normally*, so #59's path did not fire — same head, different tail. |
-| [#17](../../../../issues/17) | Load-time tool gating by required env vars. More attractive once `web` is a skill: with no `TAVILY_API_KEY`, the whole skill could be skipped at registration rather than failing per-call. Still low priority; current deploys always have the key. |
-| [#67](../../../../issues/67) | Staging shares prod's real external services, **explicitly including web search**. `fetch_url` adds a second consumer of the same 1,000-credit Tavily pool from staging. Minor, but it makes the shared-quota point slightly sharper. |
-| [#18](../../../../issues/18) | Reduce token spend. The `max_chars` decision and the N3 history-stripping follow-up both feed it. |
+| [#7](../../../../../issues/7) | **Closed by this plan's Phase 1.** Should be linked from the PR. |
+| [#36](../../../../../issues/36) | **Not addressed.** A repeat-call cap was designed for that purpose and then rejected (see Phase 2). What this plan removes is the *reason* the flail started, not the flail itself. A note on #36 records that Jarvis already has the global iteration budget both references use — LangGraph's default `recursion_limit` of 25 — and that the bug is its raising a `GraphRecursionError` where hermes-agent degrades into a tool-free summary. |
+| [#59](../../../../../issues/59) | Split out of #36: non-STOP finish reasons collapsing to an empty reply. Adjacent, not addressed here. The 08-06 turn terminated *normally*, so #59's path did not fire — same head, different tail. |
+| [#17](../../../../../issues/17) | Load-time tool gating by required env vars. More attractive once `web` is a skill: with no `TAVILY_API_KEY`, the whole skill could be skipped at registration rather than failing per-call. Still low priority; current deploys always have the key. |
+| [#67](../../../../../issues/67) | Staging shares prod's real external services, **explicitly including web search**. `fetch_url` adds a second consumer of the same 1,000-credit Tavily pool from staging. Minor, but it makes the shared-quota point slightly sharper. |
+| [#18](../../../../../issues/18) | Reduce token spend. The `max_chars` decision and the N3 history-stripping follow-up both feed it. |
 
 ## Evidence gathered during planning
 
@@ -130,7 +130,7 @@ naive re-measurement will not.
 ## References — OpenClaw and hermes-agent
 
 Both references solve this problem, and they converge. Following the comparison format of
-[CONTEXT_HANDLING_PLAN.md §Mechanisms](CONTEXT_HANDLING_PLAN.md):
+[CONTEXT_HANDLING_PLAN.md §Mechanisms](../CONTEXT_HANDLING_PLAN.md):
 
 | Mechanism | OpenClaw | hermes-agent | Jarvis today |
 |---|---|---|---|
@@ -299,7 +299,7 @@ Estimate: **~40 lines.**
 
 ## Phase 2 — bound the failure
 
-Three changes that matter even after Phase 1, because a fetch that fails will otherwise send the
+Two changes that matter even after Phase 1, because a fetch that fails will otherwise send the
 model straight back to `web_search` for another 14 rounds.
 
 - **[Q5 — decided] Input-shape guard in `web_search`.** Detect a query that is a URL or a bare long
@@ -307,13 +307,42 @@ model straight back to `web_search` for another 14 rounds.
   *"That looks like a URL or an ID, not a search query. Use `fetch_url` to read it directly."*
   Deterministic, nothing to tune, and it catches the incident's exact shape. See "Routing" below
   for why this is a *code* guard rather than a prompt rule.
-- **Repeat-call cap in `tools/registry.py`.** Cap identical-tool calls per turn (~5), then return a
-  hard stop: *"you have called `web_search` 5 times without success; stop and report what you could
-  not determine."* Uses the existing per-turn context (`turn_context.py`). This is the single
-  highest-leverage change in the plan — it bounds cost for *every* tool, not just this one.
-  The guard stops the *first* wrong search; the cap stops the *fourteenth*.
-- **A URL rule in `prompts/AGENTS.md`** (currently 26 lines, zero mentions of links/URLs), plus the
-  rewrite of line 4 and line 6 that the `web` skill move forces anyway.
+- **Prompt narrowing in `prompts/AGENTS.md`** — line 4 and line 6 rewritten as the `web` skill move
+  forces anyway. Note what this deliberately does **not** add: a rule that a link is a request to
+  read it. An early draft carried one and it was removed. A pasted URL is not by itself a reason to
+  spend a fetch; the rule that matters is narrower and lives in `tools/web/SKILL.md` — do not
+  *describe* a page you have not opened.
+
+### Rejected: a per-tool repeat-call cap
+
+Recorded so it is not re-proposed. The draft called this "the single highest-leverage change in
+the plan." It was implemented, measured, and reverted.
+
+**Measured against 1,947 logged turns, a cap of 5 would have fired on 152 of them (7.8%) — almost
+all legitimate:**
+
+| Tool | Turns | Max in one turn | Turns >5 | Verdict |
+|---|---|---|---|---|
+| `read_memory` | 1,719 | **22** | 141 | normal — reading many memory files |
+| `query_fitness_db` | 36 | 14 | 4 | normal — ad-hoc SQL exploration |
+| `delete_memory` | 12 | 10 | 3 | normal — bulk cleanup |
+| `web_search` | 29 | 14 | 4 | **all four are the known incidents** |
+
+A per-tool cap on `web_search` alone would have been defensible on that data. It was still dropped,
+for three reasons:
+
+1. **Neither reference has per-tool capping.** In OpenClaw it is an open feature request
+   ([#9912](https://github.com/openclaw/openclaw/issues/9912) `maxTurns`/`maxToolCalls`,
+   [#806](https://github.com/openclaw/openclaw/issues/806) loop detection); hermes-agent's
+   agent-loop docs do not mention loop detection or duplicate suppression at all. Both rely on a
+   **global iteration budget**.
+2. **Jarvis already has that budget.** Nothing sets `recursion_limit`, so LangGraph's default of 25
+   applies — and #36 incident 1 died on exactly it. The mechanism exists; what it lacks is
+   hermes-agent's graceful exhaustion (*"the agent stops and returns a summary of work done"*)
+   rather than raising. That belongs to #36.
+3. **It would not have prevented the bad outcome.** The 2026-08-06 turn made **16 LLM calls** —
+   under 25, so no budget of any size would have fired, and it ended by *succeeding* with a
+   fabrication. A cap bounds cost, not correctness.
 
 ### Rejected: a relevance-score threshold on `web_search`
 
@@ -392,7 +421,7 @@ Nothing stays "open" past the plan's close.
 
 2. ~~**`max_chars` default.**~~ **RESOLVED 2026-08-06 → 8,000 chars, 70/20 head+tail**, reusing the
    `[... truncated N chars ...]` marker shape already committed to by
-   [CONTEXT_HANDLING_PLAN](CONTEXT_HANDLING_PLAN.md) WS4 rather than inventing a second one.
+   [CONTEXT_HANDLING_PLAN](../CONTEXT_HANDLING_PLAN.md) WS4 rather than inventing a second one.
 
    Deliberately below both references (OpenClaw 20,000; Hermes 15,000/75-25) for two
    Jarvis-specific reasons they do not share:
@@ -420,21 +449,38 @@ Nothing stays "open" past the plan's close.
    measurements are recorded under "Rejected: a relevance-score threshold" so it is not
    re-proposed.
 
-**All five drafting questions are now closed.** What remains open is the two deferred next steps
-(N1, N2) plus the history-stripping follow-up noted under question 2.
+**All five drafting questions are closed, and all three deferred items are dispositioned.** Nothing
+in this plan remains open.
 
 ---
 
-## Possible next steps — deferred, not in Phase 1
+## Possible next steps — DISPOSITIONED 2026-08-06
 
-Both are enhancements to a shipped `fetch_url`, deliberately held back so Phase 1 stays minimal.
-Disposition (adopt / drop / escalate to a GitHub issue) happens at end-of-plan review, together.
+Held back so Phase 1 stayed minimal, then resolved together at end-of-plan review as the
+disposition rule requires. **Phase 1 therefore shipped basic depth and no cache** — the Tavily
+client defaults — and staging confirmed both are adequate in practice.
 
-**Consequence of deferring, stated plainly:** Phase 1 therefore ships **basic depth and no cache** —
-the Tavily client defaults. If the advanced-depth evidence below is judged compelling, that is an
-argument for pulling it into Phase 1 rather than deferring it.
+| | Outcome | Where it went |
+|---|---|---|
+| **N1** — advanced extract depth | **Escalated** | [#80](../../../../../issues/80) |
+| **N2** — local caching | **Dropped** | recorded below |
+| **N3** — strip fetched text from history | **Escalated**, broadened | [#81](../../../../../issues/81) |
 
-### N1 — `extract_depth="advanced"`
+**N2 is dropped, not deferred.** Tavily caches server-side (measured: 1.31s → 0.47s → 0.18s on
+repeat calls, byte-identical), so a local cache duplicates one we already inherit; its only
+remaining benefit is credits, which are not scarce. OpenClaw's reason for caching — that it fetches
+locally and has no provider cache to lean on — stopped applying the moment Q1 chose provider-only.
+
+**N3 grew in scope on review.** Stripping fetched text from history is destructive while there is
+nowhere to read it back from, so the real missing piece is an **overflow store** — the mechanism
+both references have and Jarvis lacks. hermes-agent's `[TRUNCATED]` footer points at the full file
+on disk; `fetch_url` had to *drop* that clause from the marker wording WS4 borrowed, because for
+fetched pages it would be a lie. #81 covers the store, a read-past-truncation tool, and the
+relaxation of the 8,000-char cap that becomes safe once stripping is non-destructive. It
+deliberately spans #61 (re-read dropped media) and #60 (large ingested text) rather than solving
+this for `fetch_url` alone.
+
+### N1 — `extract_depth="advanced"` → [#80](../../../../../issues/80)
 
    **Credits are not the constraint.** The 1,000/month free tier is a *single shared balance*
    across all Tavily endpoints, not per-endpoint. Current usage is ~95 credits/month. At 100
@@ -495,11 +541,12 @@ that is not a reason.
 **Caveat on the evidence:** Tavily's caching is inferred from timings, not a published guarantee.
 If they change it we lose the latency win silently — though no worse off than never having cached.
 
-**Overlap to keep in mind:** the failure mode a cache would blunt (the model hammering one URL) is
-addressed more directly by the Phase 2 repeat-call cap, which *stops* the loop rather than making
-it cheap. Adopting both means two mechanisms half-solving one problem.
+**Note on a since-removed argument:** an earlier draft justified dropping the cache partly because
+the Phase 2 repeat-call cap would *stop* a model hammering one URL rather than making it cheap.
+That cap was itself rejected, so the argument is void — but the conclusion stands on the
+server-side-cache measurement alone.
 
-### N3 — strip fetched text from history after its turn
+### N3 — strip fetched text from history after its turn → [#81](../../../../../issues/81)
 
 `_strip_media_blobs` (`agent.py:137`) already removes media blobs from messages the LLM has
 previously seen, keeping them only for the turn that needs them. Fetched page text has the same
