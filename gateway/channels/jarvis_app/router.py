@@ -35,6 +35,21 @@ logger = logging.getLogger(__name__)
 _BACKOFF_START_S = 1.0
 _BACKOFF_MAX_S = 60.0
 
+# The "Jarvis is thinking" indicator is driven entirely by these beats: the
+# client draws the row while they keep arriving and retires it once `ttl_ms` has
+# passed since the last one. Nothing on the wire says "done" — a turn's end is
+# left to speak for itself, so an agent killed mid-turn is discovered exactly the
+# way a healthy one's silence is.
+#
+# The TTL is ~2.5x the cadence, and the ratio is the point: at 1x a single slow
+# or dropped beat would hide the row mid-turn, so the indicator would flicker on
+# ordinary jitter rather than only on a genuinely dead turn. `ttl_ms` rides on
+# every beat instead of being a value the client also hardcodes — the two sides
+# share no code, so a duplicated constant would drift silently. Change the
+# cadence and the TTL together, keeping the ratio.
+_THINKING_INTERVAL_S = 4.0
+_THINKING_TTL_MS = 10_000
+
 # The hub pins attachment ids to this shape. The id names the cache file, so a
 # value that doesn't match is rejected before it can reach a filesystem path.
 _ATT_ID_RE = re.compile(r"^att_[0-9A-HJKMNP-TV-Z]{26}$")
@@ -313,9 +328,36 @@ class JarvisAppInboundRouter:
             user_text=text,
             attachments=attachments,
         )
-        reply = await self._on_message(inbound)
-        if reply:
-            await self._channel.send(self._channel.owner_thread_id, reply)
+        beat = asyncio.create_task(self._thinking_beat())
+        try:
+            reply = await self._on_message(inbound)
+            if reply:
+                await self._channel.send(self._channel.owner_thread_id, reply)
+        finally:
+            # The beat exists only for the life of the turn — including the one
+            # that raised, where a surviving task would report a dead agent as
+            # still thinking.
+            beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
+
+    async def _thinking_beat(self) -> None:
+        """Beat while a turn runs, so the app can show its thinking indicator.
+
+        Beats before the first sleep: the client learns a turn started right
+        away rather than one cadence in. Each failure is caught and the loop
+        continues — a beat that stops is precisely how the client reports *the
+        agent died*, so letting one transient POST failure end the loop would
+        make a healthy agent look dead. The next cadence is the retry.
+        """
+        while True:
+            try:
+                await self._client.post_event(
+                    "agent_thinking", {"ttl_ms": _THINKING_TTL_MS}
+                )
+            except Exception as exc:
+                logger.warning("jarvis-app thinking beat failed: %s", exc)
+            await asyncio.sleep(_THINKING_INTERVAL_S)
 
     async def _download_attachments(self, raw: list[dict]) -> list[dict]:
         """Download each inbound attachment to the channel-owned cache and return

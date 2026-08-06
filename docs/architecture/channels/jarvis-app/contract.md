@@ -6,7 +6,7 @@
 JSON Schema plus the endpoint list, generated from the Pydantic models and
 the mounted routes under `backend/jarvis_app_backend`.
 
-`contract_version`: `b124f103398748df`
+`contract_version`: `45e79b46aed20391`
 
 ## Endpoints
 
@@ -522,7 +522,7 @@ the mounted routes under `backend/jarvis_app_backend`.
 ```json
 {
   "additionalProperties": false,
-  "description": "An ephemeral event the agent relays to the client's stream \u2014 a tool chip\nor a stream delta (architecture \u00a75 SSE catalog). Never persisted and carries\nno cursor, so the stream frames it without an `id:` line.\n\n`type` is strict: an unknown one is a 422, not a mystery event relayed to the\nphone. It admits the whole catalog, not only the two tool-chip kinds a first\nagent sends \u2014 the agent, not the hub, chooses which to emit, and each is a\nworking relay end to end. `data` is opaque: the hub carries the chip's shape,\nit does not interpret it.",
+  "description": "An ephemeral event the agent relays to the client's stream \u2014 a tool chip,\na stream delta, or the \"thinking\" heartbeat (architecture \u00a75 SSE catalog).\nNever persisted and carries no cursor, so the stream frames it without an\n`id:` line.\n\n`type` is strict: an unknown one is a 422, not a mystery event relayed to the\nphone. It admits the whole catalog, not only the two tool-chip kinds a first\nagent sends \u2014 the agent, not the hub, chooses which to emit, and each is a\nworking relay end to end. `data` is opaque: the hub carries the chip's shape,\nit does not interpret it \u2014 `agent_thinking`'s own `ttl_ms` included.",
   "properties": {
     "data": {
       "additionalProperties": true,
@@ -534,7 +534,8 @@ the mounted routes under `backend/jarvis_app_backend`.
         "tool_call_started",
         "tool_call_result",
         "agent_stream_delta",
-        "agent_message_final"
+        "agent_message_final",
+        "agent_thinking"
       ],
       "title": "Type",
       "type": "string"
