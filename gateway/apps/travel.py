@@ -154,7 +154,10 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
             (tid,),
         ).fetchall()
 
-        lodging = [_entry(r) for r in rows if r["item_type"] == "lodging"]
+        # `role` on every item, including these, so one client type reads both
+        # arrays. A stay is not placed in a day at all, which is what "stay"
+        # says — the other roles all describe a position within one.
+        lodging = [dict(_entry(r), role="stay") for r in rows if r["item_type"] == "lodging"]
 
         # Every day of the trip, plus every day any item touches — so an empty
         # middle day still gets a chip, and a day an item merely arrives on is

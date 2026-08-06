@@ -1071,12 +1071,34 @@ def test_tile() -> None:
           str(d["wishlist"][1]["items"][0]),
           contains=["go at dawn", "Coffee Shop"])
 
+    section("travel tile — the shapes a client parses against")
+
+    check("lodging carries a role too, so one type reads both arrays",
+          str([x["role"] for x in d["lodging"]]), contains="stay")
+
+    check("every item everywhere has a role",
+          "ok" if all("role" in i for day in d["days"] for i in day["items"])
+          and all("role" in x for x in d["lodging"]) else "missing", contains="ok")
+
+    check("and a title, so nothing renders blank",
+          "ok" if all(i["title"] for day in d["days"] for i in day["items"]) else "missing",
+          contains="ok")
+
     section("travel tile — empty states are not errors")
 
     d0 = tile(trip_id="it0")
     check("an undated trip returns a trip with no days, not an error",
           f"{d0['trip']['trip_id']} days={len(d0['days'])} pos={d0['trip']['position']}",
           contains=["it0", "days=0", "undated"])
+
+    # The client has to render this, so its shape is pinned: no range to draw,
+    # no strip, and a timezone that is present regardless.
+    check("its dates are null rather than absent, and the timezone still resolves",
+          f"{d0['trip']['start_date']} {d0['trip']['end_date']} {d0['trip']['timezone']}",
+          contains=["None None", "Europe/Lisbon"])
+
+    check("the trip's display name is never null, even with no title",
+          "ok" if d0["trip"]["destination"] else "null", contains="ok")
 
 
 def test_crossing_timezones() -> None:
