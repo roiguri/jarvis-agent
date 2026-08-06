@@ -23,9 +23,9 @@ _TAIL_CHARS = int(MAX_CHARS * 0.20)
 def _truncate(text: str) -> str:
     """Head + tail, so an article's conclusion and a thread's replies survive.
 
-    Marker shape matches the one CONTEXT_HANDLING_PLAN WS4 uses for injected
-    files, minus its "file intact on disk" clause — nothing is written to disk
-    here, so truncation is terminal and the text must not imply otherwise.
+    The marker deliberately says "this is all that was read" rather than
+    pointing at a fuller copy: nothing is written to disk here, so truncation
+    is terminal and the text must not imply the rest is retrievable.
     """
     if len(text) <= MAX_CHARS:
         return text
