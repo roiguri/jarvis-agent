@@ -49,6 +49,31 @@ should not be implemented from.
 - [x] `scripts/ci/check_channel_agnostic.py` green; 138 checks in `scripts/test_travel.py`
 - [ ] Live: restart, confirm the hub receives a two-app manifest, and fetch the tile
 
+**Next — multi-city trips** *(shape settled: destinations + legs; staged below)*
+- [ ] Stage 1 — `city` + `country` on `places` from Google's `addressComponents` (Essentials tier,
+      no SKU change). Additive and useful on its own, so it ships before anything structural
+- [ ] Stage 2 — `destinations` table; places resolve to one; `timezone` moves here
+- [ ] Stage 3 — `trip_legs`; a trip becomes a sequence of dated stays in destinations
+- [ ] Stage 4 — re-anchor the wishlist from trip to destination
+- [ ] Stage 5 — tile payload carries the leg; handoff addendum for the app
+
+**Also next — times that cross midnight or a timezone** *(one shipped bug plus a convention;
+the first item is independent of multi-city and can go any time)*
+- [ ] **Bug:** an overnight transit is refused outright — `22:00 → 06:00` fails validation, and the
+      error does not hint that `end_date` is the way through. Infer +1 day for a transit whose
+      arrival precedes its departure instead of refusing
+- [ ] Adopt the arrival convention: `end_time` on a transit row is wall-clock **at the
+      destination**; document it in the tool docstring and `SKILL.md`
+- [ ] Carry a `crosses_midnight` (or equivalent) marker in the tile payload so the client can render
+      `22:00 → 06:00 ⁺¹` rather than a flight that appears to go backwards
+- [ ] Disambiguate `end_date`'s two meanings — a lodging *span* versus a transit *arrival date*
+- [ ] Per-day `timezone` in the tile payload — **needs Stage 3 legs**, so it lands with them
+- [ ] Client: a destination clock in the header, following the **selected day** — an actual clock
+      ("14:32 in Lisbon"), never an offset badge
+- [ ] Client: a flight card carrying both local times itself rather than inheriting the day's clock
+- [ ] Adopt "a leg starts on the date you arrive" once legs exist (Stage 3)
+- [ ] Addendum to `TRAVEL_APP_HANDOFF.md` once the payload changes
+
 **Phase 4 — app client** *(handoff to `roiguri/jarvis-app`)*
 - [ ] Handoff spec written from the shipped tile payload, not from this document
 - [ ] `ui/apps/travel/` package + one line in `AppCatalog.kt` (`ic_app_travel.webp` already ships)
@@ -389,6 +414,216 @@ above, which is a design aid and will drift.
 
 ---
 
+## Multi-city trips — the problem, and what is not yet decided
+
+**Raised 2026-08-05, after the tools shipped.** Wanted now, not deferred. The schema is an open
+decision: nothing below is settled, and the candidates differ enough that building the wrong one is
+a migration rather than an edit.
+
+### The problem — three symptoms, one cause
+
+The wishlist is anchored to a **visit** when the thing it describes is a **place in the world**:
+
+1. A second trip to the same city starts with an **empty wishlist**, even though the places
+   themselves survive. Place duplication was solved; list persistence was not.
+2. A trip covering several cities has **one flat wishlist** with no notion of which city a place is
+   in — the list stops being scannable at exactly the size where it matters.
+3. **"Which city am I in on day 5?"** is unanswerable, so lodging cannot be reasoned about per city
+   and the tile cannot section a long trip by leg.
+
+### What is agreed
+
+- The symptoms are real and worth fixing now.
+- `places.city` is worth adding under any of the candidates, so it is not blocked on this decision.
+- A destination is addressed by **explicit id**, exactly as a trip is. That decision does not get
+  reopened — it just gains a second thing to name.
+- **A wishlist entry belongs to the place, not to the visit.** So it anchors at destination level
+  and survives into the next trip there. This rules out candidate B.
+- **`timezone` moves from the trip to the city.** A trip crossing countries cannot have one, and
+  putting it on the city is what makes a multi-country trip work at all.
+
+### Which follows from those
+
+Those two answers decide the third. If timezone lives on the city, then resolving "what is today?"
+for a given day *requires* knowing which city that day belongs to — and that is exactly what
+inference cannot answer on a day with nothing scheduled, or on a travel day that is genuinely two
+cities. A tile would show the wrong day on the one morning nothing is booked. So the day→city
+mapping has to be **declared**, and candidate C falls with B.
+
+**Candidate A is therefore the shape**, arrived at from the three answers rather than chosen up
+front. What remains is not *whether* but *how carefully*: legs are a second thing to keep correct,
+and the known cost is that moving or extending a trip has to move or extend them too — the same
+class of problem `manage_trip(update)` already solves for scheduled items, and it should reuse that
+reasoning rather than invent a second one.
+
+### Candidates considered
+
+**A. Destinations + legs — SELECTED (see above).** A `destinations` table (name, country, timezone, coordinates) and
+`trip_legs` dating each destination within a trip. The wishlist anchors to `destination_id`; the
+itinerary stays on `trip_id` and derives its leg from the date. Solves all three symptoms. Largest
+change, and it moves `timezone` from trip to destination — which is arguably where it always
+belonged, since a trip crossing timezones cannot have one.
+
+**B. City on the row, no new tables — ruled out.** `places.city`, and the wishlist groups by it. Smallest
+change and immediately useful. Does **not** solve symptom 1: a trip still owns its own list, so the
+next visit still starts empty.
+
+**C. Destinations without legs — ruled out.** Anchor the wishlist to a destination, but leave the itinerary
+trip-only and infer which city a day is in from what is scheduled that day. Avoids inventing a leg
+the owner never declares; the cost is that a day with nothing scheduled belongs to no city.
+
+### Still to settle, inside candidate A
+
+- **Trip-specific notes.** A wishlist entry belongs to the place, but "go early, we have the kids
+  this time" belongs to one visit. Either notes live on the entry and accumulate across trips
+  (simplest, slightly lossy), or an entry carries an optional per-trip note. Not decided.
+- **What keeps legs correct when a trip moves.** Extending or shifting a trip has to extend or
+  shift its legs. `manage_trip(update)` already reasons about this for scheduled items; legs should
+  reuse that reasoning rather than grow a second one.
+- **Whether a day may belong to no leg**, and what the tile shows if so — a gap between two legs is
+  possible to express and probably a mistake worth flagging rather than refusing.
+- **Migrating what exists.** `trips.destination` is free text today and `trips.timezone` is shipped;
+  both need a one-time manual migration into `destinations`, as with every earlier schema change.
+
+### The upgrade, staged
+
+Five stages, each independently shippable, testable and commit-sized — the rhythm Phase 2 used. No
+migration code ships with any of them; each one's existing rows are migrated by hand, as staging
+has been throughout.
+
+**Stage 1 — `places.city` / `places.country`.** Add `addressComponents` to the field mask
+(Essentials, so the SKU does not move) and store Google's own locality and country on each place.
+Changes no behaviour: it only starts collecting the fact everything later needs. Ships alone.
+
+**Stage 2 — `destinations`.** `destination_id, name, country, timezone, lat, lng`, and a nullable
+`places.destination_id`. A new `manage_destination` tool (create / list / update) owns it, and
+`timezone` moves here from `trips`.
+
+> Get-or-create on a destination is keyed on **Google's own locality string**, not on free text the
+> model typed. That is not the string matching the trip-resolution decision rejected — it is a
+> canonical value Google returns identically every time, which is the same reason `google_place_id`
+> is trusted for place dedupe. A place Google could not localise leaves `destination_id` NULL and
+> the agent may set it explicitly.
+
+**Stage 3 — `trip_legs`.** `leg_id, trip_id, destination_id, start_date, end_date`. A trip becomes a
+sequence of dated stays. `manage_trip` gains leg actions, and its date-shift logic has to move legs
+with the trip — reusing the reasoning already there for scheduled items rather than growing a second
+one. `trips.destination` and `trips.timezone` are retired here, migrated into a first leg.
+
+**Stage 4 — re-anchor the wishlist.** `wishlist.trip_id` becomes `destination_id`, so a list belongs
+to the place and survives the next visit. `manage_wishlist` still takes a `trip_id` for convenience
+and resolves it through the trip's legs: one leg is unambiguous, several means the refusal names
+them and the agent picks — the same pattern every other id resolution uses.
+
+**Stage 5 — the tile.** `days` carry their leg, so the strip can section a long trip by city and
+`today` resolves in the right timezone per day. Wishlist groups by city, then category. Lodging is
+per leg. Ends with an addendum to `TRAVEL_APP_HANDOFF.md`, written from the payload that ships.
+
+**Order matters:** stages 1–3 are additive and leave every current behaviour working, so the tools
+keep functioning throughout. Stage 4 is the only one that changes an existing table's meaning, and
+by then destinations and legs already exist to migrate onto.
+
+---
+
+## Times that cross midnight or a timezone
+
+**Raised 2026-08-05**, while reviewing how the timezone decision holds up for a multi-country trip.
+Probing the shipped tools turned up one outright bug and two representation gaps.
+
+### What is broken today
+
+**An overnight transit is refused.** Scheduling a flight at `22:00 → 06:00` fails:
+
+```
+Error: end_time 06:00 is before start_time 22:00 on the same day.
+```
+
+The validation is too strict for the one item type where an overnight is the *normal* case, and the
+message does not hint that `end_date` is the way through — so the likely outcome is a flight
+recorded with no arrival time at all. This is broken independently of multi-city: a domestic night
+bus hits it too.
+
+**With `end_date` set it renders as `22:00-06:00`**, as though both were the same clock. A
+Lisbon→Tokyo flight departs 22:00 WEST and lands 06:00 JST — about fourteen hours, displayed as
+though it travelled backwards. Nothing in the payload says the arrival is in another zone, or even
+on another day.
+
+**`end_date` carries two meanings.** For lodging it is a *span* — the tile lifts those out as a
+banner. For transit it would be an *arrival date*, a single moment. One column, two meanings,
+distinguished only by `item_type`.
+
+### The convention
+
+`start_time` is departure wall-clock at the origin. **`end_time` is arrival wall-clock at the
+destination.** When the arrival falls on the next day, `end_date` carries it, and the tool infers
++1 rather than refusing. The client renders `22:00 → 06:00 ⁺¹`.
+
+This is how every boarding pass prints it, which is the argument: the ambiguity is resolved by a
+convention travellers already read fluently, rather than by machinery. Nothing is converted, no
+offsets are stored, and the wall-clock decision holds unchanged.
+
+Rejected: a timezone column per time — every non-transit row would carry two NULLs to serve one
+item type. Rejected: UTC instants for transit only — inconsistent with everything else, and it
+re-introduces exactly the conversion bugs wall-clock storage exists to avoid.
+
+### How "today" resolves once timezone lives on the city
+
+Today is one fact about where the **owner** is, not a property of a day. So: find the leg whose
+date range contains now, and compute today in that leg's timezone. Before the trip, fall back to
+the first leg; after it, the last; with no legs at all, Israel.
+
+The honest gap: on a travel day this is ambiguous for a few hours around midnight, because two legs
+disagree about the date. Any answer there is defensible and it is not worth being clever about — but
+the payload should carry **each day's own timezone** alongside the resolved `today`, so the client
+has the facts rather than only the verdict. The phone, after all, genuinely knows where it is.
+
+### Flights, and what the destination clock shows
+
+The convention above is not ours to invent: **flight times are always local to their own airport** —
+departure in origin time, arrival in destination time. Every schedule, boarding pass and airline
+site works this way, and TripIt follows it. Adopting anything else would mean the owner reading our
+itinerary against a boarding pass and finding they disagree.
+
+**The destination clock follows the selected day.** While planning, the header shows the current
+time where that day happens — tapping Day 5 (Porto) makes it read Porto. It reuses the date strip
+the owner is already tapping, needs no extra control, and stays correct on a multi-city trip. Only
+`timezone` is needed for it, which the payload already carries.
+
+> Show a **clock**, never an offset. "14:32 in Lisbon" is always true; "+2h" is true today and wrong
+> for the trip dates, because the offset drifts with DST — a May trip planned in December differs
+> from what a delta computed now would claim. Stored times are unaffected either way, since they are
+> wall-clock; this is purely about what not to render.
+
+A quieter benefit: seeing "14:32 in Lisbon" beside an `09:00` breakfast makes the wall-clock
+convention *visible*. It shows what the timezone decision otherwise has to explain.
+
+**A flight is the one item that must not inherit the day's clock**, because it has two. Its card
+carries both ends itself:
+
+```
+Day 3 · Mon 12 May                    14:32 in Lisbon
+─────────────────────────────────────────────────────
+  22:00   LIS  Lisbon
+     │    14h 05m
+  06:05⁺¹ NRT  Tokyo
+```
+
+Duration is worth showing: it is the one figure that is unambiguous across timezones and that two
+wall-clock times alone do not reveal. Everything needed is already stored — `start_time`,
+`end_time`, `origin`, `destination_loc`, `end_date`.
+
+**Which resolves the travel-day question: a leg starts on the date you arrive.** Lisbon owns days
+1–3 including the evening of the flight out; Tokyo owns day 4 onward. The flight sits on its
+departure date, matching both the schema and TripIt. The header clock on day 3 therefore says
+Lisbon, which is where nearly all of that day is spent — shrinking the ambiguity flagged above from
+"a whole day is two cities" to "the hours actually in the air", which no app solves and none needs
+to.
+
+This also condemns the current text rendering, which should change with this work:
+`[1] 22:00-06:00 LIS->NRT` reads as an eight-hour flight travelling backwards.
+
+---
+
 ## Out of scope, with reasons
 
 - **Chat→tile deep-linking.** Needs a new block kind in the hub contract; the current set
@@ -406,6 +641,12 @@ above, which is a design aid and will drift.
 
 ## Open questions
 
+- **Undecided items on a day.** Scheduling something with no time already works — `start_time` is
+  nullable and untimed items sort after timed ones. What is missing is *tentative*: "day 3, either
+  the castle or the museum" renders as two commitments and a day that looks fuller than it is. The
+  small fix is a nullable `status` on `itinerary` (`planned` | `option`) so the tile can group
+  options separately. Leaving them on the wishlist instead fails the requirement, since the point
+  is that they are attached to a particular day.
 - **Whether `manage_trip(action="update")` shifts lines automatically or proposes and confirms.**
   Leaning automatic for unbooked lines, since the booked ones are reported rather than moved.
 
