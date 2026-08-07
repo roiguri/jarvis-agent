@@ -951,7 +951,8 @@ def test_manage_tags() -> None:
 
     check("a tag spanning two days is scheduled",
           call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
-               title="beach", date="2027-08-11", end_date="2027-08-12"),
+               title="beach", date="2027-08-11", end_date="2027-08-12",
+               notes="pack the umbrella"),
           contains=["scheduled", "beach"])
 
     call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
@@ -989,12 +990,26 @@ def test_manage_tags() -> None:
     d = tile(trip_id="tag")
     by_day = {x["date"]: x for x in d["days"]}
     check("the tile carries tags per day, alongside (not inside) items",
-          str(by_day["2027-08-11"]["tags"]), contains="beach")
+          str([t["title"] for t in by_day["2027-08-11"]["tags"]]), contains="beach")
     check("a multi-day tag reaches every day it spans in the tile too",
-          str(by_day["2027-08-12"]["tags"]), contains=["beach", "rest day"])
+          str([t["title"] for t in by_day["2027-08-12"]["tags"]]),
+          contains=["beach", "rest day"])
     check("a tag is never duplicated into the tile's item list",
           str([i["item_type"] for i in by_day["2027-08-11"]["items"]]),
           missing="tag")
+
+    beach_11 = by_day["2027-08-11"]["tags"][0]
+    beach_12 = next(t for t in by_day["2027-08-12"]["tags"] if t["title"] == "beach")
+    check("a tile tag carries entry_id, title, and notes",
+          str(sorted(beach_11)), contains=["entry_id", "notes", "title"])
+    check("its description travels with it", beach_11["notes"],
+          contains="pack the umbrella")
+    check("a tag with no notes reports null, not a missing key",
+          str(next(t for t in by_day["2027-08-12"]["tags"]
+                   if t["title"] == "rest day")["notes"]),
+          contains="none")
+    check("the same tag on two different days shares one entry_id",
+          str(beach_11["entry_id"] == beach_12["entry_id"]), contains="true")
 
     section("manage_itinerary — update cannot forge an invalid tag")
 

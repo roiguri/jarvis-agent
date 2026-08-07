@@ -228,11 +228,16 @@ def _sort_key(day: str, role: str, r, trip_tz: str | None):
     return (1, t, r["entry_id"]) if t else (2, "", r["entry_id"])
 
 
-def day_tags(rows) -> dict[str, list[str]]:
-    """date -> tag titles covering that day, for the day header.
+def day_tags(rows) -> dict[str, list[dict]]:
+    """date -> tag objects (entry_id, title, notes) covering that day.
 
     A tag labels the day itself rather than occupying a slot in it, so unlike
     place_rows it carries no role — a day either has a tag on it or it doesn't.
+    entry_id and notes travel alongside the title so a client can identify one
+    tag across the several days it spans and show its description; both call
+    sites (the CLI listing and the app tile) read i.* directly, so all three
+    columns are already in hand.
+
     Reads r["title"] rather than the tool-query's joined "label" alias: a tag
     never resolves a place, so its title is always its own — and this way the
     helper also works unmodified on the app payload's raw itinerary columns,
@@ -244,16 +249,17 @@ def day_tags(rows) -> dict[str, list[str]]:
     a missing tag here, not a crash — this is a rendering path, not the place
     to enforce the invariant.
     """
-    by_date: dict[str, list[str]] = {}
+    by_date: dict[str, list[dict]] = {}
     for r in rows:
         if r["item_type"] != "tag" or not r["title"]:
             continue
         start = r["start_date"]
         finish = r["end_date"] or start
         d0, d1 = date.fromisoformat(start), date.fromisoformat(finish)
+        tag = {"entry_id": r["entry_id"], "title": r["title"], "notes": r["notes"]}
         for n in range((d1 - d0).days + 1):
             day = date.fromordinal(d0.toordinal() + n).isoformat()
-            by_date.setdefault(day, []).append(r["title"])
+            by_date.setdefault(day, []).append(tag)
     return by_date
 
 
@@ -303,7 +309,7 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
         if trip["end_date"] and day > trip["end_date"]:
             head += "  (after the trip ends)"
         if tags.get(day):
-            head += f"  [{', '.join(tags[day])}]"
+            head += f"  [{', '.join(t['title'] for t in tags[day])}]"
         items = placed.get(day, [])
         out.append(f"\n{head}" + ("" if items else "   (nothing scheduled)"))
         for role, r in items:

@@ -178,8 +178,6 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
                 "outside_window": outside,
                 "is_today": d == today,
                 "items": [dict(_entry(r), role=role) for role, r in placed.get(d, [])],
-                # Day-level labels, same source as the day head text a chat
-                # listing shows — not itinerary items, so not in `items` above.
                 "tags": tags.get(d, []),
             })
 
