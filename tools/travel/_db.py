@@ -135,7 +135,7 @@ def _init_db():
             trip_id           TEXT    NOT NULL REFERENCES trips(trip_id),
             place_id          INTEGER REFERENCES places(place_id),
             item_type         TEXT    NOT NULL
-                                  CHECK(item_type IN ('place','lodging','transit','note')),
+                                  CHECK(item_type IN ('place','lodging','transit','note','tag')),
             title             TEXT,
             start_date        DATE    NOT NULL,
             end_date          DATE,
@@ -178,6 +178,7 @@ def _init_db():
     """)
     conn.commit()
     _migrate_lodging_check(conn)
+    _migrate_tag_item_type(conn)
     conn.close()
 
 
@@ -202,6 +203,52 @@ def _migrate_lodging_check(conn: sqlite3.Connection) -> None:
             place_id          INTEGER REFERENCES places(place_id),
             item_type         TEXT    NOT NULL
                                   CHECK(item_type IN ('place','lodging','transit','note')),
+            title             TEXT,
+            start_date        DATE    NOT NULL,
+            end_date          DATE,
+            start_time        TEXT,
+            end_time          TEXT,
+            departure_timezone TEXT,
+            arrival_timezone   TEXT,
+            from_location     TEXT,
+            to_location       TEXT,
+            confirmation_code TEXT,
+            notes             TEXT,
+            created_at        DATETIME DEFAULT (datetime('now')),
+            CHECK (place_id IS NOT NULL OR title IS NOT NULL),
+            CHECK (end_date IS NULL OR end_date >= start_date),
+            CHECK (item_type = 'lodging' OR start_time IS NOT NULL OR end_time IS NULL)
+        );
+        INSERT INTO itinerary_new SELECT * FROM itinerary;
+        DROP TABLE itinerary;
+        ALTER TABLE itinerary_new RENAME TO itinerary;
+        CREATE INDEX IF NOT EXISTS itinerary_by_trip_date
+            ON itinerary(trip_id, start_date);
+        COMMIT;
+    """)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _migrate_tag_item_type(conn: sqlite3.Connection) -> None:
+    """Loosen the itinerary CHECK to allow item_type='tag' on a database created
+    before it existed. Same one-time, idempotent table rebuild as
+    _migrate_lodging_check — SQLite has no ALTER TABLE for a CHECK constraint —
+    gated on the live schema text rather than a version number.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'itinerary'"
+    ).fetchone()
+    if row is None or "'tag'" in row[0]:
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE itinerary_new (
+            entry_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id           TEXT    NOT NULL REFERENCES trips(trip_id),
+            place_id          INTEGER REFERENCES places(place_id),
+            item_type         TEXT    NOT NULL
+                                  CHECK(item_type IN ('place','lodging','transit','note','tag')),
             title             TEXT,
             start_date        DATE    NOT NULL,
             end_date          DATE,

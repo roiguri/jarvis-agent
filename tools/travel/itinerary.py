@@ -16,7 +16,7 @@ from tools.registry import tool_register
 from tools.travel._db import TravelError, _get_db, _parse_date, _require_trip
 from tools.travel.places import _resolve_place
 
-ITEM_TYPES = ("place", "lodging", "transit", "note")
+ITEM_TYPES = ("place", "lodging", "transit", "note", "tag")
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -185,12 +185,13 @@ def place_rows(rows, trip) -> dict[str, list[tuple[str, object]]]:
 
     Lodging is excluded. It is rendered as a banner precisely because a stay is
     not a slot in a day, and repeating it under every night would bury the days
-    it does not cover.
+    it does not cover. Tags are excluded too — they label the day itself, and
+    are folded into the day header by day_tags() rather than the item list.
     """
     trip_tz = trip["timezone"]
     by_date: dict[str, list[tuple[str, object]]] = {}
     for r in rows:
-        if r["item_type"] == "lodging":
+        if r["item_type"] in ("lodging", "tag"):
             continue
         start = r["start_date"]
         finish = r["end_date"] or start
@@ -227,6 +228,30 @@ def _sort_key(day: str, role: str, r, trip_tz: str | None):
     return (1, t, r["entry_id"]) if t else (2, "", r["entry_id"])
 
 
+def day_tags(rows) -> dict[str, list[str]]:
+    """date -> tag titles covering that day, for the day header.
+
+    A tag labels the day itself rather than occupying a slot in it, so unlike
+    place_rows it carries no role — a day either has a tag on it or it doesn't.
+    Reads r["title"] rather than the tool-query's joined "label" alias: a tag
+    never resolves a place, so its title is always its own — and this way the
+    helper also works unmodified on the app payload's raw itinerary columns,
+    which carry no such alias. Same reasoning as place_rows/day_span being
+    imported into gateway/apps/travel.py rather than reimplemented there.
+    """
+    by_date: dict[str, list[str]] = {}
+    for r in rows:
+        if r["item_type"] != "tag":
+            continue
+        start = r["start_date"]
+        finish = r["end_date"] or start
+        d0, d1 = date.fromisoformat(start), date.fromisoformat(finish)
+        for n in range((d1 - d0).days + 1):
+            day = date.fromordinal(d0.toordinal() + n).isoformat()
+            by_date.setdefault(day, []).append(r["title"])
+    return by_date
+
+
 def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
     """The trip's schedule: stays first, then a section per day.
 
@@ -261,6 +286,7 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
             out.append(f"  [{r['entry_id']}] {span}  {r['label']}{when}{code}")
 
     placed = place_rows(rows, trip)
+    tags = day_tags(rows)
     for day in day_span(rows, trip):
         n = _day_number(trip, day)
         if n is None:
@@ -271,6 +297,8 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
             head = f"Day {n} · {day}"
         if trip["end_date"] and day > trip["end_date"]:
             head += "  (after the trip ends)"
+        if tags.get(day):
+            head += f"  [{', '.join(tags[day])}]"
         items = placed.get(day, [])
         out.append(f"\n{head}" + ("" if items else "   (nothing scheduled)"))
         for role, r in items:
@@ -350,11 +378,11 @@ def manage_itinerary(
     Actions:
     - list: the whole schedule, stays first then a section per day.
     - schedule: put something on a day. Needs a dated trip. Identify a place by
-      place_id, google_place_id, or a bare title; a transit leg or a note needs
-      only a title. For a flight or train that crosses timezones, pass
-      arrival_date and BOTH timezone arguments — the arrival date cannot be
-      worked out from the clocks, and the duration cannot be shown without the
-      zones.
+      place_id, google_place_id, or a bare title; a transit leg, a note, or a
+      tag needs only a title. For a flight or train that crosses timezones,
+      pass arrival_date and BOTH timezone arguments — the arrival date cannot
+      be worked out from the clocks, and the duration cannot be shown without
+      the zones.
     - reschedule: change an existing entry's date or times.
     - update: change anything reschedule does not — title, notes,
       confirmation_code, the transit endpoints, item_type, which place it points
@@ -372,9 +400,12 @@ def manage_itinerary(
         google_place_id: Google's id, from a manage_place search.
         title: name of the thing — required for transit and notes, which have no
             place; optional for a place you are creating inline.
-        item_type: place | lodging | transit | note. Defaults to place when a
-            place is given, note otherwise. Use lodging for a stay spanning days,
-            transit for a leg between two points.
+        item_type: place | lodging | transit | note | tag. Defaults to place
+            when a place is given, note otherwise. Use lodging for a stay
+            spanning days, transit for a leg between two points, tag for a
+            day-level label (e.g. "beach", "rest day") spanning one or more
+            days — no place, no time. Renders on the day header, not in the
+            day's item list; notes doubles as the tag's description.
         date: the day it happens, YYYY-MM-DD.
         end_date: last day, for a stay spanning several days.
         arrival_date: the day a transit leg lands, when that is not the day it
@@ -654,11 +685,24 @@ def _schedule(
             f"Unknown item_type {kind!r}. Use one of: {', '.join(ITEM_TYPES)}."
         )
 
-    # A transit leg or a note is not a place and must not be turned into one —
-    # inventing a places row for "train to the airport" would pollute a table
-    # every trip shares.
+    # A tag labels the day itself — no place, no time, just a date range.
+    if kind == "tag":
+        if place_id or google_place_id.strip():
+            raise TravelError(
+                "A tag has no place — drop place_id/google_place_id, or use "
+                "item_type='place' instead."
+            )
+        if st or et:
+            raise TravelError(
+                "A tag has no time, only a date range — drop start_time/end_time "
+                "(or check_in_time/check_out_time), or use a different item_type."
+            )
+
+    # A transit leg, a note, or a tag is not a place and must not be turned into
+    # one — inventing a places row for "train to the airport" would pollute a
+    # table every trip shares.
     pid = None
-    if kind in ("transit", "note"):
+    if kind in ("transit", "note", "tag"):
         if not title.strip():
             raise TravelError(f"a {kind} needs a title.")
     elif place_id or google_place_id.strip() or (kind in ("place", "lodging")):
@@ -733,6 +777,11 @@ def _reschedule(
     start_time: str,
     end_time: str,
 ) -> str:
+    if entry["item_type"] == "tag" and (start_time.strip() or end_time.strip()):
+        raise TravelError(
+            "A tag has no time — only date and end_date can be changed here."
+        )
+
     sets, args, said = [], [], []
     start = entry["start_date"]
     finish = entry["end_date"]
