@@ -936,6 +936,140 @@ def test_manage_itinerary() -> None:
           contains=["moved", "2027-03-14"])
 
 
+def test_manage_tags() -> None:
+    """item_type='tag' — a day-level label, not a timeline entry."""
+    section("manage_itinerary — tags label a day, they don't occupy one")
+
+    call(manage_destination, action="create", name="Tagland", timezone="Europe/Lisbon")
+    call(manage_trip, action="create", trip_id="tag", destination="Tagland",
+         start_date="2027-08-10", end_date="2027-08-14")
+
+    check("a tag needs a title, same as a note or transit leg",
+          call(manage_itinerary, action="schedule", trip_id="tag",
+               item_type="tag", date="2027-08-11"),
+          contains="needs a title")
+
+    check("a tag spanning two days is scheduled",
+          call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
+               title="beach", date="2027-08-11", end_date="2027-08-12",
+               notes="pack the umbrella"),
+          contains=["scheduled", "beach"])
+
+    call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
+         title="rest day", date="2027-08-12")
+    call(manage_itinerary, action="schedule", trip_id="tag", item_type="note",
+         title="buy sunscreen", date="2027-08-11")
+
+    check("a tag with a time is refused, not silently dropped",
+          call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
+               title="timed", date="2027-08-13", start_time="09:00"),
+          contains="no time")
+
+    check("a tag with a place is refused",
+          call(manage_itinerary, action="schedule", trip_id="tag", item_type="tag",
+               title="placed", date="2027-08-13", place_id=1),
+          contains="no place")
+
+    out = call(manage_itinerary, action="list", trip_id="tag")
+    check("the tag labels its day's header", out,
+          contains="Day 2 · 2027-08-11  [beach]")
+    check("a span lands on every day it covers, tags joined in order", out,
+          contains="Day 3 · 2027-08-12  [beach, rest day]")
+    check("a tag never renders as a line item under its day", out,
+          missing="(tag)")
+    check("an ordinary item that day is unaffected", out,
+          contains="buy sunscreen")
+
+    import asyncio
+
+    from gateway.apps import dispatch
+
+    def tile(**params):
+        return asyncio.run(dispatch("travel", "tile", params))
+
+    d = tile(trip_id="tag")
+    by_day = {x["date"]: x for x in d["days"]}
+    check("the tile carries tags per day, alongside (not inside) items",
+          str([t["title"] for t in by_day["2027-08-11"]["tags"]]), contains="beach")
+    check("a multi-day tag reaches every day it spans in the tile too",
+          str([t["title"] for t in by_day["2027-08-12"]["tags"]]),
+          contains=["beach", "rest day"])
+    check("a tag is never duplicated into the tile's item list",
+          str([i["item_type"] for i in by_day["2027-08-11"]["items"]]),
+          missing="tag")
+
+    beach_11 = by_day["2027-08-11"]["tags"][0]
+    beach_12 = next(t for t in by_day["2027-08-12"]["tags"] if t["title"] == "beach")
+    check("a tile tag carries entry_id, title, and notes",
+          str(sorted(beach_11)), contains=["entry_id", "notes", "title"])
+    check("its description travels with it", beach_11["notes"],
+          contains="pack the umbrella")
+    check("a tag with no notes reports null, not a missing key",
+          str(next(t for t in by_day["2027-08-12"]["tags"]
+                   if t["title"] == "rest day")["notes"]),
+          contains="none")
+    check("the same tag on two different days shares one entry_id",
+          str(beach_11["entry_id"] == beach_12["entry_id"]), contains="true")
+
+    section("manage_itinerary — update cannot forge an invalid tag")
+
+    call(manage_itinerary, action="schedule", trip_id="tag", place_id=1,
+         date="2027-08-13", start_time="11:00")
+    place_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND place_id=1"
+    ).split("\n")[1])
+    call(manage_itinerary, action="schedule", trip_id="tag", item_type="note",
+         title="Late talk", date="2027-08-13", start_time="20:00")
+    talk_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND title='Late talk'"
+    ).split("\n")[1])
+
+    check("converting a place-backed, timed entry to a tag is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=place_eid,
+               item_type="tag"),
+          contains=["error", "no place"])
+    check("the row was not half-changed by the refusal",
+          call(query_travel_db,
+               sql=f"SELECT item_type, place_id, start_time FROM itinerary "
+                   f"WHERE entry_id={place_eid}"),
+          contains=["place", "1", "11:00"])
+
+    check("converting a timed but placeless entry to a tag is refused too",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=talk_eid,
+               item_type="tag"),
+          contains=["error", "no time"])
+
+    rest_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND title='rest day'"
+    ).split("\n")[1])
+
+    check("giving an existing tag a place_id via update is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=rest_eid,
+               place_id=1),
+          contains=["error", "no place"])
+
+    check("clearing a tag's title via update is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=rest_eid,
+               title=""),
+          contains=["error", "needs a title"])
+
+    check("none of the refused updates crashed the listing",
+          call(manage_itinerary, action="list", trip_id="tag"),
+          contains=["beach", "rest day", "Late talk"])
+    check("nor the tile", str(tile(trip_id="tag")["days"]), contains="rest day")
+
+    eid = int(call(query_travel_db,
+              sql="SELECT entry_id FROM itinerary WHERE title='beach'").split("\n")[1])
+    check("a tag's date can move",
+          call(manage_itinerary, action="reschedule", trip_id="tag", entry_id=eid,
+               date="2027-08-14"),
+          contains="moved")
+    check("but a tag has no time to reschedule",
+          call(manage_itinerary, action="reschedule", trip_id="tag", entry_id=eid,
+               start_time="10:00"),
+          contains="no time")
+
+
 # ---------------------------------------------------------------------------
 # the travel app surface (gateway/apps/travel.py)
 # ---------------------------------------------------------------------------
@@ -1367,6 +1501,7 @@ def main() -> int:
         test_search_guards()
         test_manage_wishlist()
         test_manage_itinerary()
+        test_manage_tags()
         test_crossing_timezones()
         test_itinerary_update()
         test_arrival_ordering()

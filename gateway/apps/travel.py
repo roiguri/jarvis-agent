@@ -28,7 +28,7 @@ from gateway.apps.registry import AppEntry, AppNotFound, AppSpec, register_app
 from tools.travel._db import TRAVEL_RO_URI
 # The same placement the tools use, imported rather than reimplemented: a second
 # copy of "which days does this touch" is one that can disagree with the first.
-from tools.travel.itinerary import day_span, place_rows
+from tools.travel.itinerary import day_span, day_tags, place_rows
 from tools.travel.places import CATEGORIES
 
 # Where "today" falls when a trip names no timezone. Matches the tools: right for
@@ -163,6 +163,7 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
         # middle day still gets a chip, and a day an item merely arrives on is
         # not reported as free.
         placed = place_rows(rows, trip)
+        tags = day_tags(rows)
         days = []
         for d in day_span(rows, trip):
             n = None
@@ -177,6 +178,7 @@ def _tile_sync(trip_id: str) -> dict[str, Any]:
                 "outside_window": outside,
                 "is_today": d == today,
                 "items": [dict(_entry(r), role=role) for role, r in placed.get(d, [])],
+                "tags": tags.get(d, []),
             })
 
         # The list hangs off the destination, so a trip reaches it through the
