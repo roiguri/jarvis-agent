@@ -983,7 +983,10 @@ def test_manage_tags() -> None:
 
     from gateway.apps import dispatch
 
-    d = asyncio.run(dispatch("travel", "tile", {"trip_id": "tag"}))
+    def tile(**params):
+        return asyncio.run(dispatch("travel", "tile", params))
+
+    d = tile(trip_id="tag")
     by_day = {x["date"]: x for x in d["days"]}
     check("the tile carries tags per day, alongside (not inside) items",
           str(by_day["2027-08-11"]["tags"]), contains="beach")
@@ -993,11 +996,58 @@ def test_manage_tags() -> None:
           str([i["item_type"] for i in by_day["2027-08-11"]["items"]]),
           missing="tag")
 
+    section("manage_itinerary — update cannot forge an invalid tag")
+
+    call(manage_itinerary, action="schedule", trip_id="tag", place_id=1,
+         date="2027-08-13", start_time="11:00")
+    place_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND place_id=1"
+    ).split("\n")[1])
+    call(manage_itinerary, action="schedule", trip_id="tag", item_type="note",
+         title="Late talk", date="2027-08-13", start_time="20:00")
+    talk_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND title='Late talk'"
+    ).split("\n")[1])
+
+    check("converting a place-backed, timed entry to a tag is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=place_eid,
+               item_type="tag"),
+          contains=["error", "no place"])
+    check("the row was not half-changed by the refusal",
+          call(query_travel_db,
+               sql=f"SELECT item_type, place_id, start_time FROM itinerary "
+                   f"WHERE entry_id={place_eid}"),
+          contains=["place", "1", "11:00"])
+
+    check("converting a timed but placeless entry to a tag is refused too",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=talk_eid,
+               item_type="tag"),
+          contains=["error", "no time"])
+
+    rest_eid = int(call(query_travel_db,
+        sql="SELECT entry_id FROM itinerary WHERE trip_id='tag' AND title='rest day'"
+    ).split("\n")[1])
+
+    check("giving an existing tag a place_id via update is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=rest_eid,
+               place_id=1),
+          contains=["error", "no place"])
+
+    check("clearing a tag's title via update is refused",
+          call(manage_itinerary, action="update", trip_id="tag", entry_id=rest_eid,
+               title=""),
+          contains=["error", "needs a title"])
+
+    check("none of the refused updates crashed the listing",
+          call(manage_itinerary, action="list", trip_id="tag"),
+          contains=["beach", "rest day", "Late talk"])
+    check("nor the tile", str(tile(trip_id="tag")["days"]), contains="rest day")
+
     eid = int(call(query_travel_db,
               sql="SELECT entry_id FROM itinerary WHERE title='beach'").split("\n")[1])
     check("a tag's date can move",
           call(manage_itinerary, action="reschedule", trip_id="tag", entry_id=eid,
-               date="2027-08-13"),
+               date="2027-08-14"),
           contains="moved")
     check("but a tag has no time to reschedule",
           call(manage_itinerary, action="reschedule", trip_id="tag", entry_id=eid,

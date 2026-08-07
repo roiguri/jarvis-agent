@@ -238,10 +238,15 @@ def day_tags(rows) -> dict[str, list[str]]:
     helper also works unmodified on the app payload's raw itinerary columns,
     which carry no such alias. Same reasoning as place_rows/day_span being
     imported into gateway/apps/travel.py rather than reimplemented there.
+
+    A titleless tag is skipped rather than surfaced. _update_entry now refuses
+    to create one, but a row that somehow reaches that state should degrade to
+    a missing tag here, not a crash — this is a rendering path, not the place
+    to enforce the invariant.
     """
     by_date: dict[str, list[str]] = {}
     for r in rows:
-        if r["item_type"] != "tag":
+        if r["item_type"] != "tag" or not r["title"]:
             continue
         start = r["start_date"]
         finish = r["end_date"] or start
@@ -581,6 +586,29 @@ def _update_entry(
             )
         sets.append("item_type = ?"); args.append(kind)
         said.append(f"item_type → {kind}")
+
+    # A tag's invariants (no place, no time, always a title) hold for the row
+    # this update leaves behind — whether it was already a tag or is becoming
+    # one now — not just for a freshly scheduled one. _schedule enforces these
+    # on the way in; nothing enforced them on the way through here, so a place
+    # with a time could be relabelled 'tag' and keep both, or an existing tag
+    # could pick up a place_id in one call and lose its title in the next.
+    result_kind = kind or entry["item_type"]
+    if result_kind == "tag":
+        if place_id or entry["place_id"]:
+            raise TravelError(
+                "A tag has no place — drop place_id, or remove this entry and "
+                "re-schedule it as a tag instead."
+            )
+        if entry["start_time"] or entry["end_time"]:
+            raise TravelError(
+                "A tag has no time — this entry already has one on file and "
+                "update cannot clear it; remove it and re-schedule as a tag "
+                "instead."
+            )
+        title_given, title_value = _clearable(title)
+        if not (title_value if title_given else entry["title"]):
+            raise TravelError("a tag needs a title.")
 
     if place_id:
         if conn.execute(
