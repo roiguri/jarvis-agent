@@ -232,6 +232,49 @@ a restart drops in‑flight turns, so it stays a conscious second step.
 
 ---
 
+## Temporarily enabling a proactive toggle in staging
+
+Staging boots inert by design — `JARVIS_WEBHOOK_ENABLED` / `JARVIS_HEARTBEAT_ENABLED` /
+`JARVIS_REMINDERS_ENABLED` all default off in `config.py`, and the committed
+`deploy/jarvis-staging.service` sets none of them. Two things to know before flipping
+one on for a test:
+
+- **`secrets/.env` won't do it.** `main.py` imports `config` (which reads these three via
+  `os.environ` at module‑import time) *before* it calls `load_dotenv()`. Only a real
+  process‑environment variable reaches them — anything added to `secrets/.env` is parsed
+  too late for these three flags specifically. (Every other env var — `JARVIS_DEFAULT_CHANNEL`,
+  `APP_HUB_URL`, channel tokens — is read lazily at call time and works fine from `.env`.)
+- **Don't touch the committed `deploy/jarvis-staging.service`** — a test‑only `Environment=`
+  line left in there ships to every future clone.
+
+Two ways to set the real env var, in increasing order of how much they touch the host:
+
+**Direct run, bypassing systemd** — no disk footprint, nothing to revert (from
+[`plans/archive/HEARTBEAT_TICK_PHASE_PLAN.md`](plans/archive/HEARTBEAT_TICK_PHASE_PLAN.md)):
+```bash
+sudo systemctl stop jarvis-staging     # systemd's own copy must not also be running
+su jarvis_user -s /bin/bash -c \
+  'cd /app/jarvis_staging/code && JARVIS_ROOT=/app/jarvis_staging JARVIS_HEARTBEAT_ENABLED=true venv/bin/python3 main.py'
+# Ctrl-C to stop, then: sudo systemctl start jarvis-staging
+```
+Foregrounds the process in your terminal as `jarvis_user`; the var lives only in that one
+command. Trade‑off: no `Restart=always` / journald integration for the run, and it ties up
+the terminal (background it with `nohup … &` or a `tmux` pane if you need it detached).
+
+**`systemctl edit` drop‑in** — stays under systemd supervision/logging, but persists on
+disk until reverted:
+```bash
+sudo systemctl edit jarvis-staging.service
+# add under [Service]:
+#   Environment="JARVIS_HEARTBEAT_ENABLED=true"
+jrestart-staging
+# when done:
+sudo systemctl revert jarvis-staging.service
+jrestart-staging
+```
+
+---
+
 ## Common workflows
 
 **Deploy a change** (once it's merged to `origin/main`):
