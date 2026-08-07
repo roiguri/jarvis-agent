@@ -252,7 +252,13 @@ def _itinerary_lines(conn: sqlite3.Connection, trip: sqlite3.Row) -> str:
         for r in stays:
             span = r["start_date"] + (f" → {r['end_date']}" if r["end_date"] else "")
             code = f"  (conf {r['confirmation_code']})" if r["confirmation_code"] else ""
-            out.append(f"  [{r['entry_id']}] {span}  {r['label']}{code}")
+            times = []
+            if r["start_time"]:
+                times.append(f"check-in {r['start_time']}")
+            if r["end_time"]:
+                times.append(f"check-out {r['end_time']}")
+            when = f"  ({', '.join(times)})" if times else ""
+            out.append(f"  [{r['entry_id']}] {span}  {r['label']}{when}{code}")
 
     placed = place_rows(rows, trip)
     for day in day_span(rows, trip):
@@ -325,6 +331,8 @@ def manage_itinerary(
     arrival_date: str = "",
     start_time: str = "",
     end_time: str = "",
+    check_in_time: str = "",
+    check_out_time: str = "",
     departure_timezone: str = "",
     arrival_timezone: str = "",
     from_location: str = "__unset__",
@@ -379,6 +387,14 @@ def manage_itinerary(
             22:00 departure arriving 06:00 is normal, not a mistake. An end
             earlier than its start is read as running past midnight and the
             arrival date is set for you.
+        check_in_time: 24-hour HH:MM. For item_type='lodging', use this instead
+            of start_time — check-in lands on `date`, the day the stay starts.
+            Same column as start_time, named for the case it fits.
+        check_out_time: 24-hour HH:MM. For item_type='lodging', use this
+            instead of end_time — check-out lands on `end_date`, not `date`.
+            Same column as end_time, named for the case it fits. A stay can
+            carry one without the other; leave the unknown one blank rather
+            than guessing.
         departure_timezone: IANA zone the departure time is local to, e.g.
             "Asia/Jerusalem". Set it on the flights into and out of the trip;
             leave it blank for anything inside the destination.
@@ -427,9 +443,11 @@ def manage_itinerary(
                             "behind it yet — save the place first, then schedule it."
                         )
                     place_id = row["place_id"]
+                st = _resolve_alias(start_time, check_in_time, "start_time", "check_in_time")
+                et = _resolve_alias(end_time, check_out_time, "end_time", "check_out_time")
                 return _schedule(
                     conn, trip, place_id, google_place_id, _plain(title), item_type, date,
-                    end_date or arrival_date, start_time, end_time,
+                    end_date or arrival_date, st, et,
                     _plain(from_location), _plain(to_location),
                     _plain(confirmation_code), _plain(notes),
                     departure_timezone, arrival_timezone,
@@ -438,8 +456,9 @@ def manage_itinerary(
             entry = _require_entry(conn, trip, entry_id)
 
             if action == "reschedule":
-                return _reschedule(conn, trip, entry, date, end_date or arrival_date,
-                                   start_time, end_time)
+                st = _resolve_alias(start_time, check_in_time, "start_time", "check_in_time")
+                et = _resolve_alias(end_time, check_out_time, "end_time", "check_out_time")
+                return _reschedule(conn, trip, entry, date, end_date or arrival_date, st, et)
 
             if action == "update":
                 return _update_entry(
@@ -471,6 +490,18 @@ def manage_itinerary(
             return f"Error: {e}"
     finally:
         conn.close()
+
+
+def _resolve_alias(generic: str, semantic: str, generic_name: str, semantic_name: str) -> str:
+    """Two names writing the same column — never both at once, or which one
+    was meant becomes a guess. Mirrors end_date/arrival_date's pairing, but
+    validated rather than silently preferring one."""
+    if generic.strip() and semantic.strip():
+        raise TravelError(
+            f"Give {generic_name} or {semantic_name}, not both — they write the "
+            "same column."
+        )
+    return generic or semantic
 
 
 def _plain(value: str) -> str:
@@ -588,7 +619,19 @@ def _schedule(
     st = _parse_time(start_time, "start_time")
     et = _parse_time(end_time, "end_time")
     rolled = False
-    if st and et and not finish and et < st:
+    # A stay's checkout is always numerically earlier than its check-in — that
+    # is true of every stay regardless of length, not a midnight signal. So
+    # lodging never guesses a next-day end_date from the clock; it demands one
+    # instead, because a checkout time with no date is not usable data.
+    if (item_type or "").strip().lower() == "lodging":
+        if et and not finish:
+            raise TravelError(
+                "A stay's checkout time needs an end_date — check-in and "
+                "check-out land on different dates, not one interval, so "
+                "there's no 'next day' to assume. Pass end_date, or leave "
+                "check_out_time blank until it's confirmed."
+            )
+    elif st and et and not finish and et < st:
         # An end earlier than its start, IN ONE ZONE, has exactly one reading:
         # it ran past midnight. Across zones it has none — Tokyo 17:00 to Los
         # Angeles 10:00 is an ordinary same-day westbound flight that this test
@@ -668,12 +711,15 @@ def _schedule(
     n = _day_number(trip, start)
     where = f"day {n}, {start}" if n and n >= 1 else start
     at = f" at {st}" if st else ""
+    # rolled always has st set (the rollover only fires when both st and et are
+    # given), so this never doubles up with `over` below.
+    until = f" until {et}" if et and not st else ""
     booked = " Booked — it will not be moved if the trip's dates change." if confirmation_code.strip() else ""
     over = f" Ends {et} the next day ({finish})." if rolled else ""
     dur = _duration(start, st, finish, et, dep_tz or trip["timezone"], arr_tz or trip["timezone"])
     took = f" Duration {dur}." if dur else ""
     return (
-        f"Scheduled '{label}' ({kind}) on {where}{at} [entry {cur.lastrowid}]."
+        f"Scheduled '{label}' ({kind}) on {where}{at}{until} [entry {cur.lastrowid}]."
         + over + took + _window_note(trip, start, finish) + booked
     )
 
@@ -718,10 +764,21 @@ def _reschedule(
         et = _parse_time(end_time, "end_time")
         sets.append("end_time = ?"); args.append(et)
         said.append(f"until {et}")
-    # Same rollover reading as schedule. This path had no time-order check at
-    # all, so it silently stored an end before its start — the two ways in must
-    # agree or an item means something different depending on how it was made.
-    if st and et and et < st and not finish:
+    # Same rollover reading as schedule, and the same lodging exemption: a
+    # stay's checkout is earlier than its check-in regardless of length, so it
+    # is never read as a midnight crossing.
+    if entry["item_type"] == "lodging":
+        if et and not finish:
+            raise TravelError(
+                "A stay's checkout time needs an end_date — check-in and "
+                "check-out land on different dates, not one interval, so "
+                "there's no 'next day' to assume. Pass end_date, or leave "
+                "check_out_time blank until it's confirmed."
+            )
+    # This path had no time-order check at all, so it silently stored an end
+    # before its start — the two ways in must agree or an item means something
+    # different depending on how it was made.
+    elif st and et and et < st and not finish:
         finish = (date.fromisoformat(start) + timedelta(days=1)).isoformat()
         sets.append("end_date = ?"); args.append(finish)
         said.append(f"ending the next day ({finish})")

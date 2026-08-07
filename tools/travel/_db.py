@@ -139,6 +139,12 @@ def _init_db():
             title             TEXT,
             start_date        DATE    NOT NULL,
             end_date          DATE,
+            -- For every item_type except lodging, both times sit within the
+            -- same day (or roll into end_date past midnight). For lodging they
+            -- do not: start_time is check-in, on start_date; end_time is
+            -- check-out, on end_date. Those are independent facts about two
+            -- different dates, not one interval — a stay can carry a checkout
+            -- time with no checkin time on file, or vice versa.
             start_time        TEXT,
             end_time          TEXT,
             -- Transit is the only thing with two ends, so it is the only thing
@@ -156,8 +162,11 @@ def _init_db():
             created_at        DATETIME DEFAULT (datetime('now')),
             CHECK (place_id IS NOT NULL OR title IS NOT NULL),
             CHECK (end_date IS NULL OR end_date >= start_date),
-            -- An end with no start is not a time, it is half of one.
-            CHECK (start_time IS NOT NULL OR end_time IS NULL)
+            -- An end with no start is not a time, it is half of one — true for
+            -- an interval, false for a stay: lodging's checkout and checkin are
+            -- independent facts on different dates, and knowing one without the
+            -- other is normal, so lodging is exempted.
+            CHECK (item_type = 'lodging' OR start_time IS NOT NULL OR end_time IS NULL)
         );
 
         CREATE INDEX IF NOT EXISTS itinerary_by_trip_date
@@ -168,7 +177,55 @@ def _init_db():
             ON places(destination_id);
     """)
     conn.commit()
+    _migrate_lodging_check(conn)
     conn.close()
+
+
+def _migrate_lodging_check(conn: sqlite3.Connection) -> None:
+    """Loosen the itinerary CHECK for lodging on a database created before it
+    existed. SQLite has no ALTER TABLE for a CHECK constraint — only a full
+    rebuild changes one — so this is a one-time, idempotent table swap, gated
+    on the live schema text rather than a version number that could drift from
+    what actually ran.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'itinerary'"
+    ).fetchone()
+    if row is None or "item_type = 'lodging'" in row[0]:
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE itinerary_new (
+            entry_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id           TEXT    NOT NULL REFERENCES trips(trip_id),
+            place_id          INTEGER REFERENCES places(place_id),
+            item_type         TEXT    NOT NULL
+                                  CHECK(item_type IN ('place','lodging','transit','note')),
+            title             TEXT,
+            start_date        DATE    NOT NULL,
+            end_date          DATE,
+            start_time        TEXT,
+            end_time          TEXT,
+            departure_timezone TEXT,
+            arrival_timezone   TEXT,
+            from_location     TEXT,
+            to_location       TEXT,
+            confirmation_code TEXT,
+            notes             TEXT,
+            created_at        DATETIME DEFAULT (datetime('now')),
+            CHECK (place_id IS NOT NULL OR title IS NOT NULL),
+            CHECK (end_date IS NULL OR end_date >= start_date),
+            CHECK (item_type = 'lodging' OR start_time IS NOT NULL OR end_time IS NULL)
+        );
+        INSERT INTO itinerary_new SELECT * FROM itinerary;
+        DROP TABLE itinerary;
+        ALTER TABLE itinerary_new RENAME TO itinerary;
+        CREATE INDEX IF NOT EXISTS itinerary_by_trip_date
+            ON itinerary(trip_id, start_date);
+        COMMIT;
+    """)
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 # ---------------------------------------------------------------------------
