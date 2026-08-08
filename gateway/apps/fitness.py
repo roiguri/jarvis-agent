@@ -5,11 +5,11 @@ is English written for a model, and parsing it here would ship a client that bre
 when a docstring is reworded. Same reasoning as `travel.py` reading `travel.sqlite`
 and `memory.py` walking `MEMORY_DIR` instead of calling their respective tools.
 
-`_FITNESS_RO_URI` and `_fmt_pace` are imported from `tools.fitness.fitness_tools`
-rather than reimplemented — private-to-public across a package boundary, on purpose:
-a second read-only URI or a second pace formatter is one that can drift from the
-original. Importing that module also runs its `_init_db()`, so the schema exists
-even on an instance that has never used the fitness skill in chat.
+`_FITNESS_RO_URI` and `_fmt_pace` are imported from `tools.fitness._db` rather than
+reimplemented — private-to-public across a package boundary, on purpose: a second
+read-only URI or a second pace formatter is one that can drift from the original.
+Importing that module also runs its `_init_db()`, so the schema exists even on an
+instance that has never used the fitness skill in chat.
 
 THE SECURITY LINE differs from memory's. Nothing here resolves a caller-supplied
 path; the only caller-supplied values are a date cursor, a workout id, and an
@@ -32,7 +32,7 @@ from gateway.apps.registry import (
     AppSpec,
     register_app,
 )
-from tools.fitness.fitness_tools import _FITNESS_RO_URI, _fmt_pace, _target_for_week, ISRAEL_TZ
+from tools.fitness._db import _FITNESS_RO_URI, _fmt_pace, _target_for_week, ISRAEL_TZ
 
 # Marks cover a full year, one block per week (a plan's cadence is weekly, not
 # daily — unlike GitHub's per-day contribution graph). The streak below is
