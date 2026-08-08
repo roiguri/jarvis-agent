@@ -76,6 +76,21 @@ def _weekly_completed_count(conn: sqlite3.Connection, plan_id: int, week_start: 
     ).fetchone()[0]
 
 
+def _weekly_completed_count_all(conn: sqlite3.Connection, week_start: str, week_end: str) -> int:
+    """Same as `_weekly_completed_count` but across every workout, no `plan_id` filter.
+
+    A workout counts here regardless of whether its plan is active, paused,
+    completed, or it was never attached to a plan at all (`plan_id IS NULL`) —
+    the per-plan count structurally can't see any of those, since it always
+    filters on one specific `plan_id`.
+    """
+    return conn.execute(
+        "SELECT COUNT(*) FROM workouts WHERE status='completed' "
+        "AND date(scheduled_time) BETWEEN ? AND ?",
+        (week_start, week_end),
+    ).fetchone()[0]
+
+
 def _streak_weeks(conn: sqlite3.Connection, plan: sqlite3.Row, now: datetime) -> int | None:
     """Consecutive weeks that met the target *in force during that week*, counting back from last week.
 
@@ -150,6 +165,18 @@ def _dashboard_sync() -> dict[str, Any]:
     try:
         plans = conn.execute("SELECT * FROM plans WHERE status='active' ORDER BY plan_id").fetchall()
 
+        # Plan-agnostic: every completed workout counts here, whether it
+        # belongs to an active plan, a stopped one, or no plan at all. This is
+        # the total/chart for "how much did I actually train," which a
+        # per-plan count can't answer by construction.
+        overall_marks = []
+        overall_total_year = 0
+        for i in range(_MARKS_WEEKS - 1, -1, -1):
+            week_start, week_end = _week_range(now - timedelta(weeks=i))
+            count = _weekly_completed_count_all(conn, week_start, week_end)
+            overall_marks.append({"week_start": week_start, "count": count})
+            overall_total_year += count
+
         plan_rows = []
         for p in plans:
             marks = []
@@ -194,7 +221,12 @@ def _dashboard_sync() -> dict[str, Any]:
         }
         for r in upcoming_rows
     ]
-    return {"plans": plan_rows, "upcoming": upcoming}
+    return {
+        "plans": plan_rows,
+        "upcoming": upcoming,
+        "total_year": overall_total_year,
+        "marks": overall_marks,
+    }
 
 
 def _history_sync(before: str) -> dict[str, Any]:
