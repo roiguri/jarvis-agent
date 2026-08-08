@@ -32,7 +32,7 @@ from gateway.apps.registry import (
     AppSpec,
     register_app,
 )
-from tools.fitness.fitness_tools import _FITNESS_RO_URI, _fmt_pace, ISRAEL_TZ
+from tools.fitness.fitness_tools import _FITNESS_RO_URI, _fmt_pace, _target_for_week, ISRAEL_TZ
 
 # Marks cover a full year, one block per week (a plan's cadence is weekly, not
 # daily — unlike GitHub's per-day contribution graph). The streak below is
@@ -77,25 +77,40 @@ def _weekly_completed_count(conn: sqlite3.Connection, plan_id: int, week_start: 
 
 
 def _streak_weeks(conn: sqlite3.Connection, plan: sqlite3.Row, now: datetime) -> int | None:
-    """Consecutive weeks (ending this week) that met `weekly_target_count`.
+    """Consecutive weeks that met the target *in force during that week*, counting back from last week.
 
-    Walks backward from this week until the first miss or the plan's
-    `start_date`, whichever comes first — no upper bound beyond the safety cap.
-    A plan with no target reports `None` rather than a fabricated number.
+    Each week is judged against its own historical target
+    (`plan_target_history`, via `_target_for_week`) rather than the plan's
+    current one — raising or lowering the goal later never rewrites whether an
+    already-elapsed week counted. The in-progress current week is judged
+    separately and added on top only if it has already met its target — an
+    unmet current week is pending, not a miss, so it doesn't zero out a streak
+    just because the week isn't over yet. Walks backward from last week until
+    the first miss or the plan's `start_date`, whichever comes first — no upper
+    bound beyond the safety cap. A plan with no current target reports `None`
+    rather than a fabricated number.
     """
     target = plan["weekly_target_count"]
     if not target:
         return None
     start_date = plan["start_date"]
     streak = 0
-    for i in range(_STREAK_SAFETY_CAP):
+    for i in range(1, _STREAK_SAFETY_CAP):
         week_start, week_end = _week_range(now - timedelta(weeks=i))
         if start_date and week_end < start_date:
             break
-        if _weekly_completed_count(conn, plan["plan_id"], week_start, week_end) >= target:
+        week_target = _target_for_week(conn, plan["plan_id"], week_start, target)
+        if not week_target:
+            break
+        if _weekly_completed_count(conn, plan["plan_id"], week_start, week_end) >= week_target:
             streak += 1
         else:
             break
+
+    this_week_start, this_week_end = _week_range(now)
+    this_week_target = _target_for_week(conn, plan["plan_id"], this_week_start, target)
+    if this_week_target and _weekly_completed_count(conn, plan["plan_id"], this_week_start, this_week_end) >= this_week_target:
+        streak += 1
     return streak
 
 

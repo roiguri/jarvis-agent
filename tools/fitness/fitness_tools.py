@@ -115,6 +115,14 @@ def _init_db():
             membership_user_fk INTEGER NOT NULL UNIQUE,
             added_at           DATETIME DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS plan_target_history (
+            history_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id        INTEGER NOT NULL,
+            target         INTEGER,
+            effective_from DATE NOT NULL,
+            FOREIGN KEY(plan_id) REFERENCES plans(plan_id)
+        );
     """)
     conn.commit()
 
@@ -149,12 +157,46 @@ def _init_db():
     except Exception:
         pass
 
+    # One-time, idempotent backfill: any plan with no target-history rows yet
+    # (pre-dating this table, or created before manage_fitness_plan started
+    # writing one) gets a single opening row at its current target and
+    # start_date, so retroactive per-week lookups have something to find for
+    # its entire life. The NOT IN guard makes this a no-op once a plan has any
+    # row, whether from this backfill or from manage_fitness_plan.
+    try:
+        conn.execute(
+            "INSERT INTO plan_target_history (plan_id, target, effective_from) "
+            "SELECT plan_id, weekly_target_count, COALESCE(start_date, '1970-01-01') FROM plans "
+            "WHERE plan_id NOT IN (SELECT DISTINCT plan_id FROM plan_target_history)"
+        )
+        conn.commit()
+    except Exception:
+        pass
+
     conn.close()
 
 
 def _fmt_pace(avg_pace_sec: int) -> str:
     """Format seconds/km as mm'ss\"/km."""
     return f"{avg_pace_sec // 60}'{avg_pace_sec % 60:02d}\"/km"
+
+
+def _target_for_week(conn: sqlite3.Connection, plan_id: int, week_start: str, fallback: int | None) -> int | None:
+    """The weekly target in force as of `week_start` (YYYY-MM-DD), per `plan_target_history`.
+
+    A change made mid-week takes effect the following week, not retroactively
+    for the week it happened in — `week_start` is always a week's first day,
+    so this is "the target that was already in force when the week began."
+    Falls back to `fallback` (normally the plan's current weekly_target_count)
+    only if no history row is old enough — defensive; shouldn't happen once
+    `_init_db`'s backfill has run.
+    """
+    row = conn.execute(
+        "SELECT target FROM plan_target_history WHERE plan_id=? AND effective_from<=? "
+        "ORDER BY effective_from DESC LIMIT 1",
+        (plan_id, week_start),
+    ).fetchone()
+    return row["target"] if row is not None else fallback
 
 
 _init_db()
@@ -278,6 +320,11 @@ def manage_fitness_plan(
             )
             conn.commit()
             pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO plan_target_history (plan_id, target, effective_from) VALUES (?, ?, ?)",
+                (pid, weekly_target_count, sd),
+            )
+            conn.commit()
             conn.close()
             return f"Created plan '{name}' (id={pid}, mode={tracking_mode}, target={weekly_target_count}/week, start={sd})."
 
@@ -295,8 +342,33 @@ def manage_fitness_plan(
                 fields.append("start_date = ?"); values.append(start_date)
             if not fields:
                 return "Error: provide at least one field to update (name, weekly_target_count, status, start_date)."
+
+            # Capture the pre-update target so a real change can be recorded in
+            # plan_target_history — past weeks stay judged by the target that
+            # was actually in force then, not silently rewritten by this edit.
+            prev = conn.execute("SELECT weekly_target_count FROM plans WHERE plan_id=?", (plan_id,)).fetchone()
+            target_changed = (
+                weekly_target_count is not None
+                and prev is not None
+                and weekly_target_count != prev["weekly_target_count"]
+            )
+
             values.append(plan_id)
             conn.execute(f"UPDATE plans SET {', '.join(fields)} WHERE plan_id = ?", values)
+
+            if target_changed:
+                effective = datetime.now(ISRAEL_TZ).strftime("%Y-%m-%d")
+                # Same-day re-edit replaces rather than stacks: there is only
+                # ever one target in force on a given date.
+                conn.execute(
+                    "DELETE FROM plan_target_history WHERE plan_id=? AND effective_from=?",
+                    (plan_id, effective),
+                )
+                conn.execute(
+                    "INSERT INTO plan_target_history (plan_id, target, effective_from) VALUES (?, ?, ?)",
+                    (plan_id, weekly_target_count, effective),
+                )
+
             conn.commit()
             conn.close()
             summary = ", ".join(f.split(" = ")[0] + "=" + str(v) for f, v in zip(fields, values[:-1]))
@@ -815,7 +887,8 @@ def log_wod_result(
             workout_id = row["workout_id"]
 
         conn.execute(
-            "UPDATE workouts SET wod_result = ?, notes = COALESCE(?, notes) WHERE workout_id = ?",
+            "UPDATE workouts SET wod_result = ?, notes = COALESCE(?, notes), status = 'completed' "
+            "WHERE workout_id = ?",
             (result.strip(), notes.strip() if notes else None, workout_id),
         )
         conn.commit()
@@ -1065,21 +1138,30 @@ def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
                 if sd and we < sd:
                     continue  # week ends before the plan began — not a miss
                 eligible += 1
+                week_target = _target_for_week(conn, p["plan_id"], ws, target)
                 done = conn.execute(
                     "SELECT COUNT(*) FROM workouts WHERE plan_id=? AND status='completed' "
                     "AND date(scheduled_time) BETWEEN ? AND ?",
                     (p["plan_id"], ws, we),
                 ).fetchone()[0]
-                met = isinstance(target, int) and target > 0 and done >= target
+                met = isinstance(week_target, int) and week_target > 0 and done >= week_target
                 if met:
                     hits += 1
-                    if streak_open:
+                # The current week (i==0) is still in progress: count it toward
+                # the streak if already met, but an unmet current week is
+                # pending, not a miss, so it must not close out the streak —
+                # only i>=1 (a week that has fully elapsed) can do that.
+                if i == 0:
+                    if met:
                         streak += 1
+                elif streak_open and met:
+                    streak += 1
                 else:
                     streak_open = False
                 tag = "✓" if met else "·"
                 label = "this week" if i == 0 else f"-{i}w"
-                lines.append(f"  {tag} {ws} ({label}): {done}/{tgt_label}")
+                wk_tgt_label = week_target if week_target else "?"
+                lines.append(f"  {tag} {ws} ({label}): {done}/{wk_tgt_label}")
             if eligible == 0:
                 lines.append(f"  → plan started {sd}; no weeks in the last {weeks}w window.")
             else:
