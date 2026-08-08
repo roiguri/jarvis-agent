@@ -94,7 +94,7 @@ message instead of failing silently.
 | `STATE_PATH` | `heartbeat_state.py` | `/app/jarvis_data/heartbeat/state.json` | Code-owned per-task last_run stamps (due-gate input) |
 | `_MIN_TICK_SPACING` | `heartbeat.py` | `30` (s) | Minimum spacing between model-reaching ticks |
 | `EVENTS_PATH` | `tools/core/scheduling.py` | `/app/jarvis_data/scheduling/scheduled_events.json` | Pending reminders across restarts |
-| `DB_PATH` (fitness) | `tools/fitness/fitness_tools.py` | `/app/jarvis_data/fitness/fitness.sqlite` | Fitness-skill DB |
+| `DB_PATH` (fitness) | `tools/fitness/_db.py` | `/app/jarvis_data/fitness/fitness.sqlite` | Fitness-skill DB |
 | `_HEARTBEAT_MD_PATH` | `agent.py` | `/app/jarvis_memory/HEARTBEAT.md` | Injected into heartbeat-scope prompt |
 | `_AGENTS_PATH` / `_HEARTBEAT_PROMPT_PATH` | `agent.py` | `/app/jarvis_code/prompts/AGENTS.md` / `heartbeat.md` | Dev-controlled prompt content |
 
