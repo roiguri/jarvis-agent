@@ -14,6 +14,18 @@ from tools.fitness._arbox import (
 from tools.fitness._db import ISRAEL_TZ, _get_db, _valid_date
 from tools.registry import tool_register
 
+
+def _fetch_schedule(from_dt: datetime, to_dt: datetime) -> list[dict]:
+    """The gym's class list for a UTC window. Every schedule read goes through here."""
+    body = {
+        "from": from_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
+        "boxes_id": int(os.environ.get("ARBOX_BOX_ID", "0")),
+    }
+    return _arbox_post("/api/v2/schedule/betweenDates", body).get("data", [])
+
+
 def _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str):
     """Delete future, in-horizon, still-`scheduled` Arbox rows the user is no
     longer registered for, and return the deleted rows (for a user notice).
@@ -47,6 +59,73 @@ def _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str):
     return [dict(r) for r in doomed]
 
 
+def _sync_registered_classes() -> str:
+    """Re-read the registration horizon and reconcile the local `workouts` rows.
+
+    Both `fetch_upcoming_arbox_classes` and the register/cancel write path call
+    this, so a booking made through Jarvis reaches the database by exactly the
+    same route as one made in the gym's own app: insert-on-register and
+    purge-on-cancel both fall out of the authoritative-set logic below rather
+    than a second copy of it that could drift.
+
+    Raises on Arbox failure; callers own the error wording.
+    """
+    now = datetime.now(timezone.utc)
+    to_dt = now + timedelta(hours=ARBOX_REGISTRATION_HORIZON_HOURS)
+    classes = _fetch_schedule(now, to_dt)
+    registered = [c for c in classes if c.get("user_booked") is not None]
+
+    now_il = datetime.now(ISRAEL_TZ)
+    now_str = now_il.strftime("%Y-%m-%d %H:%M:%S")
+    horizon_str = (
+        now_il + timedelta(hours=ARBOX_REGISTRATION_HORIZON_HOURS)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = _get_db()
+    try:
+        plan = conn.execute("SELECT plan_id FROM plans WHERE status='active' LIMIT 1").fetchone()
+        plan_id = plan["plan_id"] if plan else None
+
+        results = []
+        for cls in registered:
+            schedule_id = str(cls["id"])
+            date_str = cls["date"]
+            time_str = cls["time"]
+            category = (cls.get("box_categories") or {}).get("name", "WOD")
+            scheduled_dt = f"{date_str} {time_str}:00"
+
+            wod = _get_session_programming(date_str, prefer_category=category)
+
+            conn.execute(
+                """INSERT OR IGNORE INTO workouts
+                   (arbox_class_id, plan_id, scheduled_time, description, source)
+                   VALUES (?, ?, ?, ?, 'arbox')""",
+                (schedule_id, plan_id, scheduled_dt, wod or None),
+            )
+
+            wod_text = wod or "WOD not yet posted"
+            results.append(f"• {date_str} at {time_str} ({category})\n  WOD: {wod_text}")
+
+        # Always reconcile — an empty registered set is the legitimate
+        # "dropped everything" case and must still purge ghosts.
+        registered_ids = {str(c["id"]) for c in registered}
+        removed = _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str)
+        conn.commit()
+    finally:
+        conn.close()
+
+    if registered:
+        msg = f"Found {len(registered)} registered class(es):\n" + "\n".join(results)
+    else:
+        msg = "No registered classes found in the next 72h."
+    if removed:
+        dropped = "; ".join(r["scheduled_time"] for r in removed)
+        msg += (
+            f"\n\nRemoved {len(removed)} class(es) you're no longer "
+            f"registered for: {dropped}. This may affect your weekly quota."
+        )
+    return msg
+
 
 @tool_register(namespace="fitness")
 @tool
@@ -63,74 +142,11 @@ def fetch_upcoming_arbox_classes() -> str:
     any class removed because its registration was dropped.
     """
     try:
-        now = datetime.now(timezone.utc)
-        to_dt = now + timedelta(hours=ARBOX_REGISTRATION_HORIZON_HOURS)
-        body = {
-            "from": now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-            "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-            "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
-            "boxes_id": int(os.environ.get("ARBOX_BOX_ID", "0")),
-        }
-        data = _arbox_post("/api/v2/schedule/betweenDates", body)
-        classes = data.get("data", [])
-        registered = [c for c in classes if c.get("user_booked") is not None]
-
-        now_il = datetime.now(ISRAEL_TZ)
-        now_str = now_il.strftime("%Y-%m-%d %H:%M:%S")
-        horizon_str = (
-            now_il + timedelta(hours=ARBOX_REGISTRATION_HORIZON_HOURS)
-        ).strftime("%Y-%m-%d %H:%M:%S")
-
-        conn = _get_db()
-        try:
-            plan = conn.execute("SELECT plan_id FROM plans WHERE status='active' LIMIT 1").fetchone()
-            plan_id = plan["plan_id"] if plan else None
-
-            results = []
-            for cls in registered:
-                schedule_id = str(cls["id"])
-                date_str = cls["date"]
-                time_str = cls["time"]
-                category = (cls.get("box_categories") or {}).get("name", "WOD")
-                scheduled_dt = f"{date_str} {time_str}:00"
-
-                wod = _get_session_programming(date_str, prefer_category=category)
-
-                conn.execute(
-                    """INSERT OR IGNORE INTO workouts
-                       (arbox_class_id, plan_id, scheduled_time, description, source)
-                       VALUES (?, ?, ?, ?, 'arbox')""",
-                    (schedule_id, plan_id, scheduled_dt, wod or None),
-                )
-
-                wod_text = wod or "WOD not yet posted"
-                results.append(f"• {date_str} at {time_str} ({category})\n  WOD: {wod_text}")
-
-            # Always reconcile — an empty registered set is the legitimate
-            # "dropped everything" case and must still purge ghosts.
-            registered_ids = {str(c["id"]) for c in registered}
-            removed = _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str)
-            conn.commit()
-        finally:
-            conn.close()
-
-        if registered:
-            msg = f"Found {len(registered)} registered class(es):\n" + "\n".join(results)
-        else:
-            msg = "No registered classes found in the next 72h."
-        if removed:
-            dropped = "; ".join(r["scheduled_time"] for r in removed)
-            msg += (
-                f"\n\nRemoved {len(removed)} class(es) you're no longer "
-                f"registered for: {dropped}. This may affect your weekly quota."
-            )
-        return msg
-
+        return _sync_registered_classes()
     except RuntimeError as e:
         return f"Error: {e}"
     except Exception as e:
         return f"Error fetching classes: {e}"
-
 
 
 @tool_register(namespace="fitness")
@@ -148,16 +164,14 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
         days_ahead: How many days ahead to fetch (default 7 = one week).
     """
     try:
+        # Whole days at both ends: from midnight today through the end of the
+        # last day, so the final day's evening classes are included.
         now = datetime.now(timezone.utc)
-        to_dt = now + timedelta(days=days_ahead)
-        body = {
-            "from": now.strftime("%Y-%m-%dT00:00:00.000Z"),
-            "to": to_dt.strftime("%Y-%m-%dT23:59:59.999Z"),
-            "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
-            "boxes_id": int(os.environ.get("ARBOX_BOX_ID", "0")),
-        }
-        data = _arbox_post("/api/v2/schedule/betweenDates", body)
-        classes = data.get("data", [])
+        from_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        to_dt = (now + timedelta(days=days_ahead)).replace(
+            hour=23, minute=59, second=59, microsecond=0
+        )
+        classes = _fetch_schedule(from_dt, to_dt)
 
         if not classes:
             return "No classes found in the schedule."
@@ -209,7 +223,6 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
         return f"Error fetching schedule: {e}"
 
 
-
 @tool_register(namespace="fitness")
 @tool
 def get_daily_programming(date: str | None = None) -> str:
@@ -238,7 +251,6 @@ def get_daily_programming(date: str | None = None) -> str:
         return f"Error: {e}"
     except Exception as e:
         return f"Error fetching programming: {e}"
-
 
 
 @tool_register(namespace="fitness")

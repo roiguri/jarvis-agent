@@ -95,7 +95,6 @@ def get_weekly_fitness_summary() -> str:
         return f"Error: {e}"
 
 
-
 @tool_register(namespace="fitness")
 @tool
 def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:

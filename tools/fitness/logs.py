@@ -57,7 +57,6 @@ def log_exercise_stats(
         return f"Error logging exercise: {e}"
 
 
-
 @tool_register(namespace="fitness")
 @tool
 def query_exercise_history(exercise_name: str) -> str:
@@ -98,7 +97,6 @@ def query_exercise_history(exercise_name: str) -> str:
 
     except Exception as e:
         return f"Error querying history: {e}"
-
 
 
 @tool_register(namespace="fitness")
@@ -182,7 +180,6 @@ def log_running_session(
         return f"Error logging running session: {e}"
 
 
-
 @tool_register(namespace="fitness")
 @tool
 def log_wod_result(
@@ -227,7 +224,6 @@ def log_wod_result(
 
     except Exception as e:
         return f"Error logging WOD result: {e}"
-
 
 
 @tool_register(namespace="fitness")
