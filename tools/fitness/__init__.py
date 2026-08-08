@@ -21,6 +21,7 @@ from tools.fitness.logs import (  # noqa: F401
 )
 from tools.fitness.plans import manage_fitness_plan  # noqa: F401
 from tools.fitness.query import query_fitness_db  # noqa: F401
+from tools.fitness.registration import manage_arbox_registration  # noqa: F401
 from tools.fitness.reports import (  # noqa: F401
     get_adherence_report,
     get_weekly_fitness_summary,
@@ -36,6 +37,7 @@ __all__ = [
     "log_exercise_stats",
     "log_running_session",
     "log_wod_result",
+    "manage_arbox_registration",
     "manage_fitness_plan",
     "query_exercise_history",
     "query_fitness_db",

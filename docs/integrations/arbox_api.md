@@ -171,3 +171,62 @@ Returns a list of dates when the user actually attended the gym.
 | `fetch_upcoming_arbox_classes` | `betweenDates` + `logbook/workouts` |
 | `fetch_weekly_gym_schedule` | `betweenDates` + `logbook/workouts` for each date |
 | `sync_arbox_attendance` | `schedule/weekly` (attendance dates) |
+| `manage_arbox_registration` | `betweenDates` (resolve + re-verify) then `scheduleUser/insert` **or** `scheduleUser/delete` |
+
+## Policy fields on a class object
+
+Every class row carries its own registration and cancellation policy, so these
+are read per class rather than assumed globally — they are series-configurable
+and do vary by slot at the same gym.
+
+| Field | Meaning | Observed |
+|-------|---------|----------|
+| `booking_option` | What a booking call would actually do | `insertScheduleUser` = books a place; `insertStandby` = class is full, would join the waitlist; `cancelScheduleUser` = already booked, so the offered action is cancelling |
+| `enable_registration_time` | Hours before the class that registration opens | `72` on every row so far |
+| `disable_cancellation_time` | Hours before the class that free cancellation closes | varies: `8` for early-morning WODs, `1`–`2` midday/evening |
+| `series.cancel_limit_min` | Same limit, on the series | mirrors `disable_cancellation_time` |
+| `enable_late_cancellation` | Whether cancelling after the deadline is permitted at all | `0` — past the deadline the gym **blocks** the cancel rather than charging a penalty |
+| `stand_by` | How many people are on the waitlist | used to tell the owner someone would take a released place |
+
+**`booking_option` is the authority on whether a class is bookable**, not `free`
+or `has_spots` — those two disagree on real rows (`has_spots` reads `0` on every
+class observed so far, including ones with 18 free places, so it does not mean
+what its name suggests).
+
+`booking_option` describes **capacity only**. It does not predict whether the
+gym will accept the booking: classes reading `insertScheduleUser`, with free
+places and identical `box_fk`/`locations_box_fk`/`spaces_id`/`box_category_fk`
+to classes already booked, have been refused with HTTP 403 by
+`scheduleUser/insert`. Cause not yet identified — see below.
+
+### Open: 403 on `scheduleUser/insert`
+
+Two booking attempts (2026-08-10 12:00 and 2026-08-11 12:00, both WOD, both with
+free places) were rejected with `403 Forbidden`, while the same account books
+those classes without trouble in the gym's own app. Ruled out so far:
+
+- **Not auth.** An expired token returns 401. Every read — including
+  `betweenDates`, itself a POST — succeeds with the same headers.
+- **Not the membership id.** `ARBOX_MEMBERSHIP_USER_ID` matches the
+  `membership_user_fk` on the account's own `booked_users` entry.
+- **Not `extras.spot`.** Existing bookings carry `"spot": null`, matching what
+  is sent.
+- **Not a class-level restriction.** `series.membership_types` and
+  `box_categories.membership_types` are empty on both the refused and the
+  booked classes, and every structural field matches.
+
+Still open: payload types (this doc's capture shows the ids quoted as strings;
+the client sends ints), a stale `version: 11` header being enforced on writes
+but not reads, or a field the original capture missed. `_handle` in
+`tools/fitness/_arbox.py` now includes the response body in the error, so the
+next attempt should carry Arbox's own explanation.
+
+Because `disable_cancellation_time` and `enable_late_cancellation` are on the
+class, the late-cancel deadline is computed locally and endpoint 6
+(`checkLateCancel`) is never called — its side effects have never been observed.
+
+**Identification fields** available for a confirmation prompt: `box_categories.name`,
+`date`/`time`/`end_time`, `coach.full_name`, `spaces.name`, `locations_box.location`,
+and `registered`/`max_users`/`free`. A time slot usually holds several classes
+(71 of 90 upcoming slots at this branch), so date + time alone does **not**
+identify a class — the category is required to disambiguate.

@@ -7,10 +7,19 @@ single track the owner actually follows.
 """
 
 import os
+import re
 
 import requests
 
 ARBOX_BASE = "https://apiappv2.arboxapp.com"
+
+# Sent on every Arbox request. See _arbox_headers for why the default is not
+# left to requests.
+ARBOX_USER_AGENT = os.environ.get(
+    "ARBOX_USER_AGENT",
+    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Mobile Safari/537.36",
+)
 
 
 # Arbox only allows registering for a class up to this many hours in advance
@@ -31,15 +40,72 @@ def _arbox_headers() -> dict:
         "version": "11",
         "referername": "app",
         "content-type": "application/json",
+        "accept": "application/json",
+        # Without this, requests announces itself as python-requests/x.y, which
+        # the edge in front of this API answers with an HTML block page on the
+        # write endpoints while leaving reads alone — a 403 that never reaches
+        # Arbox. Overridable so it can be matched to the app's own value.
+        "user-agent": ARBOX_USER_AGENT,
     }
 
 
 def _arbox_post(path: str, body: dict) -> dict:
     resp = requests.post(f"{ARBOX_BASE}{path}", headers=_arbox_headers(), json=body, timeout=15)
+    return _handle(resp, path)
+
+
+def _arbox_get(path: str) -> dict:
+    resp = requests.get(f"{ARBOX_BASE}{path}", headers=_arbox_headers(), timeout=15)
+    return _handle(resp, path)
+
+
+def _handle(resp, path: str) -> dict:
+    """Turn a response into data, or into an error that says what went wrong.
+
+    `raise_for_status()` reports only the status line, which is how a refusal
+    the gym *explained* in the response body reached the owner as a bare "403
+    Forbidden" — indistinguishable from an auth problem, and duly misread as
+    one. The body is included here so a refusal can be acted on.
+    """
     if resp.status_code == 401:
-        raise RuntimeError("Arbox session expired. Please update ARBOX_ACCESS_TOKEN in /app/secrets/.env and restart the service.")
-    resp.raise_for_status()
+        raise RuntimeError(
+            "Arbox session expired. Please update ARBOX_ACCESS_TOKEN in the env "
+            "file and restart the service."
+        )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Arbox refused {path} with HTTP {resp.status_code}: {_error_detail(resp)}"
+        )
     return resp.json()
+
+
+def _error_detail(resp) -> str:
+    """A one-line reason from an error response.
+
+    An HTML body means the request was stopped at the edge and never reached the
+    API, which is a different problem from the API declining it — and dumping
+    the markup buries that distinction under a page of boilerplate. Summarised
+    here so the two read differently at a glance.
+    """
+    body = (resp.text or "").strip()
+    if not body:
+        return "(no detail in the response)"
+
+    looks_html = body[:200].lstrip().lower().startswith(("<!doctype html", "<html")) or (
+        "text/html" in (resp.headers.get("content-type") or "")
+    )
+    if looks_html:
+        title = re.search(r"<title[^>]*>(.*?)</title>", body, re.S | re.I)
+        ray = re.search(r"Ray ID:?\s*</?[^>]*>?\s*([0-9a-f]{8,})", body, re.I)
+        bits = ["blocked before reaching the API (HTML block page returned)"]
+        if title:
+            bits.append(f"page title: {' '.join(title.group(1).split())[:80]!r}")
+        if ray:
+            bits.append(f"ray id: {ray.group(1)}")
+        bits.append("usually a bot/WAF filter rejecting the client, not Arbox declining the action")
+        return "; ".join(bits)
+
+    return " ".join(body.split())[:300]
 
 
 # Tracks Roi follows: the WOD (and Endurance on Saturday) at his branch. PUMP /
