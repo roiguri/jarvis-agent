@@ -1,7 +1,8 @@
 # Form block — structured input from the app
 
-**Status:** planned, not started. Slice 0 blocked on the hub's updated contract.
-**Date:** 2026-08-15.
+**Status:** in progress — slices 0–1 done (1 verified live on staging 2026-08-24); the hub is
+deployed with the form contract, so nothing remaining is blocked on it. Next: slice 2.
+**Date:** 2026-08-15 (last updated 2026-08-24).
 **Branch:** `feat/app-form-block`.
 **Goal:** let a message carry a small set of labelled, prefilled boxes the owner corrects and
 submits in one tap, and let the submitted values come back as ordinary inbound content. The
@@ -11,14 +12,17 @@ mechanism is a gateway capability with several possible callers; the agent's too
 
 ## Checklist
 
-Slice detail is at the bottom; this is the tracking view. Slice 0 gates 2–6; slice 1 is
-independent and can land first.
+Slice detail is at the bottom; this is the tracking view. Slices 0–1 are done; 2–6 are
+unblocked (the hub runs the form contract as of 2026-08-24).
 
 - [x] **0 · Contract intake**
-  - [x] Updated `contract.md` in `docs/architecture/channels/jarvis-app/` (`b2dcd9534e07bd23`)
-  - [ ] Bump `PINNED_CONTRACT_VERSION` in `gateway/channels/jarvis_app/client.py` — deferred to
-        the end of slice 3/4, since it names the version the adapter *speaks*, and silencing the
-        skew warning before then hides the one signal that matters mid-build
+  - [x] Updated `contract.md` in `docs/architecture/channels/jarvis-app/` — now at
+        `509c222e84e2c915`, the version the hub actually deployed and staging reports (the
+        interim `b2dcd9534e07bd23` never shipped; the delta is prose-only)
+  - [ ] Bump `PINNED_CONTRACT_VERSION` in `gateway/channels/jarvis_app/client.py` to
+        `509c222e84e2c915` — deferred to the end of slice 3/4, since it names the version the
+        adapter *speaks*, and silencing the skew warning before then hides the one signal that
+        matters mid-build
 - [x] **1 · Confirmation fixes** — independent of forms
   - [x] Expire an orphaned `callback_id` using the action update's own `message_id`
   - [x] Retain `callback_id → settled_state` past resolution so a re-tap re-affirms. Only the
@@ -27,19 +31,29 @@ independent and can land first.
   - [x] Learn the settled state from a `MessageAlreadyResolved` refusal, so a further tap
         re-affirms what actually stands rather than losing the same argument again
   - [x] Keep the `ALREADY_HANDLED` guard (declining the handoff's "dead code" note)
+  - [x] Verified live on staging (2026-08-24): confirm, cancel, re-tap, TTL eviction, orphan tap
+        after a restart, and a Telegram regression pass
 - [ ] **2 · Neutral seam** — no callers yet, testable alone
-  - [ ] `FormSpec` in `gateway/`, channel-agnostic, with construction-time validation
-  - [ ] Size cap (~6 rows) enforced at construction
-  - [ ] `Channel.send_form` + `can_send_form` (default `False`)
-  - [ ] Outbox method with a distinct unsupported-channel `SendOutcome`, never a partial send
-  - [ ] Telegram declines
+  - [ ] `gateway/blocks/` package: `base.py` (`Block`, `Interactive`, `BlockAction`) +
+        `form.py` (`Form`, `FormRow`, `TextField`, `NumberField`) — frozen dataclasses,
+        construction-time validation, no wire shapes
+  - [ ] Size cap (~6 rows) and the units-on-multi-field-row rule enforced at construction
+  - [ ] `callback_id` generated at construction (caller slug + our entropy)
+  - [ ] `Channel.supports_block(kind)` (default `False`) + `Channel.send_block(text, block)`
+        (default raises) — kind-generic, so a future kind never edits the ABC
+  - [ ] Outbox method; never a partial send. `SendOutcome` unchanged — `supports_block` is the
+        pre-flight, so the permanent case never reaches the seam
+  - [ ] Telegram declines (implements neither)
 - [ ] **3 · Outbound** — jarvis-app
-  - [ ] `FormSpec` → hub wire mapping
-  - [ ] `callback_id` generation (caller slug + our entropy)
+  - [ ] Wire mapping in the channel adapter, as a table keyed by block type (no `to_wire()` on
+        the neutral model)
   - [ ] Origin routing via `CURRENT_THREAD_ID`, not the proactive default
 - [ ] **4 · Inbound** — jarvis-app
-  - [ ] Route `block_kind == "form"` into an `InboundMessage` instead of `handle_action`
+  - [ ] Router builds a neutral `BlockAction`; dispatch by kind is a table, not an `if/elif`
+        chain — `confirmation` resolves below the LLM, `form` becomes an `InboundMessage`
   - [ ] Carry structured values alongside rendered text; `null` survives as "left empty"
+  - [ ] Persist the submission to `chat_history.jsonl` before the turn runs, so a dead turn
+        cannot lose what was typed
   - [ ] `PATCH` `logged` — **timing still open**, see Open questions
 - [ ] **5 · The tool** — `tools/core/`
   - [ ] Docstring guardrails: submit-unchanged precondition, anti-examples, evidence-only defaults
@@ -58,11 +72,12 @@ long-poll as a `type: "action"` update carrying `values` — every declared `fie
 meaning "seen and left empty". The agent resolves the card by `PATCH`ing `state` to `logged` or
 `expired`. No new endpoint, no new auth.
 
-This is a **contract change, not an addition**. The pinned contract already declares a `FormBlock`
-(`docs/architecture/channels/jarvis-app/contract.md:1339`), but a placeholder one: fields are
+This was a **contract change, not an addition**. The previously pinned contract
+(`45e79b46aed20391`) already declared a `FormBlock`, but a placeholder one: fields were
 `{field_id, label}` with no type, no default, no `callback_id`, and an open-string `state`. The
-hub's new shape replaces it, so `contract_version` moves and `PINNED_CONTRACT_VERSION`
-(`gateway/channels/jarvis_app/client.py:21`) must move with it.
+hub's shape replaces it — the vendored `contract.md` now carries the real one — so
+`contract_version` moved and `PINNED_CONTRACT_VERSION` (`gateway/channels/jarvis_app/client.py:21`)
+must eventually move with it.
 
 Deploy order is one-way: the hub validates strictly, so a `form` sent to an older hub is a `422`,
 not a degraded render.
@@ -107,44 +122,69 @@ Consequences, all of which shrink the build:
 
 ### The mechanism is a gateway capability, not a tool
 
-Building this as "a tool that sends a form" would make it agent-only by construction. Layering:
+Building this as "a tool that sends a form" would make it agent-only by construction. And
+building the channel seam as `send_form` would make blocks a method-per-kind affair — every future
+kind (`buttons` and `card` already exist in the contract) editing the ABC, the Outbox, and every
+channel. So the capability is **blocks, not forms**; a form is the first kind carried, not the
+shape of the seam. Layering:
 
-- **Neutral model** in `gateway/` — a `FormSpec` of rows and fields, channel-agnostic, no hub wire
-  shape in it. Every caller constructs this.
-- **Channel capability** — `Channel.send_form(spec)` plus a `can_send_form` property defaulting to
-  `False`. jarvis-app implements it; Telegram doesn't.
-- **Outbox method** — the owner-addressed seam, with the same log-on-success / `SendOutcome`
-  treatment every other send gets. This is what makes it reachable from the heartbeat, a reminder,
-  a slash command, or a future skill tool, all as peers of the agent's tool.
-- **Channel adapter** owns the wire mapping and the `PATCH`.
-- **The tool** in `tools/core/` is a thin caller: build a spec from model args, call the seam,
+- **Neutral model** in `gateway/blocks/` — `base.py` holds `Block` (kind, summary), `Interactive`
+  (a `Block` with a `callback_id` — encoding which kinds can be *resolved* as a class check, since
+  `card` has no callback and `form`/`buttons`/`confirmation` do), and `BlockAction` (the neutral
+  inbound tap). `form.py` holds `Form`/`FormRow`/`TextField`/`NumberField`. Frozen dataclasses,
+  channel-agnostic, no hub wire shape anywhere in the package. Every caller constructs these.
+- **Channel capability** — `Channel.supports_block(kind)` defaulting to `False` and
+  `Channel.send_block(text, block)` defaulting to raise. Kind-generic: adding a block kind never
+  edits the ABC. jarvis-app opts in; Telegram doesn't. (Telegram is not actually blockless — a
+  `buttons` block *is* an inline keyboard — which is what makes blocks a genuinely neutral concept
+  with partial implementations rather than one channel's vocabulary hoisted into the gateway. A
+  mature block layer could eventually subsume `ConfirmationUI`; designed-for, not built.)
+- **Outbox method** — the owner-addressed seam, with the same log-on-success treatment every other
+  send gets. This is what makes it reachable from the heartbeat, a reminder, a slash command, or a
+  future skill tool, all as peers of the agent's tool.
+- **Channel adapter** owns the wire mapping — an explicit table keyed by block type, deliberately
+  *not* a `to_wire()` method on the neutral model, which would put the hub's JSON inside it and
+  break the first time a second channel renders the same block — and the `PATCH`.
+- **The tool** in `tools/core/` is a thin caller: build a `Form` from model args, call the seam,
   return a description. One caller among several.
 
-**Validation lives in `FormSpec` construction**, not the adapter — a bad form should fail at the
+Inbound gets the same symmetry: the router builds one neutral `BlockAction` and dispatches by kind
+through a table (not an `if/elif` chain) — `confirmation` resolves below the LLM, `form` becomes an
+`InboundMessage`. Per-kind resolution vocabularies (`confirmed|cancelled|expired`,
+`logged|expired`, `buttons`' open string) live beside each kind's dataclass.
+
+The test of this design is the cost of the **second** kind: adding `buttons` later should be a
+dataclass in `gateway/blocks/buttons.py`, one entry in the adapter's wire table, and one entry in
+the inbound dispatch table — no edits to the ABC, the Outbox, Telegram, or `Form`. Build only
+`form` now: the `scopes` axis in `tools/registry.py` is the standing reminder of what speculative
+generality earns.
+
+**Validation lives in block construction**, not the adapter — a bad form should fail at the
 caller with a clear message the model can correct, not as a `422` inside an async send after the
 tool already returned a hopeful string. Only rules that stand on their own merits go there (units
 on multi-field rows is a real accessibility rule); genuinely hub-specific limits stay in the
 adapter.
 
-What the vendored schema does and doesn't enforce, which decides what `FormSpec` must carry:
+What the vendored schema does and doesn't enforce, which decides what `Form` must carry:
 
 - **`type`/`default` agreement is schema-enforced** — `TextField.default` is a string,
   `NumberField.default` a number, via a discriminated union on `type`. So is `minItems: 1` on a
   row's `fields`.
 - **The units-on-a-multi-field-row rule is not.** `unit` is plain optional in the schema and the
   rule lives in a hub-side validator, so violating it is a runtime `422` with no local signal.
-  This is the rule `FormSpec` most needs to catch itself.
+  This is the rule `Form` most needs to catch itself.
 - **`rows` has no `maxItems`.** The hub imposes no size limit; the ~6-row cap is purely our policy
   and should not later be "corrected" to match the wire.
 - **`default` is optional and nullable on both field types** — only `field_id` is required. The
   wire agrees a box can arrive legitimately empty, which is why mandatory defaults were rejected.
 - **`values` is refused by the send *route*, not by the type** — the contract notes Pydantic
-  cannot see which direction a block travels. The outbound `FormSpec` should therefore not have
-  the field at all, making a pre-stamped form unconstructible rather than merely forbidden.
+  cannot see which direction a block travels. The outbound `Form` therefore has no such field at
+  all, making a pre-stamped form unconstructible rather than merely forbidden.
 
-**We generate `callback_id`.** Uniqueness-per-live-form is a correctness property and shouldn't be
-delegated to a model that will happily reuse `workout-today`. The caller supplies a semantic slug
-and we append entropy — `push-day-a3f1`. Semantics from the caller, uniqueness from us.
+**We generate `callback_id`, at construction.** Uniqueness-per-live-form is a correctness property
+and shouldn't be delegated to a model that will happily reuse `workout-today`. The caller supplies
+a semantic slug and construction appends entropy — `push-day-a3f1` — so an id always exists by the
+time anyone holds a block. Semantics from the caller, uniqueness from us.
 
 **Origin routing, not the proactive default.** A form issued during a turn goes to the turn's
 origin channel, the way `get_confirmation()` resolves through `CURRENT_THREAD_ID`
@@ -153,11 +193,16 @@ arrives with no conversation around it. Proactive sends keep using the default c
 
 ### Channels that can't render a form
 
-**The seam never falls back — it reports.** An unsupported channel is a distinct `SendOutcome`, not
-a generic failure, and nothing goes out partially: either the message-with-form sends or nothing
-does, so the owner never receives a dangling opener. Every caller then decides for itself — the
-model composes prose, a code caller sends its own `notify_owner(...)`. The gateway invents no
-message.
+**The seam never falls back — it reports.** Nothing goes out partially: either the
+message-with-form sends or nothing does, so the owner never receives a dangling opener. Every
+caller then decides for itself — the model composes prose, a code caller sends its own
+`notify_owner(...)`. The gateway invents no message.
+
+`SendOutcome` itself stays untouched (a considered no-op: it is just `{ok, error}` and nothing
+branches on it structurally today). The permanent case — "this channel has no forms" — is
+distinguished from a transient failure by asking `supports_block` *before* sending, so it never
+reaches the seam and never needs its own outcome value; whatever the seam returns after a positive
+pre-flight is an ordinary transient failure.
 
 The tool turns that outcome into a directive the model recovers from inside the same turn, echoing
 the prepared values back so the recovery is a rewrite rather than a re-derivation:
@@ -185,7 +230,7 @@ together would make the value space a union of unrelated vocabularies. It's also
 not more: with the tool always bound, the decline is visible in the transcript as a `ToolMessage`,
 whereas a silently absent tool is the thing that's hard to explain when reading a log weeks later.
 The decline path is needed regardless (as the bind-then-send backstop, and as what a code caller
-reads off `SendOutcome`), so this is a strict subset of the deferred work. Revisit with telemetry
+sees from the pre-flight), so this is a strict subset of the deferred work. Revisit with telemetry
 if the model reaches for forms on form-less channels often. If it is ever built it must be
 **capability-shaped** (`requires=("forms",)`), never channel-shaped — tools must not name a
 channel. Weak supporting evidence: `scopes` was built speculatively and no tool uses it today.
@@ -240,11 +285,14 @@ Keep it; read that sentence as scoped to hub-side duplicate delivery.
 
 ## Open questions
 
-- **`PATCH` timing.** On submit arrival, or after the turn that handles it succeeds? Arrival is
-  honest to the hub's relay model and can't leave a card hanging if the turn crashes. After-the-turn
-  makes the card's state mean "this was acted on", which is how the owner will read it. Leaning
-  arrival, with the agent's reply carrying the real outcome — a UX call more than an architectural
-  one.
+- **`PATCH` timing.** On submit arrival, or after the turn that handles it succeeds? Leaning
+  **arrival**: the hub refuses a second tap while an earlier one is unacked, so a turn that dies
+  before an after-the-turn PATCH could leave the card both unresolved and un-retappable; there is
+  no `failed` state for the card to express a bad write anyway; and `logged` meaning "received"
+  is honest to the hub's relay model, with the chat reply carrying the real outcome. **To verify
+  with the hub side first:** whether "unacked" means our PATCH or the updates cursor — our fetch
+  loop advances the offset before the turn runs, so if it is the cursor, the freeze risk
+  disappears and after-the-turn becomes viable.
 - **Double-logging.** A workout logged in chat, then the stale card gets tapped. Thread context
   mostly covers it and the agent can see and mention it, but it replaces "lost state" as the
   failure mode to watch.
@@ -257,21 +305,27 @@ Keep it; read that sentence as scoped to hub-side duplicate delivery.
 
 ## Slices
 
-**0 — Contract intake.** *Blocked on the hub.* Updated `contract.md` and the new
-`PINNED_CONTRACT_VERSION`. Nothing else can start against a schema we don't have.
+**0 — Contract intake.** *Done.* `contract.md` vendored at `509c222e84e2c915` — the version the
+hub deployed and staging reports. The `PINNED_CONTRACT_VERSION` bump is deliberately deferred to
+the end of slice 3/4.
 
-**1 — Confirmation fixes.** The two bugs above. Independent of forms; ships alone.
+**1 — Confirmation fixes.** *Done; verified live on staging 2026-08-24* (confirm, cancel, re-tap,
+TTL eviction, orphan tap after a restart, Telegram regression). Shipped as its own commit.
 
-**2 — Neutral seam.** `FormSpec` + construction-time validation, `Channel.send_form` /
-`can_send_form`, the Outbox method and its unsupported outcome, Telegram declining. No callers, so
-it is testable on its own.
+**2 — Neutral seam.** The `gateway/blocks/` package (`Block`/`Interactive`/`BlockAction` +
+`Form`/`FormRow`/`TextField`/`NumberField`) with construction-time validation and `callback_id`
+generation; `Channel.supports_block`/`send_block`; the Outbox method; Telegram declining. No
+callers, so it is testable on its own.
 
-**3 — Outbound.** jarvis-app wire mapping and send; `callback_id` generation.
+**3 — Outbound.** jarvis-app wire mapping (adapter-side table keyed by block type) and send;
+origin routing via `CURRENT_THREAD_ID`. Ends with the `PINNED_CONTRACT_VERSION` bump alongside
+slice 4.
 
-**4 — Inbound.** Route `block_kind == "form"` in the router into an `InboundMessage` carrying
-rendered text plus the structured values (`null` surviving as "left empty", distinguishable from
-zero — it is the one distinction the hub went out of its way to preserve). `PATCH` per the timing
-decision above.
+**4 — Inbound.** The router builds a neutral `BlockAction` and dispatches by kind: `confirmation`
+to the store as today, `form` into an `InboundMessage` carrying rendered text plus the structured
+values (`null` surviving as "left empty", distinguishable from zero — it is the one distinction
+the hub went out of its way to preserve), persisted to `chat_history.jsonl` before the turn runs
+so a dead turn cannot lose what was typed. `PATCH` per the timing decision above.
 
 **5 — The tool.** `tools/core/`, with the size cap, the docstring guardrails, and the decline
 directive.
