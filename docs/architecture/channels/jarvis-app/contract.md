@@ -6,7 +6,7 @@
 JSON Schema plus the endpoint list, generated from the Pydantic models and
 the mounted routes under `backend/jarvis_app_backend`.
 
-`contract_version`: `b2dcd9534e07bd23`
+`contract_version`: `509c222e84e2c915`
 
 ## Endpoints
 
@@ -1126,7 +1126,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
@@ -1691,7 +1691,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
@@ -2486,7 +2486,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
@@ -3393,7 +3393,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
@@ -4166,7 +4166,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
@@ -4716,7 +4716,7 @@ the mounted routes under `backend/jarvis_app_backend`.
     },
     "TextField": {
       "additionalProperties": false,
-      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box on screen and in the\nname a screen reader composes from the row's label plus it.",
+      "description": "A free-text box. `default` is the *prepopulation*, not a hint: a form\narrives with the agent's best guess already in the box, to be corrected or\naccepted rather than composed from nothing. There is no placeholder \u2014 that\nrenders only into an empty box, which is a state nothing draws \u2014 and no\nper-field label, because `unit` is what names a box.",
       "properties": {
         "default": {
           "anyOf": [
