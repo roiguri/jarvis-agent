@@ -1,7 +1,8 @@
 # Form block — structured input from the app
 
-**Status:** in progress — slices 0–1 done (1 verified live on staging 2026-08-24); the hub is
-deployed with the form contract, so nothing remaining is blocked on it. Next: slice 2.
+**Status:** COMPLETE 2026-08-24 — slices 0–6 shipped on `feat/app-form-block`; reactive flow
+verified live on staging; the proactive run (6d) awaits a real run-day tick with the heartbeat
+toggle on. Archived with the branch.
 **Date:** 2026-08-15 (last updated 2026-08-24).
 **Branch:** `feat/app-form-block`.
 **Goal:** let a message carry a small set of labelled, prefilled boxes the owner corrects and
@@ -64,8 +65,22 @@ unblocked (the hub runs the form contract as of 2026-08-24).
   - [x] Return string describes what was asked (`Form.describe()`: field ids + prefills) —
         the thread is the store
   - [x] Decline directive on an unsupported channel, echoing the prepared values back
-- [ ] **6 · First real caller** — proactive post-workout form, prefilled from
-      `query_exercise_history`
+- [x] **6 · First real caller** — proactive post-workout form; prompt-content only
+  - [x] 6b · One bullet in `tools/fitness/SKILL.md`: prefer `send_form` prefilled from history
+        for stat collection; a `[Submitted form ...]` message is Roi reporting stats. Nothing
+        added to `prompts/heartbeat.md` — the ack-interplay rule (don't restate a sent form in
+        `notification_text`) was judged speculative prompt-hardening; add it only if live
+        ticks actually double-message. No task edits: HEARTBEAT.md is Jarvis-owned, and the
+        existing "proactively ask" wording is medium-agnostic — the skill rule picks the medium
+  - [ ] 6d · Live verification (owner-run): heartbeat toggle on, forced run-day flow end to
+        end. The default channel is already jarvis-app, so no env change; prod routing is a
+        non-question for the same reason
+  - Known limitation, deferred to jarvis-agent#50 (cross-scope context): a heartbeat-sent
+    form's submission runs on the owner's chat thread, which never saw the send — the model
+    gets callback_id + bare values, no prefills to distinguish corrections from confirmations.
+    A notification-log bridge was drafted and deliberately reverted (2026-08-24): it would
+    extend the flat prompt-slice mechanism #50 exists to replace. Semantic field ids are the
+    interim context; #50's resolution should treat block sends as first-class utterances
 
 ---
 
