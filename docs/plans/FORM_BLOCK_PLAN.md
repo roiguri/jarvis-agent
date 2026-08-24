@@ -54,7 +54,8 @@ unblocked (the hub runs the form contract as of 2026-08-24).
   - [ ] Carry structured values alongside rendered text; `null` survives as "left empty"
   - [ ] Persist the submission to `chat_history.jsonl` before the turn runs, so a dead turn
         cannot lose what was typed
-  - [ ] `PATCH` `logged` — **timing still open**, see Open questions
+  - [ ] `PATCH` `logged` after the turn completes — settled, see Open questions; a crashed
+        turn leaves the card live, and the re-tap is the recovery path
 - [ ] **5 · The tool** — `tools/core/`
   - [ ] Docstring guardrails: submit-unchanged precondition, anti-examples, evidence-only defaults
   - [ ] Return string describes what was asked (field ids + prefills) — the thread is the store
@@ -285,14 +286,18 @@ Keep it; read that sentence as scoped to hub-side duplicate delivery.
 
 ## Open questions
 
-- **`PATCH` timing.** On submit arrival, or after the turn that handles it succeeds? Leaning
-  **arrival**: the hub refuses a second tap while an earlier one is unacked, so a turn that dies
-  before an after-the-turn PATCH could leave the card both unresolved and un-retappable; there is
-  no `failed` state for the card to express a bad write anyway; and `logged` meaning "received"
-  is honest to the hub's relay model, with the chat reply carrying the real outcome. **To verify
-  with the hub side first:** whether "unacked" means our PATCH or the updates cursor — our fetch
-  loop advances the offset before the turn runs, so if it is the cursor, the freeze risk
-  disappears and after-the-turn becomes viable.
+- ~~**`PATCH` timing.**~~ **Settled (2026-08-24), from the hub's own source** (`form-renderer`
+  branch, the code staging runs): "unacked" is the updates cursor, not our PATCH — an acked
+  update is deleted, and the `already_pending` refusal keys off presence in `bot_updates`. Our
+  fetch loop acks within milliseconds of the tap, so the re-tap lock is transient and a turn that
+  dies before PATCHing leaves the card live and re-tappable, never stranded. That kills the case
+  for arrival-PATCHing, which was defensive against a freeze that cannot happen. **Decision:
+  PATCH `logged` after the turn completes.** `logged` then means the turn actually ran; a crashed
+  turn's recovery is the untouched card itself (re-tap → fresh update → the turn re-runs with
+  thread context, so the model can avoid double-logging). Two hub facts back this up: `values`
+  are stamped onto the block in the tap's own transaction, so the evidence survives our crash
+  regardless; and the hub explicitly accepts losing an update to a crash between ack and turn
+  (§7) — which is also why the submission is persisted to `chat_history.jsonl` before the turn.
 - **Double-logging.** A workout logged in chat, then the stale card gets tapped. Thread context
   mostly covers it and the agent can see and mention it, but it replaces "lost state" as the
   failure mode to watch.
