@@ -44,6 +44,14 @@ _FORBIDDEN_IMPORT = "gateway.channels"
 # Repo-relative, matched against _rel(path) so os.walk's "/./" segments normalize.
 _CHANNEL_IMPORT_EXEMPT_FILE = os.path.join("gateway", "factory.py")
 _CHANNEL_IMPORT_EXEMPT_TREE = os.path.join("gateway", "channels") + os.sep
+# A channel's own offline test harness drives that channel's internals against
+# fakes, which factory cannot hand it — conceptually part of the channel
+# package, just living in scripts/. Named per file so new scripts stay covered
+# by default.
+_CHANNEL_IMPORT_EXEMPT_TESTS = (
+    os.path.join("scripts", "test_app_blocks.py"),
+    os.path.join("scripts", "test_app_confirmation.py"),
+)
 
 # gateway/ is thin adapters + core contracts; it must not import back up into the
 # app — EXCEPT gateway/commands/ (the documented slash-command bridge).
@@ -104,7 +112,8 @@ def check_domain_imports():
     leaks = []
     for path in _py_files("."):
         rel = _rel(path)
-        if rel == _CHANNEL_IMPORT_EXEMPT_FILE or rel.startswith(_CHANNEL_IMPORT_EXEMPT_TREE):
+        if (rel == _CHANNEL_IMPORT_EXEMPT_FILE or rel.startswith(_CHANNEL_IMPORT_EXEMPT_TREE)
+                or rel in _CHANNEL_IMPORT_EXEMPT_TESTS):
             continue
         for mod, line in _imports(path):
             if mod == _FORBIDDEN_IMPORT or mod.startswith(_FORBIDDEN_IMPORT + "."):

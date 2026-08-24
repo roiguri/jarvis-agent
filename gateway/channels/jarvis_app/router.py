@@ -19,6 +19,7 @@ import re
 
 from gateway.apps import AppError, dispatch, list_apps
 from gateway.base import InboundMessage, OnMessage
+from gateway.blocks import BlockAction, render_submission
 from gateway.commands import list_commands
 from gateway.channels.jarvis_app import media_cache
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
@@ -214,6 +215,10 @@ class JarvisAppInboundRouter:
                 # The outage may have been a hub restart, which drops the
                 # in-memory command and app registries — re-declare before
                 # serving, since only this transition knows a link was re-made.
+                # A restart can equally mean a new hub version, so re-check the
+                # contract too; startup-only checking left an upgrade invisible
+                # until this process's own next restart.
+                await self._check_contract()
                 await self._declare_all()
             backoff = _BACKOFF_START_S
             for update in updates:
@@ -291,11 +296,14 @@ class JarvisAppInboundRouter:
 
     async def _handle(self, update: dict) -> None:
         if update.get("type") == "action":
-            await self._confirmation_ui.handle_action(
-                action_id=update.get("action_id"),
-                message_id=update.get("message_id"),
-                block_kind=update.get("block_kind"),
-                callback_id=update.get("callback_id"),
+            await self._handle_action(
+                BlockAction(
+                    kind=update["block_kind"],
+                    action_id=update["action_id"],
+                    message_id=update["message_id"],
+                    callback_id=update.get("callback_id"),
+                    values=update.get("values"),
+                )
             )
             return
         if update.get("type") != "message":
@@ -318,6 +326,49 @@ class JarvisAppInboundRouter:
             elif raw_attachments:
                 text = "[an attachment was sent but could not be retrieved]"
 
+        await self._run_turn(text, attachments)
+
+    async def _handle_action(self, action: BlockAction) -> None:
+        """Dispatch one tap by block kind. `confirmation` resolves below the
+        LLM via the store; `form` is content — its submission becomes an
+        ordinary inbound turn; anything else has no handler yet."""
+        if action.kind == "confirmation":
+            await self._confirmation_ui.handle_action(
+                action_id=action.action_id,
+                message_id=action.message_id,
+                block_kind=action.kind,
+                callback_id=action.callback_id,
+            )
+            return
+        if action.kind == "form":
+            await self._handle_form_submit(action)
+            return
+        logger.info(
+            "jarvis-app ignoring action for block_kind=%r (no handler yet)", action.kind
+        )
+
+    async def _handle_form_submit(self, action: BlockAction) -> None:
+        """Run a submitted form's values through the agent, then close the card.
+
+        The PATCH to `logged` comes strictly after the turn: `logged` means the
+        turn actually ran. A turn that raises leaves the card untouched — the
+        hub's re-tap guard lifts once the update is acked (which happened at
+        fetch), so the live card itself is the retry path, with thread context
+        (submission text logged before the turn) guarding against a re-run
+        double-logging.
+        """
+        await self._run_turn(render_submission(action.callback_id, action.values), [])
+        try:
+            await self._client.patch_message_state(action.message_id, "logged")
+        except Exception:
+            # The turn already ran and replied; a lost PATCH costs a card stuck
+            # on pending, which a re-tap or a later sweep can settle — never
+            # worth failing the consumed update over.
+            logger.exception(
+                "jarvis-app PATCH logged failed for form %s", action.callback_id
+            )
+
+    async def _run_turn(self, text: str, attachments: list[dict]) -> None:
         # The hub carries no per-message user id (the bot token scopes the single
         # owner), so user_id/chat_id are placeholders — nothing downstream reads
         # them; the thread id is what namespaces the conversation.
