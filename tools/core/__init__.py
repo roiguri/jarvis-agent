@@ -27,6 +27,7 @@ from tools.core.scheduling import (
     _remove_event,
 )
 from tools.core.activate_skill import activate_skill, deactivate_skill
+from tools.core.forms import send_form
 from tools.core.heartbeat import heartbeat_respond, manage_heartbeat_task
 
 __all__ = [

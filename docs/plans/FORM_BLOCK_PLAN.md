@@ -33,33 +33,37 @@ unblocked (the hub runs the form contract as of 2026-08-24).
   - [x] Keep the `ALREADY_HANDLED` guard (declining the handoff's "dead code" note)
   - [x] Verified live on staging (2026-08-24): confirm, cancel, re-tap, TTL eviction, orphan tap
         after a restart, and a Telegram regression pass
-- [ ] **2 · Neutral seam** — no callers yet, testable alone
-  - [ ] `gateway/blocks/` package: `base.py` (`Block`, `Interactive`, `BlockAction`) +
+- [x] **2 · Neutral seam** — code done 2026-08-24; offline harness green, staging test pending
+  - [x] `gateway/blocks/` package: `base.py` (`Block`, `Interactive`, `BlockAction`) +
         `form.py` (`Form`, `FormRow`, `TextField`, `NumberField`) — frozen dataclasses,
         construction-time validation, no wire shapes
-  - [ ] Size cap (~6 rows) and the units-on-multi-field-row rule enforced at construction
-  - [ ] `callback_id` generated at construction (caller slug + our entropy)
-  - [ ] `Channel.supports_block(kind)` (default `False`) + `Channel.send_block(text, block)`
+  - [x] Size cap (6 rows) and the units-on-multi-field-row rule enforced at construction
+  - [x] `callback_id` generated at construction (caller slug + our entropy)
+  - [x] `Channel.supports_block(kind)` (default `False`) + `Channel.send_block(text, block)`
         (default raises) — kind-generic, so a future kind never edits the ABC
-  - [ ] Outbox method; never a partial send. `SendOutcome` unchanged — `supports_block` is the
-        pre-flight, so the permanent case never reaches the seam
-  - [ ] Telegram declines (implements neither)
-- [ ] **3 · Outbound** — jarvis-app
-  - [ ] Wire mapping in the channel adapter, as a table keyed by block type (no `to_wire()` on
-        the neutral model)
-  - [ ] Origin routing via `CURRENT_THREAD_ID`, not the proactive default
-- [ ] **4 · Inbound** — jarvis-app
-  - [ ] Router builds a neutral `BlockAction`; dispatch by kind is a table, not an `if/elif`
-        chain — `confirmation` resolves below the LLM, `form` becomes an `InboundMessage`
-  - [ ] Carry structured values alongside rendered text; `null` survives as "left empty"
-  - [ ] Persist the submission to `chat_history.jsonl` before the turn runs, so a dead turn
-        cannot lose what was typed
-  - [ ] `PATCH` `logged` after the turn completes — settled, see Open questions; a crashed
-        turn leaves the card live, and the re-tap is the recovery path
-- [ ] **5 · The tool** — `tools/core/`
-  - [ ] Docstring guardrails: submit-unchanged precondition, anti-examples, evidence-only defaults
-  - [ ] Return string describes what was asked (field ids + prefills) — the thread is the store
-  - [ ] Decline directive on an unsupported channel, echoing the prepared values back
+  - [x] Outbox `send_block_to_owner`; never a partial send. `SendOutcome` unchanged —
+        `supports_block` is the pre-flight, so the permanent case never reaches the seam
+  - [x] Telegram declines (inherits both defaults; implements neither)
+- [x] **3 · Outbound** — jarvis-app; code done 2026-08-24
+  - [x] Wire mapping in the channel adapter (`_BLOCK_WIRE` table keyed by block type; no
+        `to_wire()` on the neutral model); output validated against the vendored FormBlock schema
+  - [x] Origin routing via `CURRENT_THREAD_ID` (`factory.origin_channel`/`origin_outbox`)
+  - [x] `PINNED_CONTRACT_VERSION` bumped to `509c222e84e2c915`
+  - [x] Rider: the contract check now re-runs on reconnect, not only at startup
+- [x] **4 · Inbound** — jarvis-app; code done 2026-08-24
+  - [x] Router builds a neutral `BlockAction`; dispatch by kind — `confirmation` resolves below
+        the LLM, `form` becomes an inbound turn, other kinds fall through
+  - [x] `null` survives as "left empty" in the rendered turn text (`render_submission`)
+  - [x] Submission persisted to `chat_history.jsonl` before the turn — free: the shared
+        `process_inbound_message` already logs user text before `ask_jarvis`
+  - [x] `PATCH` `logged` strictly after the turn; a crashed turn leaves the card live (re-tap
+        is the recovery), a failed PATCH is logged and never fails the consumed update
+- [x] **5 · The tool** — `tools/core/forms.py`; code done 2026-08-24
+  - [x] Docstring guardrails: submit-unchanged precondition, anti-examples, evidence-only
+        defaults, "(left empty) is an explicit no-value"
+  - [x] Return string describes what was asked (`Form.describe()`: field ids + prefills) —
+        the thread is the store
+  - [x] Decline directive on an unsupported channel, echoing the prepared values back
 - [ ] **6 · First real caller** — proactive post-workout form, prefilled from
       `query_exercise_history`
 
