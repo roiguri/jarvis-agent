@@ -14,13 +14,19 @@ mechanism is a gateway capability with several possible callers; the agent's too
 Slice detail is at the bottom; this is the tracking view. Slice 0 gates 2–6; slice 1 is
 independent and can land first.
 
-- [ ] **0 · Contract intake** — *blocked on the hub*
-  - [ ] Updated `contract.md` in `docs/architecture/channels/jarvis-app/`
-  - [ ] New `PINNED_CONTRACT_VERSION` in `gateway/channels/jarvis_app/client.py`
-- [ ] **1 · Confirmation fixes** — independent of forms
-  - [ ] Expire an orphaned `callback_id` using the action update's own `message_id`
-  - [ ] Retain `callback_id → (message_id, settled_state)` past resolution so a re-tap re-affirms
-  - [ ] Keep the `ALREADY_HANDLED` guard (declining the handoff's "dead code" note)
+- [x] **0 · Contract intake**
+  - [x] Updated `contract.md` in `docs/architecture/channels/jarvis-app/` (`b2dcd9534e07bd23`)
+  - [ ] Bump `PINNED_CONTRACT_VERSION` in `gateway/channels/jarvis_app/client.py` — deferred to
+        the end of slice 3/4, since it names the version the adapter *speaks*, and silencing the
+        skew warning before then hides the one signal that matters mid-build
+- [x] **1 · Confirmation fixes** — independent of forms
+  - [x] Expire an orphaned `callback_id` using the action update's own `message_id`
+  - [x] Retain `callback_id → settled_state` past resolution so a re-tap re-affirms. Only the
+        *state* needs retaining, not the message id: `handle_action` records the tap's own
+        `message_id`, so the handle a restart forgets is handed back by the update that needs it
+  - [x] Learn the settled state from a `MessageAlreadyResolved` refusal, so a further tap
+        re-affirms what actually stands rather than losing the same argument again
+  - [x] Keep the `ALREADY_HANDLED` guard (declining the handoff's "dead code" note)
 - [ ] **2 · Neutral seam** — no callers yet, testable alone
   - [ ] `FormSpec` in `gateway/`, channel-agnostic, with construction-time validation
   - [ ] Size cap (~6 rows) enforced at construction
@@ -120,6 +126,22 @@ tool already returned a hopeful string. Only rules that stand on their own merit
 on multi-field rows is a real accessibility rule); genuinely hub-specific limits stay in the
 adapter.
 
+What the vendored schema does and doesn't enforce, which decides what `FormSpec` must carry:
+
+- **`type`/`default` agreement is schema-enforced** — `TextField.default` is a string,
+  `NumberField.default` a number, via a discriminated union on `type`. So is `minItems: 1` on a
+  row's `fields`.
+- **The units-on-a-multi-field-row rule is not.** `unit` is plain optional in the schema and the
+  rule lives in a hub-side validator, so violating it is a runtime `422` with no local signal.
+  This is the rule `FormSpec` most needs to catch itself.
+- **`rows` has no `maxItems`.** The hub imposes no size limit; the ~6-row cap is purely our policy
+  and should not later be "corrected" to match the wire.
+- **`default` is optional and nullable on both field types** — only `field_id` is required. The
+  wire agrees a box can arrive legitimately empty, which is why mandatory defaults were rejected.
+- **`values` is refused by the send *route*, not by the type** — the contract notes Pydantic
+  cannot see which direction a block travels. The outbound `FormSpec` should therefore not have
+  the field at all, making a pre-stamped form unconstructible rather than merely forbidden.
+
 **We generate `callback_id`.** Uniqueness-per-live-form is a correctness property and shouldn't be
 delegated to a model that will happily reuse `workout-today`. The caller supplies a semantic slug
 and we append entropy — `push-day-a3f1`. Semantics from the caller, uniqueness from us.
@@ -200,7 +222,10 @@ fixing whether or not forms ship.
    hits `ALREADY_HANDLED` (`gateway/confirmation/store.py:139`), which maps to `None` in
    `_WIRE_STATE` (`gateway/channels/jarvis_app/confirmation.py:31`) and returns without `PATCH`ing.
    After a restart the owner's card sits live forever. The fix is in the handoff's own detail: the
-   action update carries `message_id`, so expiring an orphan never needed the in-memory map.
+   action update carries `message_id`, so expiring an orphan never needed the in-memory map. The
+   contract says as much directly — `callback_id` sits on the payload precisely so an agent can
+   resolve a decision "without keeping a `message_id`→handle map it would lose on each deploy",
+   which is the map `_message_ids` is.
 2. **"Re-affirm, don't expire" is impossible as written.** `apply_outcome` does
    `self._message_ids.pop(...)` (`gateway/channels/jarvis_app/confirmation.py:60`), discarding the
    handle at resolution. Re-affirming needs `callback_id → (message_id, settled_state)` retained
