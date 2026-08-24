@@ -28,6 +28,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │   ├── outbox.py          # Outbox — single owner-send seam (log-on-success, SendOutcome, thread→loop bridge)
 │   ├── factory.py         # per-channel build_*_stack(); default_outbox(); get_confirmation(); default_owner_thread_id()
 │   ├── confirmation/      # Confirmation/ConfirmationUI ABCs + InMemoryConfirmationStore
+│   ├── blocks/            # Neutral interactive-block contracts (Form + BlockAction); channel
+│   │                      #   adapters map them to their wire (see GATEWAY.md § Interactive Blocks)
 │   ├── commands/          # Channel-agnostic slash-command dispatch (pre-LLM short-circuit)
 │   ├── apps/              # Channel-agnostic structured surfaces — request/response, no model
 │   ├── channels/          # Concrete channels, one dir each (telegram/, jarvis_app/) — ONLY channel-specific code

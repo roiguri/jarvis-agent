@@ -115,6 +115,30 @@ class Outbox:
         await self._log(event, caption or f"[{kind}]", metadata)
         return SendOutcome(ok=True)
 
+    async def send_block_to_owner(
+        self,
+        text: str,
+        block,
+        *,
+        event: str | None = None,
+        metadata: dict | None = None,
+    ) -> SendOutcome:
+        """Send text with an interactive block attached (gateway.blocks). Same
+        logging/failure semantics as notify_owner; never a partial send — the
+        channel delivers both or neither. Callers pre-flight with
+        channel.supports_block(); an unsupported kind surfacing here is still
+        just a failed SendOutcome, never a raise."""
+        try:
+            await self._channel.send_block(text, block)
+        except Exception as e:
+            logger.exception(
+                "Outbox: failed to send owner block (kind=%s, event=%s)",
+                block.kind, event,
+            )
+            return SendOutcome(ok=False, error=str(e))
+        await self._log(event, text, metadata)
+        return SendOutcome(ok=True)
+
     async def _log(self, event: str | None, text: str, metadata: dict | None) -> None:
         """Notification logging must never turn a delivered message into a
         reported failure — the send already happened."""

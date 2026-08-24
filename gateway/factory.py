@@ -156,6 +156,30 @@ def default_outbox() -> Outbox:
     return _default_entry().outbox
 
 
+def _origin_entry() -> _Registered:
+    """The registered channel of the running turn's origin thread, falling back
+    to the proactive default for origin-less turns (heartbeat) — the same
+    routing rule get_confirmation() applies, over the send registry."""
+    thread_id = turn_context.current_thread_id()
+    if thread_id:
+        entry = _registry.get(thread_id.split("_", 1)[0])
+        if entry is not None:
+            return entry
+    return _default_entry()
+
+
+def origin_channel() -> Channel:
+    """The origin channel of the running turn — what a tool consults for
+    capability (e.g. supports_block) before composing anything for it."""
+    return _origin_entry().channel
+
+
+def origin_outbox() -> Outbox:
+    """The origin channel's outbox — where a tool-initiated send belongs, so
+    what a turn produces lands on the channel the turn came from."""
+    return _origin_entry().outbox
+
+
 def register_confirmation(name: str, store: Confirmation) -> None:
     """Register a channel's confirmation store under its channel name."""
     _confirmation_stores[name] = store
