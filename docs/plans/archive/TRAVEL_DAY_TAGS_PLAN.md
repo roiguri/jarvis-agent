@@ -1,6 +1,6 @@
 # Travel — day tags
 
-**Status:** planned, not started.
+**Status:** COMPLETE — shipped via feat/travel-day-tags (PR #87, merged 2026-08); archived.
 **Date:** 2026-08-07.
 **Goal:** a day-level label on a trip ("beach", "rest day"), freeform, spanning one or more dates,
 with an optional description — rendered on the day header, not as a timeline item.

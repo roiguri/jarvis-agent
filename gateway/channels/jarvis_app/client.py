@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # The version the adapter was written against. The hub reports its own
 # contract_version on GET /v1/health; a mismatch is logged, never fatal — the hub
 # already 422s a malformed payload, so this only gives a *silent* skew a voice.
-PINNED_CONTRACT_VERSION = "45e79b46aed20391"
+PINNED_CONTRACT_VERSION = "509c222e84e2c915"
 
 # The hanging poll's server-side wait. The client read timeout sits a little above
 # it so a genuinely dead connection eventually errors instead of hanging forever.

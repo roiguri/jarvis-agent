@@ -24,6 +24,7 @@ except ImportError:
     Image = None
 
 from gateway.base import Channel
+from gateway.blocks import Form
 from gateway.channels.jarvis_app.client import HubClient
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,40 @@ def _image_metadata(payload: bytes) -> dict:
         return {}
 
 
+# Neutral block -> hub wire payload. One entry per kind this channel renders;
+# the mapping lives here (not as a to_wire() on the neutral model) because the
+# JSON is this hub's vocabulary, and a second channel rendering the same block
+# would need a different one.
+def _form_wire(form: Form) -> dict:
+    payload: dict = {
+        "callback_id": form.callback_id,
+        "title": form.title,
+        "rows": [
+            {
+                "label": row.label,
+                "fields": [
+                    {
+                        "field_id": f.field_id,
+                        "type": f.type,
+                        **({"unit": f.unit} if f.unit is not None else {}),
+                        **({"default": f.default} if f.default is not None else {}),
+                    }
+                    for f in row.fields
+                ],
+            }
+            for row in form.rows
+        ],
+    }
+    if form.subtitle:
+        payload["subtitle"] = form.subtitle
+    if form.submit_label:
+        payload["submit_label"] = form.submit_label
+    return {"kind": form.kind, "summary": form.summary, "payload": payload}
+
+
+_BLOCK_WIRE = {Form: _form_wire}
+
+
 class JarvisAppChannel(Channel):
     name = "jarvis-app"
 
@@ -126,6 +161,19 @@ class JarvisAppChannel(Channel):
         if caption:
             body["text"] = caption
         await self._client.send_message(body)
+
+    def supports_block(self, kind: str) -> bool:
+        return any(cls.kind == kind for cls in _BLOCK_WIRE)
+
+    async def send_block(self, text: str, block) -> None:
+        # One POST carries text and block together, so the all-or-nothing
+        # contract holds without any compensation logic.
+        to_wire = _BLOCK_WIRE.get(type(block))
+        if to_wire is None:
+            raise NotImplementedError(
+                f"jarvis-app cannot render block kind={getattr(block, 'kind', '?')!r}"
+            )
+        await self._client.send_message({"text": text, "blocks": [to_wire(block)]})
 
     def authorize(self, raw_user_id: str) -> bool:
         # The bot token scopes the hub to the single owner, so inbound updates are

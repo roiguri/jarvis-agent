@@ -320,6 +320,87 @@ A channel publishes the manifest only if it has an Apps surface; one that doesn'
 
 ---
 
+## Interactive Blocks
+
+A block is structured content a message can carry beyond text — today a **form**
+(labelled, prefilled boxes the owner corrects and submits in one tap); the hub's
+contract also defines `buttons` and `card`, unbuilt here. The layer lives in
+`gateway/blocks/` and is deliberately **kind-generic**: adding a kind touches the
+neutral model and one channel adapter's table, never the `Channel` ABC, the
+Outbox, or another channel.
+
+### Module shape
+
+```
+gateway/blocks/
+├── base.py    # Block (kind, summary) · Interactive(Block) adds callback_id
+│              #   · BlockAction — one neutral inbound tap
+└── form.py    # Form / FormRow / TextField / NumberField + validation
+               #   + render_submission() (submitted values -> turn text)
+```
+
+Blocks are frozen dataclasses describing *intent*, never wire shape. All
+validation runs at construction, so a bad form fails at its caller with a
+correctable message rather than as a hub 422 inside an async send: row cap (6),
+units on every field of a multi-field row, type/default agreement (bools
+refused), unique snake_case field ids, non-empty title and summary.
+`callback_id` is always generated (caller slug + entropy, `push-day-a3f1`) —
+uniqueness is never the caller's job. `Form` has **no `values` field**: that
+records what the owner submitted, stamped by the hub on the tap, so a
+pre-stamped form is unconstructible rather than merely forbidden.
+
+### A form is content, not a protocol
+
+Unlike a confirmation — whose store holds a live `action_fn` genuinely pending
+approval — a form defers nothing. Nothing is pending while it sits untapped, so
+there is **no pending store, no TTL, no sweep**, and a restart forgets nothing
+that matters. The LangGraph thread is the only store: the sending tool's return
+string records what was asked (field ids + prefills), and the submit lands in a
+context that contains the question.
+
+### Outbound
+
+```
+caller ──▶ channel.supports_block(kind)?      # pre-flight — decides "this
+   │            no ──▶ caller's own fallback  #   channel has no forms"
+   ▼ yes
+origin_outbox().send_block_to_owner(text, block) ──▶ Channel.send_block(text, block)
+   │                                                   (one POST: text + block,
+   └─ returns SendOutcome — never raises                all-or-nothing)
+```
+
+The seam never invents a fallback: on a channel that can't render the kind,
+nothing is sent and the caller decides — the model says it conversationally
+(the `send_form` tool returns the prepared prefills as a directive), a code
+caller sends its own `notify_owner(...)`. Nothing goes out partially, so the
+owner never gets a dangling opener pointing at a card that isn't there. Wire
+mapping is an adapter-side table keyed by block type (`_BLOCK_WIRE` in the
+jarvis-app channel) — deliberately not a `to_wire()` on the neutral model,
+which would bake one hub's JSON into it.
+
+### Inbound
+
+The channel router translates a tap into a neutral `BlockAction(kind,
+action_id, message_id, callback_id, values)` and dispatches by kind:
+`confirmation` resolves below the LLM via the store (Plane 3); `form` becomes
+an ordinary inbound turn — `render_submission()` turns the values into text
+(`[Submitted form push-day-a3f1] bench_reps: 8 · core: (left empty)`; `null`
+stays visibly distinct from zero, the one distinction the hub preserves), which
+is persisted to `chat_history.jsonl` by the shared handler before the model
+runs. No deterministic handler touches a database on submit — what to do with
+the values is the model's decision in thread context.
+
+**A form's card is closed by `PATCH {state: "logged"}` strictly *after* the
+turn completes.** A turn that dies leaves the card live — and that is the
+recovery path: the hub's re-tap guard lifts once the update is acked (which
+happens at fetch), so the owner re-taps and the turn re-runs with thread
+context. A failed PATCH after a successful turn is logged and never fails the
+consumed update. The form vocabulary is `logged | expired` (no `cancelled` — a
+form has nothing to decline); expiry is nobody's job today, since with no
+pending store a stale card costs nothing.
+
+---
+
 ## Contracts
 
 ### `InboundMessage` (`gateway/base.py`)
@@ -365,6 +446,10 @@ class Channel(ABC):
         """Default: collect chunks, then send once. Streaming channels override."""
         full = "".join([c async for c in chunks])
         await self.send(chat_id, full)
+
+    # Interactive blocks (gateway/blocks/) — optional, kind-generic:
+    def supports_block(self, kind: str) -> bool:          # default False
+    async def send_block(self, text: str, block) -> None: # default raises NotImplementedError
 ```
 
 | Method | Purpose | Notes |
@@ -374,6 +459,8 @@ class Channel(ABC):
 | `authorize` | Is this user allowed to use Jarvis on this channel? | Single allowlist per channel today; can grow later. |
 | `owner_thread_id` | Agent thread id of the owner's conversation. | Same value the channel's router stamps on inbound messages; lets domain code address the owner's thread without knowing the format. |
 | `send_stream` | Streaming send (TTS, partial reply). | Default collect-then-send; voice channels override. |
+| `supports_block` | Can this channel render block `kind`? | The pre-flight callers consult before composing; default `False`, channels opt in. |
+| `send_block` | Owner-addressed text + interactive block, all-or-nothing. | Called via `Outbox.send_block_to_owner`. Default raises; a new kind never edits the ABC. |
 
 Lifecycle is deliberately **not** on the ABC: bring-up/tear-down is owned by the channel *package* (Telegram: `gateway/channels/telegram/host.py` wraps the PTB Application; the factory returns a stack with `start()`/`stop()`). A former abstract `start(on_message)` was removed once the host pattern left it with no caller.
 
@@ -395,6 +482,7 @@ class Outbox:
     def __init__(self, channel: Channel, log_sink: LogSink | None): ...
     async def notify_owner(text, *, event=None, metadata=None) -> SendOutcome
     async def notify_owner_media(kind, payload, caption=None, *, event=None, metadata=None) -> SendOutcome
+    async def send_block_to_owner(text, block, *, event=None, metadata=None) -> SendOutcome
 ```
 
 The single seam for owner-addressed sends (see Plane 2). `default_outbox()` in `gateway/factory.py` is how domain code reaches it; `LogSink` is injected by the host (`async_append_notification_log`) so the gateway stays free of tools-layer imports.
@@ -533,7 +621,7 @@ Jarvis takes option (2). Each channel's factory reads its owner-config env and p
 
 The factory reads the env value and passes it into the channel constructor; nowhere else in the codebase reads it (`main.py` only calls `load_dotenv` — it never sees channel config).
 
-Domain code reaches channels through factory accessors, never through a channel object. **Proactive** sends use `default_outbox()`, which resolves the configured default channel (`JARVIS_DEFAULT_CHANNEL`, default `telegram`) at call time through a name-keyed registry; `default_owner_thread_id()` addresses the owner's thread on that default channel, for origin-less owner-addressed routing. **Reactive** traffic follows its origin channel instead: a resolved confirmation acks on the thread it came from (the store carries its own channel's thread/outbox), and `get_confirmation()` resolves the origin channel's store from the running turn's `CURRENT_THREAD_ID`. Today every accessor resolves to the single Telegram channel; when a second channel ships, "which channel does this target" is a routing decision that lives in `factory.py`, not in callers.
+Domain code reaches channels through factory accessors, never through a channel object. **Proactive** sends use `default_outbox()`, which resolves the configured default channel (`JARVIS_DEFAULT_CHANNEL`, default `telegram`) at call time through a name-keyed registry; `default_owner_thread_id()` addresses the owner's thread on that default channel, for origin-less owner-addressed routing. **Reactive** traffic follows its origin channel instead: a resolved confirmation acks on the thread it came from (the store carries its own channel's thread/outbox), and `get_confirmation()` resolves the origin channel's store from the running turn's `CURRENT_THREAD_ID`. `origin_channel()` / `origin_outbox()` apply the same origin rule to what a turn *produces* — a tool-initiated send (e.g. `send_form`) consults the origin channel's capability and sends on its outbox, falling back to the default entry for origin-less turns. The failure modes differ on purpose: `get_confirmation()` **raises** when the resolved channel has no store (a destructive tool with nowhere to confirm is a wiring bug), while `origin_*` **falls back** to the default (an origin-less turn is a normal case). "Which channel does this target" is a routing decision that lives in `factory.py`, not in callers.
 
 ---
 

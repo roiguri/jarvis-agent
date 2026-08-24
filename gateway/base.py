@@ -91,3 +91,21 @@ class Channel(ABC):
         """Default: collect chunks, then send once. Streaming channels override."""
         full = "".join([c async for c in chunks])
         await self.send(chat_id, full)
+
+    # ------------------------------------------------------------------
+    # Interactive blocks (gateway/blocks/) — optional per channel, and
+    # deliberately kind-generic: a new block kind never edits this ABC.
+    # ------------------------------------------------------------------
+
+    def supports_block(self, kind: str) -> bool:
+        """Whether this channel can render block `kind`. The pre-flight callers
+        consult *before* composing — so "this channel has no forms" is decided
+        here, and a send that still fails is an ordinary transient failure."""
+        return False
+
+    async def send_block(self, text: str, block) -> None:
+        """Send `text` to the owner with `block` (a gateway.blocks.Block)
+        attached. All-or-nothing: a channel must never deliver the text without
+        the block, or the owner gets a dangling opener pointing at a card that
+        isn't there."""
+        raise NotImplementedError(f"{self.name} does not render blocks")
