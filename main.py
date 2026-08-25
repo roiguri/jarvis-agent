@@ -66,6 +66,7 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         ask_jarvis,
         inbound.user_text,
         inbound.thread_id,
+        channel=inbound.channel or None,
         media_attachments=[
             {
                 "kind": a.get("kind"),

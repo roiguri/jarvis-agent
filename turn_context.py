@@ -25,6 +25,14 @@ CURRENT_SCOPE: ContextVar[str | None] = ContextVar("current_scope", default=None
 CURRENT_THREAD_ID: ContextVar[str | None] = ContextVar("current_thread_id", default=None)
 
 
+# The running turn's origin channel name (e.g. "telegram", "jarvis-app");
+# None outside a turn and on origin-less turns (heartbeat). Set by ask_jarvis
+# from the value the channel's router stamped on the InboundMessage — the
+# thread id used to double as this marker via its prefix, but the two are
+# separate facts and the owner thread is about to stop naming a channel.
+CURRENT_CHANNEL: ContextVar[str | None] = ContextVar("current_channel", default=None)
+
+
 def current_scope() -> str:
     """The running turn's scope, defaulting to 'user' outside a turn."""
     return CURRENT_SCOPE.get() or "user"
@@ -33,3 +41,8 @@ def current_scope() -> str:
 def current_thread_id() -> str | None:
     """The running turn's thread id, or None outside a turn."""
     return CURRENT_THREAD_ID.get()
+
+
+def current_channel() -> str | None:
+    """The running turn's origin channel name, or None for origin-less turns."""
+    return CURRENT_CHANNEL.get()

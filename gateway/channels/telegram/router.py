@@ -217,6 +217,10 @@ class TelegramInboundRouter:
             logger.exception("Error flushing media group %s", group_id)
 
     async def _dispatch(self, inbound: InboundMessage) -> None:
+        # One funnel serves every handler, so the origin marker is stamped
+        # here rather than at each construction site.
+        inbound.channel = self._channel.name
+
         async def keep_typing() -> None:
             while True:
                 await self._channel.send_chat_action(inbound.chat_id, "typing")

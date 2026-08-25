@@ -234,20 +234,27 @@ class Blockless:
 
 factory._registry["telegram"] = factory._Registered(Blockless(), Outbox(Blockless()))
 
-tok = turn_context.CURRENT_THREAD_ID.set("jarvis-app_owner")
+tok = turn_context.CURRENT_CHANNEL.set("jarvis-app")
 out = send_form.func(**ARGS)
 check("tool sends on the origin channel",
       out.startswith("Sent form push-day-") and "bench_reps=8 reps" in out)
 check("hub got text + form", (fc.sent[0]["text"], fc.sent[0]["blocks"][0]["kind"]),
       ("Push day — fill in what you hit.", "form"))
-turn_context.CURRENT_THREAD_ID.reset(tok)
+turn_context.CURRENT_CHANNEL.reset(tok)
 
-tok = turn_context.CURRENT_THREAD_ID.set("telegram_42")
+tok = turn_context.CURRENT_CHANNEL.set("telegram")
 out = send_form.func(**ARGS)
 check("blockless origin declines with the prefills",
       out.startswith("Forms aren't available on telegram — nothing was sent")
       and "bench_reps=8 reps" in out)
-turn_context.CURRENT_THREAD_ID.reset(tok)
+turn_context.CURRENT_CHANNEL.reset(tok)
+
+# Origin-less turn (heartbeat): no channel set -> resolves to the default entry.
+factory.set_default_channel("telegram")
+out = send_form.func(**ARGS)
+check("origin-less turn falls back to the default channel",
+      out.startswith("Forms aren't available on telegram"))
+factory.set_default_channel("jarvis-app")
 
 out = send_form.func(**{**ARGS, "rows": [{"label": "Bench", "fields": [
     {"field_id": "reps", "type": "choice"}]}]})
@@ -283,12 +290,12 @@ class Hanging:
 
 factory._registry["jarvis-app"] = factory._Registered(Hanging(), Outbox(Hanging()))
 forms_mod._SEND_TIMEOUT_S = 0.2
-tok = turn_context.CURRENT_THREAD_ID.set("jarvis-app_owner")
+tok = turn_context.CURRENT_CHANNEL.set("jarvis-app")
 out = send_form.func(**ARGS)
 check("timeout returns delivery-unknown directive",
       out.startswith("Error: the form send was not confirmed")
       and "Do not send it again" in out)
-turn_context.CURRENT_THREAD_ID.reset(tok)
+turn_context.CURRENT_CHANNEL.reset(tok)
 factory._registry["jarvis-app"] = factory._Registered(app_channel, Outbox(app_channel))
 
 loop.call_soon_threadsafe(loop.stop)

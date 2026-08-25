@@ -612,6 +612,7 @@ def ask_jarvis(
     scope: str = "user",
     turn_id: str | None = None,
     heartbeat_due_tasks: list[str] | None = None,
+    channel: str | None = None,
 ) -> str:
     """
     Encapsulates the agent execution and parses complex LangChain message blocks into a clean string.
@@ -629,6 +630,9 @@ def ask_jarvis(
         heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
             blocks injected into the system prompt to these task names.
             None injects the full file. Overwritten in state every turn.
+        channel: origin channel name stamped by the channel's router, or None
+            for origin-less turns (heartbeat). Published via CURRENT_CHANNEL
+            for confirmation/block routing; never model-visible.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -643,6 +647,7 @@ def ask_jarvis(
     _tid_token = telemetry.TURN_ID.set(turn_id)
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
+    _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -840,6 +845,7 @@ def ask_jarvis(
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
+        turn_context.CURRENT_CHANNEL.reset(_channel_token)
 
 
 def _ack_from_messages(messages) -> dict | None:
