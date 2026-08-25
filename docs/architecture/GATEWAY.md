@@ -410,12 +410,13 @@ pending store a stale card costs nothing.
 class InboundMessage:
     user_id: int            # external system's user identifier (raw)
     chat_id: int            # external system's chat/conversation identifier
-    thread_id: str          # canonical agent thread ID, "<channel>_<id>" (see thread_id namespacing)
+    thread_id: str          # agent thread ID — OWNER_THREAD_ID for all owner traffic (see thread_id namespacing)
     user_text: str          # the user's text content (or a placeholder like "[IMAGE attachment]")
+    channel: str            # Channel.name of the producer — the turn's origin marker for routing
     attachments: list[dict] # media: kind, path (ABSOLUTE, channel-produced), mime_type, source
 ```
 
-The `thread_id` is the **only** field the agent layer uses to namespace per-conversation state. Channels are responsible for producing a stable, channel-prefixed thread_id.
+`thread_id` namespaces per-conversation state; `channel` carries the turn's origin (the thread id names no channel).
 
 ### `Channel` ABC (`gateway/base.py`)
 
