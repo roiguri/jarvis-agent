@@ -66,13 +66,19 @@ One script, `scripts/context_report.py`, printing from data that already exists 
 
 Run once → baseline table below. Re-run at the end of each phase; the deltas are the verification.
 
-| Reading (per scope) | Baseline (date: ) | After 1b | After 1d |
+Baseline taken 2026-08-25 (`JARVIS_ROOT=/app … --days 7` — **prod data, read-only**; staging's
+traffic is dev noise). One known-unparseable turns.jsonl line reported and skipped.
+
+| Reading | Baseline 2026-08-25 | After 1b | After 1d |
 |---|---|---|---|
-| user input/turn | | | |
-| heartbeat input/turn | | | |
-| user cache ratio | | | |
-| checkpoint bytes (owner thread(s)) | | | |
-| user prompt: notification-slice bytes | | | (retired) |
+| user input/turn | 83,203 (53 turns; 2.55 llm calls/turn) | | |
+| heartbeat input/turn | 67,561 (110 turns; 3.80 llm calls/turn) | | |
+| user cache ratio | 36.7% (heartbeat: 41.8%) | | |
+| checkpoint bytes, owner threads | telegram 48,106 + jarvis-app 67,590 (heartbeat thread: 51,241) | one thread: | |
+| user prompt total (chars) | 7,831 at 05:48 UTC — before any notification slice; the slice varies 0–~5k with time of day, so compare same-time runs | | (slice retired) |
+
+Context for the trend: user input/turn was 46.7k at the 07-16 baseline and 78.6k at 08-06
+(PROBLEMS.md §0) — still climbing; the user scope is where window weight lands.
 
 ## Phase 1 — one conversation, with the background in it
 
