@@ -630,9 +630,8 @@ def ask_jarvis(
         heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
             blocks injected into the system prompt to these task names.
             None injects the full file. Overwritten in state every turn.
-        channel: origin channel name stamped by the channel's router, or None
-            for origin-less turns (heartbeat). Published via CURRENT_CHANNEL
-            for confirmation/block routing; never model-visible.
+        channel: origin channel name (router-stamped), or None for
+            origin-less turns. Published via CURRENT_CHANNEL.
     """
     config = {"configurable": {"thread_id": thread_id}}
 

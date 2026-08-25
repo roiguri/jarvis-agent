@@ -29,10 +29,7 @@ class InboundMessage:
     chat_id: int
     thread_id: str
     user_text: str
-    # Name of the producing channel (Channel.name) — the turn's origin marker
-    # for confirmation/block routing, stamped by the channel's router. Carried
-    # explicitly because the thread id no longer implies it once every channel
-    # shares the owner thread.
+    # Channel.name of the producer — the turn's origin marker for routing.
     channel: str = ""
     # Each: {kind, path, mime_type, source}. `path` is an ABSOLUTE,
     # channel-produced filesystem path the agent opens as-is — the channel
