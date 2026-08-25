@@ -98,7 +98,7 @@ turn, not at delivery time.
 
 *Mechanism.* No new store and no new writer: `notifications.jsonl` — which the Outbox already
 writes on delivery success — **is** the pending queue. A code-owned cursor
-(`jarvis_data/gateway/mirror_cursor.json`, the timestamp of the last mirrored row) marks progress.
+(`jarvis_data/agent/mirror_cursor.json`, the timestamp of the last mirrored row) marks progress.
 At the start of a user-scope turn on the owner thread (both conditions — heartbeat scope never
 drains), `ask_jarvis` reads rows newer than the cursor and coalesces them into **one user-role
 message** with provenance per line, passed in the same `invoke` input ahead of the user's message:
@@ -175,6 +175,12 @@ latest-one-wins, which could discard a real 03:00 sync behind a 07:00 cleanup; t
 mechanism is a per-turn state field overwritten every turn, exactly the `heartbeat_due_tasks`
 pattern; `get_notification_history` filters outcome rows so they don't surface as "notifications
 sent". The shared cursor already gives delivered-once for both kinds — no second stamp.
+
+**Open at 1d implementation — the file-naming fork:** outcome rows stretch the file's name (an
+outcome is not a notification). Decide then between keep-one-file-and-filter (as specified above)
+and a separate outcomes file (honest names, but a second file + stamp). Renaming
+`notifications.jsonl` itself is off the table: the log's identity — what was delivered — is
+unchanged by 1c, and the queue is the cursor's *view* of the log, not the file.
 
 Close #50 at the end of 1d.
 

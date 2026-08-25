@@ -22,6 +22,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
+├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
 ├── gateway/               # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
 │   ├── base.py            # Channel ABC + InboundMessage (neutral contracts)
@@ -59,6 +60,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
 ├── scheduling/scheduled_events.json# pending reminders (scheduler-owned)
 ├── heartbeat/state.json            # code-owned per-task last_run stamps (heartbeat_state.py; gate input)
+├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 └── logs/
     ├── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
     └── turns.jsonl, tool_calls.jsonl            # 90-day JSONL, app-only (observability/), agent never reads
@@ -106,13 +108,14 @@ Assembly order:
 SOUL.md            (memory dir — user-curated identity; agent-writable w/ confirmation)
 prompts/AGENTS.md  (code — operating rules; outside the memory sandbox, deploy-only)
 USER.md            (memory dir — durable user profile; agent-writable, no confirm)
-─ user scope ──────────  _USER_FRAMING + today's daily log + today's heartbeat notifications
+─ user scope ──────────  _USER_FRAMING + today's daily log (proactive sends reach the
+                         thread as mirrored history via the pending-mirror drain, not the prompt)
 ─ heartbeat scope ─────  _HEARTBEAT_FRAMING + prompts/heartbeat.md + HEARTBEAT.md
                          + today's user chat + yesterday's daily log
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
 ```
 
-**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives today's heartbeat-sent notifications (filtered from `notifications.jsonl` by `event="heartbeat"`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent without calling `get_notification_history`. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
+**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
 
 `MEMORY.md` is **not** injected — the agent reads it on demand via the memory tools (AGENTS.md instructs it to consult the index). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
 
