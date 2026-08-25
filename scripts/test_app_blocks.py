@@ -170,7 +170,7 @@ router, fc, ui = build_router(ok_turn)
 asyncio.run(router._handle(submit_update({"bench_reps": 8, "core": None})))
 check("submit runs a turn with the rendered text",
       turns[0].user_text, "[Submitted form push-day-a3f1] bench_reps: 8 · core: (left empty)")
-check("submit lands on the owner thread", turns[0].thread_id, "jarvis-app_owner")
+check("submit lands on the owner thread", turns[0].thread_id, "owner")
 check("reply sent, then PATCH logged",
       (fc.sent[0]["text"], fc.patches), ("Logged it.", [(412, "logged")]))
 

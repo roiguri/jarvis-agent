@@ -621,20 +621,25 @@ Jarvis takes option (2). Each channel's factory reads its owner-config env and p
 
 The factory reads the env value and passes it into the channel constructor; nowhere else in the codebase reads it (`main.py` only calls `load_dotenv` — it never sees channel config).
 
-Domain code reaches channels through factory accessors, never through a channel object. **Proactive** sends use `default_outbox()`, which resolves the configured default channel (`JARVIS_DEFAULT_CHANNEL`, default `telegram`) at call time through a name-keyed registry; `default_owner_thread_id()` addresses the owner's thread on that default channel, for origin-less owner-addressed routing. **Reactive** traffic follows its origin channel instead: a resolved confirmation acks on the thread it came from (the store carries its own channel's thread/outbox), and `get_confirmation()` resolves the origin channel's store from the running turn's `CURRENT_THREAD_ID`. `origin_channel()` / `origin_outbox()` apply the same origin rule to what a turn *produces* — a tool-initiated send (e.g. `send_form`) consults the origin channel's capability and sends on its outbox, falling back to the default entry for origin-less turns. The failure modes differ on purpose: `get_confirmation()` **raises** when the resolved channel has no store (a destructive tool with nowhere to confirm is a wiring bug), while `origin_*` **falls back** to the default (an origin-less turn is a normal case). "Which channel does this target" is a routing decision that lives in `factory.py`, not in callers.
+Domain code reaches channels through factory accessors, never through a channel object. **Proactive** sends use `default_outbox()`, which resolves the configured default channel (`JARVIS_DEFAULT_CHANNEL`, default `telegram`) at call time through a name-keyed registry; `default_owner_thread_id()` addresses the owner's thread on that default channel, for origin-less owner-addressed routing. **Reactive** traffic follows its origin channel instead: a resolved confirmation acks on the thread it came from (the store carries its own channel's thread/outbox), and `get_confirmation()` resolves the origin channel's store from the running turn's `CURRENT_CHANNEL` (router-stamped; the thread id names no channel). `origin_channel()` / `origin_outbox()` apply the same origin rule to what a turn *produces* — a tool-initiated send (e.g. `send_form`) consults the origin channel's capability and sends on its outbox, falling back to the default entry for origin-less turns. The failure modes differ on purpose: `get_confirmation()` **raises** when the resolved channel has no store (a destructive tool with nowhere to confirm is a wiring bug), while `origin_*` **falls back** to the default (an origin-less turn is a normal case). "Which channel does this target" is a routing decision that lives in `factory.py`, not in callers.
 
 ---
 
 ## `thread_id` Namespacing
 
-Each channel produces a `thread_id` of the form `<channel>_<external_id>`. This becomes the LangGraph checkpointer key, the `chat_history.jsonl` filter key, and the lookup key for any per-conversation state.
+Two threads exist. `thread_id` is the LangGraph checkpointer key and the `chat_history.jsonl`
+tag — and nothing else: it does **not** name a channel.
 
-| Channel | Format today | Format planned (Phase 2) |
-|---|---|---|
-| Telegram | `telegram_<user_id>` | `telegram:<user_id>` |
-| Heartbeat | `heartbeat` (singleton) | `heartbeat` |
+| Thread | Holds |
+|---|---|
+| `owner` (`gateway/base.py` OWNER_THREAD_ID) | The one owner conversation — every channel stamps it, so a topic continues across surfaces |
+| `heartbeat` (singleton) | Background ticks |
 
-The format change to `:` separator is a Phase 2 concern paired with the `JarvisState` schema migration; it requires rewriting checkpointer keys and JSONL records. Phase 1 keeps the existing format.
+A channel is a surface onto the conversation, not a conversation of its own. The turn's origin
+channel travels separately (`InboundMessage.channel` → `CURRENT_CHANNEL`), which is what
+confirmation/block routing reads. Historic per-channel ids (`telegram_<user_id>`,
+`jarvis-app_<owner>`) survive only as tags on old `chat_history.jsonl` rows and orphaned
+checkpoints.
 
 ---
 
