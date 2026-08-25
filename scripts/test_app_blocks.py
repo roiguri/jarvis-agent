@@ -298,6 +298,31 @@ check("timeout returns delivery-unknown directive",
 turn_context.CURRENT_CHANNEL.reset(tok)
 factory._registry["jarvis-app"] = factory._Registered(app_channel, Outbox(app_channel))
 
+# ── heartbeat-scope sends are event-tagged into the notification log ──
+logged = []
+
+
+async def sink(event, text, metadata):
+    logged.append((event, text))
+
+
+fc = FakeClient()
+app_channel = JarvisAppChannel(fc, owner_id="owner")
+factory._registry["jarvis-app"] = factory._Registered(app_channel, Outbox(app_channel, sink))
+factory.set_default_channel("jarvis-app")
+
+scope_tok = turn_context.CURRENT_SCOPE.set("heartbeat")
+out = send_form.func(**ARGS)
+turn_context.CURRENT_SCOPE.reset(scope_tok)
+check("heartbeat form send logged for the mirror",
+      logged, [("heartbeat", "Push day — fill in what you hit.")])
+
+logged.clear()
+tok = turn_context.CURRENT_CHANNEL.set("jarvis-app")
+out = send_form.func(**ARGS)
+turn_context.CURRENT_CHANNEL.reset(tok)
+check("user form send stays unlogged", logged, [])
+
 loop.call_soon_threadsafe(loop.stop)
 
 print()

@@ -12,8 +12,10 @@ import logging
 
 from langchain_core.tools import tool
 
+import turn_context
 from gateway import outbox as outbox_mod
 from gateway.blocks import Form, FormRow, NumberField, TextField
+from gateway.outbox import EVENT_HEARTBEAT
 from tools.registry import tool_register
 
 logger = logging.getLogger(__name__)
@@ -134,9 +136,14 @@ def send_form(
             f"Say it conversationally instead. You had prepared: {form.describe()}"
         )
 
+    # A heartbeat-sent card and its submission live on different threads; the
+    # event tag routes the card's text through the pending-mirror drain so the
+    # submission's turn has its antecedent. User-turn sends stay untagged —
+    # send and submit already share the thread.
+    event = EVENT_HEARTBEAT if turn_context.current_scope() == "heartbeat" else None
     try:
         outcome = outbox_mod.submit(
-            origin_outbox().send_block_to_owner(message_text, form)
+            origin_outbox().send_block_to_owner(message_text, form, event=event)
         ).result(timeout=_SEND_TIMEOUT_S)
     except concurrent.futures.TimeoutError:
         # The send is still running on the loop — expiry means unknown, not
