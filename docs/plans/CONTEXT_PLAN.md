@@ -176,6 +176,12 @@ mechanism is a per-turn state field overwritten every turn, exactly the `heartbe
 pattern; `get_notification_history` filters outcome rows so they don't surface as "notifications
 sent". The shared cursor already gives delivered-once for both kinds — no second stamp.
 
+**Open at 1d implementation — the file-naming fork:** outcome rows stretch the file's name (an
+outcome is not a notification). Decide then between keep-one-file-and-filter (as specified above)
+and a separate outcomes file (honest names, but a second file + stamp). Renaming
+`notifications.jsonl` itself is off the table: the log's identity — what was delivered — is
+unchanged by 1c, and the queue is the cursor's *view* of the log, not the file.
+
 Close #50 at the end of 1d.
 
 *Independent review, 2026-08-25:* the design above is post-review — two blockers (the
