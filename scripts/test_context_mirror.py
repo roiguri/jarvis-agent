@@ -26,7 +26,7 @@ LOG_DIR = os.path.join(config.DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 import agent  # noqa: E402
-import mirror as mirror_mod  # noqa: E402
+import pending_mirrors as mirror_mod  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
 FAILS: list[str] = []

@@ -26,7 +26,7 @@ import config
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
-import mirror
+import pending_mirrors
 import turn_context
 from gateway.base import OWNER_THREAD_ID
 
@@ -612,7 +612,7 @@ def ask_jarvis(
 
     mirror_block = mirror_cursor = None
     if scope == "user" and thread_id == OWNER_THREAD_ID:
-        mirror_block, mirror_cursor = mirror.drain_pending()
+        mirror_block, mirror_cursor = pending_mirrors.drain_pending()
 
     final_response = ""
     try:
@@ -770,7 +770,7 @@ def ask_jarvis(
                 else:
                     final_response = str(content)
         if mirror_cursor:
-            mirror.advance_cursor(mirror_cursor)
+            pending_mirrors.advance_cursor(mirror_cursor)
         return final_response
     except Exception as e:
         acc = telemetry.TURN_ACC.get()
