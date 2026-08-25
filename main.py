@@ -46,6 +46,12 @@ logger = logging.getLogger(__name__)
 load_dotenv(config.ENV_FILE)
 
 
+# One turn at a time on the owner thread. Each channel serializes its own
+# updates, but nothing serialized Telegram against jarvis-app — harmless while
+# they wrote separate threads, a checkpoint race once both write "owner".
+_owner_turn_lock = asyncio.Lock()
+
+
 async def process_inbound_message(inbound: InboundMessage) -> str | None:
     """Domain-level processing: chat history + agent call. No channel-specific parsing here."""
     command_reply = await try_handle_command(inbound)
@@ -62,22 +68,23 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         media_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
     )
 
-    final_response = await asyncio.to_thread(
-        ask_jarvis,
-        inbound.user_text,
-        inbound.thread_id,
-        channel=inbound.channel or None,
-        media_attachments=[
-            {
-                "kind": a.get("kind"),
-                "path": a.get("path"),
-                "mime_type": a.get("mime_type"),
-            }
-            for a in inbound.attachments
-            if a.get("kind") and a.get("path")
-        ]
-        or None,
-    )
+    async with _owner_turn_lock:
+        final_response = await asyncio.to_thread(
+            ask_jarvis,
+            inbound.user_text,
+            inbound.thread_id,
+            channel=inbound.channel or None,
+                media_attachments=[
+                {
+                    "kind": a.get("kind"),
+                    "path": a.get("path"),
+                    "mime_type": a.get("mime_type"),
+                }
+                for a in inbound.attachments
+                if a.get("kind") and a.get("path")
+            ]
+            or None,
+        )
 
     if final_response:
         await asyncio.to_thread(append_chat_log, "assistant", final_response, inbound.thread_id)
@@ -179,7 +186,8 @@ async def main() -> None:
         channel's, supplied by its confirmation store."""
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
-            reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
+            async with _owner_turn_lock:
+                reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
             if reply:
                 await asyncio.to_thread(append_chat_log, "assistant", reply, thread_id)
                 # Conversational reply, already chat-logged — no notification event.
