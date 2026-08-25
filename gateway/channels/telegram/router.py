@@ -237,3 +237,9 @@ class TelegramInboundRouter:
             await self._channel.send(str(inbound.chat_id), "A system error occurred while processing your request.")
         finally:
             typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Typing indicator task ended with error", exc_info=True)

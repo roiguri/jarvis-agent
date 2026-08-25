@@ -117,14 +117,15 @@ async def async_append_notification_log(event_type: str, message: str, metadata:
     await asyncio.to_thread(append_notification_log, event_type, message, metadata)
 
 
-def append_chat_log(role: str, content: str, thread_id: str, media_paths: list[str] | None = None) -> None:
+def append_chat_log(role: str, content: str, thread_id: str, attachment_paths: list[str] | None = None) -> None:
     """Append one chat message to chat_history.jsonl. Synchronous.
-    
+
     Args:
         role: "user" or "assistant"
         content: text content
         thread_id: conversation thread identifier
-        media_paths: optional list of relative paths to media files (e.g. ["media/img_123.jpg"])
+        attachment_paths: optional list of relative paths to attached media files
+            (e.g. ["media/img_123.jpg"])
     """
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -132,8 +133,8 @@ def append_chat_log(role: str, content: str, thread_id: str, media_paths: list[s
         "role": role,
         "content": content,
     }
-    if media_paths:
-        record["media"] = media_paths
+    if attachment_paths:
+        record["media"] = attachment_paths
     _append_line(CHAT_LOG, record)
 
 

@@ -59,12 +59,8 @@ def _relative(abs_path: str) -> str:
 def _contained(abs_path: str) -> bool:
     """Is `abs_path` still inside MEMORY_DIR once symlinks are followed?
 
-    _get_safe_path resolves with abspath, which does NOT follow links, so a
-    symlink sitting inside the tree and pointing out of it passes its check.
-    That gap is harmless for a local tool driven by the agent, but this surface
-    is reachable from a device, so it holds the stricter line and requires the
-    REAL path to stay contained. Deliberately an extra guard on top of the
-    sandbox, never a replacement for it.
+    Listing entries come from scandir, never _get_safe_path, so this is
+    their only symlink check; on already-resolved paths it is an extra guard.
     """
     real = os.path.realpath(abs_path)
     root = os.path.realpath(config.MEMORY_DIR)

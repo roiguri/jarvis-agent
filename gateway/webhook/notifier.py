@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Injected by the host so the gateway never depends on the agent layer.
 # LLMFormat turns a prompt into notification text; sending and notification
-# logging go through the Outbox.
+# logging go through the Outbox, resolved per send so the configured default
+# channel applies (JARVIS_DEFAULT_CHANNEL), not the channel built at startup.
 LLMFormat = Callable[[str], Awaitable[str]]
+OutboxProvider = Callable[[], Outbox]
 
 SILENCE_MOVIE = 120    # 2-min fallback — used when expected count is unknown
 SILENCE_SERIES = 600   # 10-min fallback — series timer if not all episodes arrive
@@ -160,8 +162,8 @@ class MediaNotificationManager:
     """Per-batch media aggregator. Dispatch fires when all expected items are
     accounted for, or on a silence timer."""
 
-    def __init__(self, outbox: Outbox, llm_format: LLMFormat) -> None:
-        self._outbox = outbox
+    def __init__(self, outbox_provider: OutboxProvider, llm_format: LLMFormat) -> None:
+        self._outbox_provider = outbox_provider
         self._llm_format = llm_format
         self._batches: dict[str, _Batch] = {}
         self._lock = asyncio.Lock()
@@ -289,14 +291,14 @@ class MediaNotificationManager:
         if image_id:
             image_bytes = await _fetch_image(image_id)
             if image_bytes:
-                outcome = await self._outbox.notify_owner_media(
+                outcome = await self._outbox_provider().notify_owner_media(
                     "image", image_bytes, caption=text,
                     event=log_event, metadata={"has_image": True},
                 )
                 if outcome.ok:
                     logger.info("Photo notification sent (image_id=%s)", image_id)
                 return
-        outcome = await self._outbox.notify_owner(
+        outcome = await self._outbox_provider().notify_owner(
             text, event=log_event, metadata={"has_image": False}
         )
         if outcome.ok:

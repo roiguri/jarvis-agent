@@ -18,7 +18,7 @@ from heartbeat import init_scheduler, run_heartbeat, fire_reminder
 from tools.core import _load_events
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
-from gateway.factory import build_stack
+from gateway.factory import build_stack, default_outbox
 from gateway.outbox import Outbox
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
@@ -65,7 +65,7 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         "user",
         inbound.user_text,
         inbound.thread_id,
-        media_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
+        attachment_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
     )
 
     async with _owner_turn_lock:
@@ -222,11 +222,10 @@ async def main() -> None:
         except Exception:
             logger.exception("jarvis-app channel misconfigured — continuing without it")
 
-    # Media notifications go through the stack's Outbox (send + log-on-success).
     async def _llm_format(prompt: str) -> str:
         return await asyncio.to_thread(ask_jarvis_once, prompt)
 
-    notifier = MediaNotificationManager(stack.outbox, llm_format=_llm_format)
+    notifier = MediaNotificationManager(default_outbox, llm_format=_llm_format)
 
     # FastAPI webhook server — only when enabled. Staging runs without it, so it
     # neither binds a port nor collides with prod's :8000. When off, the channel +

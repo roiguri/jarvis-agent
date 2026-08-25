@@ -1,13 +1,12 @@
 import asyncio
 import datetime
 import logging
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import heartbeat_state
 
-ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +40,7 @@ def get_scheduler() -> AsyncIOScheduler:
 async def run_heartbeat() -> None:
     """Periodic agent turn. HEARTBEAT.md + recent daily logs + tick rules are
     injected by the agent's build_system_prompt (scope='heartbeat'); this
-    issues the imperative and delivers per the heartbeat_respond ack
-    (reply text is the fallback when the ack is missing).
+    issues the imperative and delivers per the heartbeat_respond ack.
 
     A model turn only happens when at least one task is cadence-due per the
     code-owned last_run state. The gate fails open: any error in it runs the
@@ -82,7 +80,7 @@ async def run_heartbeat() -> None:
 
     logger.info("Heartbeat: running agent turn")
     try:
-        response = await asyncio.wait_for(
+        await asyncio.wait_for(
             asyncio.to_thread(
                 ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
                 scope="heartbeat", heartbeat_due_tasks=due_names,
@@ -96,8 +94,7 @@ async def run_heartbeat() -> None:
         logger.error("Heartbeat: agent turn failed: %s", e)
         return
 
-    # Structured tick-ack: log what the model reports acting on. Message
-    # delivery below still keys off the reply text.
+    # Structured tick-ack: delivery and stamping key off it.
     try:
         ack = await asyncio.to_thread(get_heartbeat_ack, HEARTBEAT_THREAD_ID)
     except Exception:
@@ -125,30 +122,19 @@ async def run_heartbeat() -> None:
                 )
                 acted = [n for n in acted if n in due_names]
 
-    # Delivery: the ack is authoritative — notify/notification_text decide what
-    # Roi sees; the reply text matters only when the ack is missing (already
-    # warned above), so a dropped ack degrades to the old reply-keyed behavior
-    # rather than losing a message.
-    if ack is not None:
-        text = ack.get("notification_text", "")
-        deliver = bool(ack.get("notify") and text)
-        source = "ack"
-    else:
-        # TODO(#27): remove this reply-text fallback (and the [NO_ACTION]
-        # reply contract in prompts/heartbeat.md) once logs show it never
-        # fires.
-        text = response or ""
-        deliver = bool(text and not text.strip().startswith("[NO_ACTION]"))
-        source = "reply-text fallback"
+    # Delivery: the ack decides what Roi sees — a tick without one (already
+    # warned above) delivers nothing and its tasks re-run next tick.
+    text = ack.get("notification_text", "") if ack else ""
+    deliver = bool(ack and ack.get("notify") and text)
     delivered_ok = True
     if deliver:
-        logger.info("Heartbeat: sending message to user (%s)", source)
+        logger.info("Heartbeat: sending message to user")
         outcome = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT)
         delivered_ok = outcome.ok
         if not outcome.ok:
             logger.error("Heartbeat: failed to send message: %s", outcome.error)
     else:
-        logger.info("Heartbeat: nothing to send (%s)", source)
+        logger.info("Heartbeat: nothing to send")
 
     # Stamping happens only after delivery is settled: a failed send leaves
     # the acted tasks unstamped so they come due again next tick and the

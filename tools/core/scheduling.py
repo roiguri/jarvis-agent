@@ -5,14 +5,12 @@ import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ
 
 from langchain_core.tools import tool
 
 import config
 from tools.registry import tool_register
-
-ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 EVENTS_PATH = os.path.join(config.DATA_DIR, "scheduling", "scheduled_events.json")
 

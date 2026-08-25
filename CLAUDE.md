@@ -22,6 +22,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
+├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
 ├── gateway/               # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)
@@ -36,7 +37,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │   ├── channels/          # Concrete channels, one dir each (telegram/, jarvis_app/) — ONLY channel-specific code
 │   └── webhook/           # Channel-agnostic: FastAPI server + media notifier
 ├── prompts/               # DEV-controlled prompt content, committed and NOT agent-writable: AGENTS.md
-│                          #   (always-on operating rules) + heartbeat.md (tick rules, [NO_ACTION] contract)
+│                          #   (always-on operating rules) + heartbeat.md (tick rules)
 ├── tools/                 # registry.py is the mechanism (@tool_register, scoped get_tools, SKILL.md parsing);
 │                          #   core/ is always-on; every other dir is an activatable skill, and a parent skill
 │                          #   may own zero tools and nest sub-skills (see "Add a new tool" below)
@@ -141,12 +142,12 @@ Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.m
 
 1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
 2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
-3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack, and still replies `[NO_ACTION]`/message text (fallback delivery path only). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
+3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
 4. Writes a unified daily log: `daily/daily_YYYY-MM-DD.md` covering both heartbeat activity and today's user conversations (via `get_chat_history(since=...)`)
 
 Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). The agent's notes files still carry a transitional `last_run:` line in parallel with `state.json` until the two have agreed in production.
 
-The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + `[NO_ACTION]` contract + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
+The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
 
 ---
 

@@ -8,15 +8,11 @@ one place.
 import os
 import sqlite3
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ
 
 import config
 
 DB_PATH = os.path.join(config.DATA_DIR, "fitness", "fitness.sqlite")
-
-
-ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
-
 
 # Read-only access for the ad-hoc query tool: a separate connection opened in
 # SQLite read-only URI mode, so writes are physically impossible (not policy).

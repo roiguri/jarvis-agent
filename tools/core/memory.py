@@ -41,11 +41,14 @@ def _get_safe_path(filename: str) -> str:
     """Validate filename and return absolute path within MEMORY_DIR.
 
     Prevents directory traversal attacks. Subdirectories are allowed as long as
-    the resolved path stays within MEMORY_DIR. The checkpointer DB
-    (``threads.sqlite*``) is deny-listed even though it lives in MEMORY_DIR.
+    the resolved path stays within MEMORY_DIR. Symlinks are resolved before the
+    containment check, so a link inside the tree cannot reach a target outside
+    it. The checkpointer DB (``threads.sqlite*``) is deny-listed even though it
+    lives in MEMORY_DIR.
     """
-    safe_path = os.path.abspath(os.path.join(config.MEMORY_DIR, filename))
-    if not safe_path.startswith(config.MEMORY_DIR + os.sep) and safe_path != config.MEMORY_DIR:
+    root = os.path.realpath(config.MEMORY_DIR)
+    safe_path = os.path.realpath(os.path.join(config.MEMORY_DIR, filename))
+    if not safe_path.startswith(root + os.sep) and safe_path != root:
         raise ValueError("Security Violation: Attempted access outside of sandboxed memory directory.")
     if os.path.basename(safe_path).startswith(_DENIED_PREFIX):
         raise ValueError("'threads.sqlite' is the conversation-state database, not memory — access denied.")
@@ -59,7 +62,8 @@ def _canonical_name(filename: str) -> str:
     aliases like './SOUL.md' or 'daily/../SOUL.md' resolve to a protected
     file without spelling its name. Raises ValueError like _get_safe_path.
     """
-    return os.path.relpath(_get_safe_path(filename), config.MEMORY_DIR)
+    # base must be resolved like _get_safe_path's return value
+    return os.path.relpath(_get_safe_path(filename), os.path.realpath(config.MEMORY_DIR))
 
 
 # A preview is surfaced to the owner in a single confirmation prompt and is

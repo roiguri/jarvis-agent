@@ -24,7 +24,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ as _ISRAEL_TZ
 
 import config
 
@@ -34,7 +34,6 @@ HEARTBEAT_PATH = os.path.join(config.MEMORY_DIR, "HEARTBEAT.md")
 STATE_DIR = os.path.join(config.DATA_DIR, "heartbeat")
 STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
-_ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 # The tick lattice: minute 0 of every Nth hour. The gate rounds to it and the
 # scheduler's trigger is built from it, so the two cannot drift apart. Only

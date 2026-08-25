@@ -18,15 +18,14 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 # Make repo root importable when invoked directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from observability import TURNS_LOG, TOOL_CALLS_LOG
+from timeutils import ISRAEL_TZ as IL_TZ
 from tools.core.history import CHAT_LOG, NOTIFICATION_LOG
 
-IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 
 def _read_jsonl(path: str) -> list[dict]:

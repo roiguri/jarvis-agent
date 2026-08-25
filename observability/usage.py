@@ -15,11 +15,10 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ as _IL_TZ
 
 from observability.telemetry import TURNS_LOG
 
-_IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 GroupBy = Literal["day", "week", "scope", "day+scope"]
 

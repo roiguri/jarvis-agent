@@ -13,7 +13,7 @@ import datetime as _dt
 import json
 import logging
 import os
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ as _ISRAEL_TZ
 
 import config
 
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 CURSOR_PATH = os.path.join(config.DATA_DIR, "agent", "mirror_cursor.json")
 _NOTIF_LOG = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
-_ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")  # shared-tz extraction tracked in #24
 
 PREFIX = {
     "heartbeat": "[Heartbeat]",

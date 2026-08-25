@@ -77,7 +77,7 @@ Source: built up across a turn by `observability.telemetry.record_turn_start` (a
 
 It is a **diagnostic, not a billing field**, and this is the one way it differs from `cache_read_tokens`. Cache reads are *input* billed at a discount, so `estimate_usd` subtracts them out of the billable-input bucket. Reasoning tokens are *output* billed at the ordinary output rate and are already counted in `output_tokens` — adding them anywhere in `estimate_usd` would double-count. They are recorded because `thinking_level` (Gemini 3.x) is the largest cost/quality dial available and this is the only observable it moves: without it, a successful `thinking_level` tuning cannot be distinguished from a quality regression, and a model whose reasoning appetite is eating the budget is invisible until the invoice arrives.
 
-`no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: when the tick's `heartbeat_respond` ack is present, `no_action = not ack.notify`; only when the ack is missing does it fall back to checking whether the response text begins with `[NO_ACTION]`. Computed in `ask_jarvis`'s `finally`.
+`no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: `no_action = not ack.notify`, and a tick with no ack delivers nothing, so it counts as a no-op. Computed in `ask_jarvis`'s `finally`.
 
 ### `tool_calls.jsonl` — one record per tool invocation
 
