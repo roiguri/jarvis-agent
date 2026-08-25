@@ -26,6 +26,7 @@ import config
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
+import mirror
 import turn_context
 from gateway.base import OWNER_THREAD_ID
 
@@ -341,89 +342,6 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     return "--- Today's chat with Roi (Israel time) ---\n" + "\n".join(lines)
 
 
-_MIRROR_CURSOR_PATH = os.path.join(config.DATA_DIR, "agent", "mirror_cursor.json")
-_MIRROR_PREFIX = {
-    "heartbeat": "[Heartbeat]",
-    "reminder": "[Reminder]",
-    "notification": "[Notification]",
-    "llm_notification": "[Notification]",
-}
-_MIRROR_HEADER = "[Messages Jarvis sent you since the last turn:]"
-_MIRROR_MAX_ENTRIES = 20
-_MIRROR_ENTRY_CAP = 2000
-
-
-def _drain_pending_mirrors() -> tuple[str | None, str | None]:
-    """Proactive sends not yet in the owner thread, coalesced into one
-    user-role block, plus the cursor value to stamp once the turn completes.
-
-    notifications.jsonl (written by the Outbox on delivery success) is the
-    queue; the cursor is the last mirrored row's timestamp. One user-role
-    block rather than assistant messages: the reducer drops leading AI
-    messages (Gemini requires user-first), and a single message keeps the
-    wire alternating regardless of backlog. Rows older than start-of-today
-    never drain — that bounds the first run (no cursor file) and any backlog
-    to what the retired prompt slice would have shown. ISO timestamps from a
-    single writer compare lexicographically; equal-stamp splits and clock
-    steps are accepted as re-delivery, never loss.
-    """
-    import json
-    notif_log = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
-    if not os.path.exists(notif_log):
-        return None, None
-    try:
-        with open(_MIRROR_CURSOR_PATH, "r", encoding="utf-8") as f:
-            cursor = json.load(f).get("last_ts", "")
-    except (OSError, ValueError):
-        cursor = ""
-    since = _today_israel_start_utc()
-    entries: list[str] = []
-    last_ts: str | None = None
-    try:
-        with open(notif_log, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    ts_s = rec["ts"]
-                    event = rec.get("event", "")
-                    if event == "heartbeat_outcome":  # 1d: context, not an utterance
-                        continue
-                    ts = _dt.datetime.fromisoformat(ts_s)
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=_dt.timezone.utc)
-                    if ts < since or (cursor and ts_s <= cursor):
-                        continue
-                    text = (rec.get("message") or "").strip()[:_MIRROR_ENTRY_CAP]
-                    if not text:
-                        continue
-                    entries.append(f"{_MIRROR_PREFIX.get(event, '[Notification]')} {text}")
-                    last_ts = ts_s
-                except (KeyError, ValueError, json.JSONDecodeError):
-                    continue
-    except OSError:
-        return None, None
-    if not entries:
-        return None, None
-    entries = entries[-_MIRROR_MAX_ENTRIES:]
-    return _MIRROR_HEADER + "\n" + "\n".join(entries), last_ts
-
-
-def _advance_mirror_cursor(last_ts: str) -> None:
-    """Stamp after the turn completed — a failure re-delivers, never loses."""
-    import json
-    try:
-        os.makedirs(os.path.dirname(_MIRROR_CURSOR_PATH), exist_ok=True)
-        tmp = _MIRROR_CURSOR_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"last_ts": last_ts}, f)
-        os.replace(tmp, _MIRROR_CURSOR_PATH)
-    except OSError:
-        logger.exception("mirror cursor advance failed; rows will re-deliver")
-
-
 def build_system_prompt(
     scope: str,
     active_skills: set[str],
@@ -692,11 +610,9 @@ def ask_jarvis(
         model=getattr(llm, "model", None),
     )
 
-    # Owner-thread user turns first drain pending proactive sends into the
-    # conversation; the cursor advances only after the turn completes.
     mirror_block = mirror_cursor = None
     if scope == "user" and thread_id == OWNER_THREAD_ID:
-        mirror_block, mirror_cursor = _drain_pending_mirrors()
+        mirror_block, mirror_cursor = mirror.drain_pending()
 
     final_response = ""
     try:
@@ -854,7 +770,7 @@ def ask_jarvis(
                 else:
                     final_response = str(content)
         if mirror_cursor:
-            _advance_mirror_cursor(mirror_cursor)
+            mirror.advance_cursor(mirror_cursor)
         return final_response
     except Exception as e:
         acc = telemetry.TURN_ACC.get()

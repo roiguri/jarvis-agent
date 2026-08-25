@@ -26,6 +26,7 @@ LOG_DIR = os.path.join(config.DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 import agent  # noqa: E402
+import mirror as mirror_mod  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
 FAILS: list[str] = []
@@ -59,10 +60,10 @@ seed([
     (ts(5), "someday_new_event", "unknown kind"),
 ])
 
-block, cursor = agent._drain_pending_mirrors()
+block, cursor = mirror_mod.drain_pending()
 check("drains pending rows", block is not None and cursor is not None)
 lines = block.split("\n")
-check("header first", lines[0], agent._MIRROR_HEADER)
+check("header first", lines[0], mirror_mod.HEADER)
 check("prefixes + order + exclusions", lines[1:], [
     "[Heartbeat] Morning readiness: HRV good",
     "[Reminder] Register for Thursday's WOD",
@@ -72,32 +73,32 @@ check("prefixes + order + exclusions", lines[1:], [
 check("cursor = last drained row's ts", cursor > ts(6) and cursor <= ts(4))
 
 # ── cursor advance → nothing pending ──
-agent._advance_mirror_cursor(cursor)
-check("cursor file written", os.path.exists(agent._MIRROR_CURSOR_PATH))
-check("second drain empty", agent._drain_pending_mirrors(), (None, None))
+mirror_mod.advance_cursor(cursor)
+check("cursor file written", os.path.exists(mirror_mod.CURSOR_PATH))
+check("second drain empty", mirror_mod.drain_pending(), (None, None))
 
 # a new row after the cursor drains alone
 with open(os.path.join(LOG_DIR, "notifications.jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"ts": ts(0.1), "event": "reminder", "message": "stretch"}) + "\n")
-block2, cursor2 = agent._drain_pending_mirrors()
-check("only the new row drains", block2, agent._MIRROR_HEADER + "\n[Reminder] stretch")
+block2, cursor2 = mirror_mod.drain_pending()
+check("only the new row drains", block2, mirror_mod.HEADER + "\n[Reminder] stretch")
 check("cursor moves forward", cursor2 > cursor)
 
 # un-advanced cursor (failed turn) re-delivers
-block3, _ = agent._drain_pending_mirrors()
+block3, _ = mirror_mod.drain_pending()
 check("failed turn re-delivers", block3, block2)
 
 # ── bounds ──
 seed([(ts(50 - i), "reminder", f"r{i}") for i in range(30)] )
-pathlib.Path(agent._MIRROR_CURSOR_PATH).unlink(missing_ok=True)
-block4, _ = agent._drain_pending_mirrors()
-check("entry cap keeps newest N", len(block4.split("\n")) - 1, agent._MIRROR_MAX_ENTRIES)
+pathlib.Path(mirror_mod.CURSOR_PATH).unlink(missing_ok=True)
+block4, _ = mirror_mod.drain_pending()
+check("entry cap keeps newest N", len(block4.split("\n")) - 1, mirror_mod.MAX_ENTRIES)
 check("newest survives the cap", block4.endswith("r29"))
 
 seed([(ts(1), "heartbeat", "x" * 5000)])
-pathlib.Path(agent._MIRROR_CURSOR_PATH).unlink(missing_ok=True)
-block5, _ = agent._drain_pending_mirrors()
-check("per-entry length cap", len(block5.split("\n")[1]), len("[Heartbeat] ") + agent._MIRROR_ENTRY_CAP)
+pathlib.Path(mirror_mod.CURSOR_PATH).unlink(missing_ok=True)
+block5, _ = mirror_mod.drain_pending()
+check("per-entry length cap", len(block5.split("\n")[1]), len("[Heartbeat] ") + mirror_mod.ENTRY_CAP)
 
 # ── reducer safety: the user-role block survives every window state ──
 mirror_msg = HumanMessage("[Messages Jarvis sent you since the last turn:]\n[Reminder] stretch")
