@@ -65,7 +65,7 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         "user",
         inbound.user_text,
         inbound.thread_id,
-        media_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
+        attachment_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
     )
 
     async with _owner_turn_lock:
