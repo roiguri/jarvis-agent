@@ -23,7 +23,7 @@ except ImportError:
     # without Pillow must still import cleanly — metadata just degrades to none.
     Image = None
 
-from gateway.base import Channel
+from gateway.base import Channel, OWNER_THREAD_ID
 from gateway.blocks import Form
 from gateway.channels.jarvis_app.client import HubClient
 
@@ -33,12 +33,6 @@ logger = logging.getLogger(__name__)
 # outbound encoder (AttachmentBlurEncoder): ~24px, JPEG quality 60.
 _BLUR_EDGE = 24
 _BLUR_QUALITY = 60
-
-
-# thread_id mirrors telegram's "<channel>_<id>", parsed on the first underscore.
-# The channel name contains no underscore, so the prefix stays unambiguous.
-def thread_id_for(owner_id: str) -> str:
-    return f"jarvis-app_{owner_id}"
 
 
 # The kinds this channel can represent, mapped to the (filename, mime_type) the
@@ -183,4 +177,4 @@ class JarvisAppChannel(Channel):
 
     @property
     def owner_thread_id(self) -> str:
-        return thread_id_for(self._owner_id)
+        return OWNER_THREAD_ID

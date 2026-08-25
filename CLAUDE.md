@@ -112,7 +112,7 @@ USER.md            (memory dir — durable user profile; agent-writable, no conf
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
 ```
 
-**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives today's heartbeat-sent notifications (filtered from `notifications.jsonl` by `event="heartbeat"`); the heartbeat scope receives today's user-thread chat (filtered from `chat_history.jsonl` by `thread_id` starting with `telegram_`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent without calling `get_notification_history`. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
+**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives today's heartbeat-sent notifications (filtered from `notifications.jsonl` by `event="heartbeat"`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent without calling `get_notification_history`. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
 
 `MEMORY.md` is **not** injected — the agent reads it on demand via the memory tools (AGENTS.md instructs it to consult the index). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
 
@@ -151,7 +151,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 
 | Thread ID | Purpose |
 |-----------|---------|
-| `telegram_{user_id}` | Interactive user chat (50-message window) |
+| `owner` | The one owner conversation — all channels stamp it (50-message window) |
 | `heartbeat` | Scheduled background checks (separate window) |
 
 Both threads write to the same `chat_history.jsonl` (tagged by `thread_id`). Cross-thread awareness flows through two paths: today's chat/notification slices are injected directly into each scope's system prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
