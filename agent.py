@@ -408,13 +408,11 @@ def build_system_prompt(
         f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
         f"[Active scope: {scope}]",
     ]
-    # Origin channel, derived from the turn's thread-id prefix (the "<name>_<id>"
-    # convention every channel follows). A runtime value — no channel-name literal
-    # in this module — so it stays inform-only and channel-agnostic. Skipped for
-    # heartbeat, whose thread is not a channel.
-    thread_id = turn_context.current_thread_id()
-    if scope == "user" and thread_id:
-        lines.append(f"[Channel: {thread_id.split('_', 1)[0]}]")
+    # Origin channel — a runtime value (no channel-name literal in this module),
+    # inform-only. None on origin-less turns (heartbeat), where the line is skipped.
+    channel = turn_context.current_channel()
+    if scope == "user" and channel:
+        lines.append(f"[Channel: {channel}]")
     envelope = "\n".join(lines)
     parts = [
         envelope,
