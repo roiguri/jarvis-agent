@@ -244,9 +244,8 @@ _USER_FRAMING = (
     "and reply in your own voice."
 )
 _HEARTBEAT_FRAMING = (
-    "You are a scheduled background tick, not a live chat — be terse, act "
-    "only on tasks that are due, and if nothing needs attention reply with "
-    "exactly [NO_ACTION] and send nothing."
+    "You are a scheduled background tick, not a live chat — be terse and act "
+    "only on tasks that are due."
 )
 
 
@@ -788,15 +787,12 @@ def ask_jarvis(
         except Exception:
             active_end = active_start
             end_messages = []
-        # no_action mirrors delivery: the ack's notify flag is authoritative
-        # ("no message sent to Roi"), reply text only when the ack is missing.
+        # no_action mirrors delivery: a tick delivers only when its ack says
+        # notify, so a missing ack counts as a no-op.
         no_action = False
         if scope == "heartbeat":
             ack = _ack_from_messages(end_messages)
-            if ack is not None:
-                no_action = not ack.get("notify")
-            else:
-                no_action = final_response.strip().startswith("[NO_ACTION]")
+            no_action = ack is None or not bool(ack.get("notify"))
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)

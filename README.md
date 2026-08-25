@@ -46,7 +46,7 @@ marketplace, Jarvis has none of that. Two properties are enforced by design:
 - **Proactive heartbeat loop.** An APScheduler-driven agent turn runs on a cadence
   with its own prompt scope. It reads its task list, checks whether the user
   already handled something in chat, and only then acts - sending a briefing or
-  staying silent via an explicit `[NO_ACTION]` contract.
+  staying silent via its structured tick ack.
 - **Channel-decoupled gateway.** The agent never imports Telegram. A neutral
   `Channel` boundary (inbound messages, owner-addressed sends, confirmations)
   means a new channel - email, web, anything - is a new folder, not a rewrite.
@@ -88,8 +88,8 @@ list below is the set that exists **today**, not a fixed ceiling:
 
 Two LangGraph threads share the same tools and memory but get **different prompts
 by scope**: the user scope is conversational and sees today's proactive
-notifications; the heartbeat scope is terse, sees today's chat, and follows the
-`[NO_ACTION]` tick contract. Awareness flows both ways so the two never duplicate
+notifications; the heartbeat scope is terse, sees today's chat, and stays silent
+unless its tick ack says to notify. Awareness flows both ways so the two never duplicate
 each other's work.
 
 Deep dives live in [`docs/architecture/`](docs/architecture/):

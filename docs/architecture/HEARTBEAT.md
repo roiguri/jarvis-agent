@@ -31,7 +31,7 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │  non-due tasks collapse to a one-line note naming them
         ├─ agent works the due tasks (reads/writes its notes files, uses tools)
         ├─ agent calls heartbeat_respond(acted_tasks, notify, summary, …)
-        └─ agent replies ([NO_ACTION] if nothing was done)
+        └─ agent replies (terse tick log — never delivered)
         │
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
@@ -43,10 +43,9 @@ run_heartbeat() reads the ack (agent.get_heartbeat_ack)
 ```
 
 The ack is authoritative end to end: `acted_tasks` drives state stamping,
-`notify`/`notification_text` drive message delivery. The reply text (the
-`[NO_ACTION]` contract in `prompts/heartbeat.md`) survives only as the
-fallback delivery path when the ack is missing — slated for removal once logs
-show it never fires.
+`notify`/`notification_text` drive message delivery. The reply text is a
+terse tick log only; a tick with no ack delivers nothing and its tasks
+re-run next tick (unstamped).
 
 **Delivery before stamping.** The send goes through the gateway Outbox, which
 returns an outcome instead of raising. Stamps advance only when the tick had

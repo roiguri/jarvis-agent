@@ -50,7 +50,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 
 /app/jarvis_code/prompts/  # DEV-controlled, committed, NOT agent-writable
 ├── AGENTS.md              # always-on operating rules
-└── heartbeat.md           # heartbeat-scope-only tick rules ([NO_ACTION] contract)
+└── heartbeat.md           # heartbeat-scope-only tick rules
 
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
@@ -137,7 +137,7 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
 - **`user`** — conversational framing + **today's daily log**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent. The daily log carries the richer narrative (still useful, but lagging because it is rewritten only at end-of-tick).
-- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the `[NO_ACTION]` tick contract, present *only* here so it never adds noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
+- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
 Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. They sit alongside the daily log rather than replacing it: live for freshness, daily log for narrative.
 
