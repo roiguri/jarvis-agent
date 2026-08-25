@@ -81,6 +81,18 @@ traffic is dev noise). One known-unparseable turns.jsonl line reported and skipp
 Context for the trend: user input/turn was 46.7k at the 07-16 baseline and 78.6k at 08-06
 (PROBLEMS.md §0) — still climbing; the user scope is where window weight lands.
 
+**Prod verification after the 2026-08-25 deploy** (was issue #107):
+
+- [ ] Immediately post-restart: provenance shows the merge commit; first message creates the
+  `owner` checkpoint (expected one-time blank window); a reminder round-trip ("remind me in
+  2 min" → fire → "what did you remind me about?") proves the drain on prod.
+- [ ] ~2026-09-01 (a week of real traffic): run `scripts/context_report.py` (`JARVIS_ROOT=/app`)
+  and fill the "After 1c" column above against the 2026-08-25 baseline. Expected and
+  pre-recorded: user input/turn RISES (mirrors ride the window, the slice is gone) — the
+  design working, not a regression (the E3 lesson).
+- [ ] Then archive this plan to docs/plans/archive/ — the baseline table complete is what
+  makes it archivable.
+
 ## Phase 1 — one conversation, with the background in it
 
 **1a — origin plumbing.** Routers set `CURRENT_CHANNEL` in `turn_context`; `get_confirmation()`
