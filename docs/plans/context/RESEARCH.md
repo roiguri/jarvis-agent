@@ -19,6 +19,14 @@ anything.
 
 ## 1. How the reference systems handle these concerns
 
+> **Superseded (2026-08-25).** A second, source-level pass over both systems — with several
+> corrections to this section's claims (the hermes prompt tiers, the memory-injection caps, the
+> compaction shape, the "clock never in the system prompt" convergence, and the cross-tick-caching
+> bound, which turned out provider-conditional) — lives in
+> [REFERENCE_ARCHITECTURES.md](REFERENCE_ARCHITECTURES.md), with full evidence in
+> `reference/OPENCLAW_DEEP_DIVE.md` and `reference/HERMES_DEEP_DIVE.md`. Read that first; this
+> section is kept as the record of what the 2026-08-06 planning worked from.
+
 Two systems were read during planning: **OpenClaw** (full source dive; the detailed writeup lives in
 `docs/plans/archive/HEARTBEAT_GATING_PLAN.md` §2) and Nous Research's **hermes-agent** (docs). The
 comparison below is the useful residue, stated against Jarvis as it stands today.
