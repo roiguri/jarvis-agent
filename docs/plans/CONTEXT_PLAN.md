@@ -1,6 +1,7 @@
 # Context — one owner conversation, and the cross-scope bridge
 
-**Status:** planned, not started. Phase 0 first; phases 1a–1d are the committed scope.
+**Status:** phases 0–1c COMPLETE and staging-verified; 1d deferred to #106 (2026-08-25).
+Remaining: phase-0 "after" readings, umbrella soak, merge.
 **Date:** 2026-08-25.
 **Problem record:** [context/PROBLEMS.md](context/PROBLEMS.md) — this plan solves C5 (issue #50)
 and touches C1/A-cluster edges; it deliberately does not restate the problems.
@@ -182,7 +183,13 @@ and a separate outcomes file (honest names, but a second file + stamp). Renaming
 `notifications.jsonl` itself is off the table: the log's identity — what was delivered — is
 unchanged by 1c, and the queue is the cursor's *view* of the log, not the file.
 
-Close #50 at the end of 1d.
+**1d deferred (2026-08-25, owner decision):** 1a–1c fixed everything C5's owner experience
+described, the daily log already covers most silent-act awareness (same-day), and no blind spot
+has been felt. The problem is filed as #106 with the design above recorded as ONE candidate —
+whoever opens it reconsiders alternatives against the observed problem rather than inheriting
+this spec. #50 closes on 1a–1c.
+
+Close #50 at the end of 1c (was: 1d).
 
 *Independent review, 2026-08-25:* the design above is post-review — two blockers (the
 cross-channel race; the reducer dropping assistant-role mirrors) and the 1d semantics were found
