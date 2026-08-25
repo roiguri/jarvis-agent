@@ -30,7 +30,8 @@ from tools.google_health._auth import get_access_token, GoogleHealthNotConfigure
 
 BASE = "https://health.googleapis.com/v4"
 USER = "users/me"
-ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
+from timeutils import ISRAEL_TZ
+
 _UTC = ZoneInfo("UTC")
 
 

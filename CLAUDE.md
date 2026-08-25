@@ -22,6 +22,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
+├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
 ├── gateway/               # Channel-decoupled messaging boundary (see docs/architecture/GATEWAY.md)

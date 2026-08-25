@@ -7,7 +7,7 @@ import sqlite3
 import time
 import traceback as _tb
 from uuid import uuid4
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ as _ISRAEL_TZ
 from typing import Annotated, Required, NotRequired
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -236,8 +236,6 @@ _HEARTBEAT_MD_PATH = os.path.join(_MEMORY_DIR, "HEARTBEAT.md")
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _AGENTS_PATH = os.path.join(_PROMPTS_DIR, "AGENTS.md")
 _HEARTBEAT_PROMPT_PATH = os.path.join(_PROMPTS_DIR, "heartbeat.md")
-
-_ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 _USER_FRAMING = (
     "You are in a live conversation with Roi — be direct and proactive, "

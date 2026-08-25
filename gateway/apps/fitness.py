@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from gateway.apps.registry import (
@@ -32,6 +32,7 @@ from gateway.apps.registry import (
     AppSpec,
     register_app,
 )
+from timeutils import israel_week_bounds
 from tools.fitness._db import _FITNESS_RO_URI, _fmt_pace, _target_for_week, ISRAEL_TZ
 
 # Marks cover a full year, one block per week (a plan's cadence is weekly, not
@@ -53,19 +54,6 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_FITNESS_RO_URI, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
-
-
-def _week_range(anchor: datetime) -> tuple[str, str]:
-    """The Sunday-Saturday week containing `anchor`, as (start, end) date strings.
-
-    Matches the week boundary the fitness tools already use
-    (`get_weekly_fitness_summary`, `get_adherence_report`) — UTC-anchored, Sunday
-    start — so the app's "this week" agrees with what chat already reports.
-    """
-    days_since_sunday = (anchor.weekday() + 1) % 7
-    start = anchor - timedelta(days=days_since_sunday)
-    end = start + timedelta(days=6)
-    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
 def _weekly_completed_count(conn: sqlite3.Connection, plan_id: int, week_start: str, week_end: str) -> int:
@@ -111,7 +99,7 @@ def _streak_weeks(conn: sqlite3.Connection, plan: sqlite3.Row, now: datetime) ->
     start_date = plan["start_date"]
     streak = 0
     for i in range(1, _STREAK_SAFETY_CAP):
-        week_start, week_end = _week_range(now - timedelta(weeks=i))
+        week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
         if start_date and week_end < start_date:
             break
         week_target = _target_for_week(conn, plan["plan_id"], week_start, target)
@@ -122,7 +110,7 @@ def _streak_weeks(conn: sqlite3.Connection, plan: sqlite3.Row, now: datetime) ->
         else:
             break
 
-    this_week_start, this_week_end = _week_range(now)
+    this_week_start, this_week_end = israel_week_bounds(now)
     this_week_target = _target_for_week(conn, plan["plan_id"], this_week_start, target)
     if this_week_target and _weekly_completed_count(conn, plan["plan_id"], this_week_start, this_week_end) >= this_week_target:
         streak += 1
@@ -160,7 +148,7 @@ def _running_summary(cardio: sqlite3.Row) -> str:
 
 
 def _dashboard_sync() -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(ISRAEL_TZ)
     conn = _connect()
     try:
         plans = conn.execute("SELECT * FROM plans WHERE status='active' ORDER BY plan_id").fetchall()
@@ -172,7 +160,7 @@ def _dashboard_sync() -> dict[str, Any]:
         overall_marks = []
         overall_total_year = 0
         for i in range(_MARKS_WEEKS - 1, -1, -1):
-            week_start, week_end = _week_range(now - timedelta(weeks=i))
+            week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
             count = _weekly_completed_count_all(conn, week_start, week_end)
             overall_marks.append({"week_start": week_start, "count": count})
             overall_total_year += count
@@ -183,12 +171,12 @@ def _dashboard_sync() -> dict[str, Any]:
             total_year = 0
             # Oldest first: i counts down from 51 weeks ago to this week (i=0).
             for i in range(_MARKS_WEEKS - 1, -1, -1):
-                week_start, week_end = _week_range(now - timedelta(weeks=i))
+                week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
                 count = _weekly_completed_count(conn, p["plan_id"], week_start, week_end)
                 marks.append({"week_start": week_start, "count": count})
                 total_year += count
 
-            this_week_start, this_week_end = _week_range(now)
+            this_week_start, this_week_end = israel_week_bounds(now)
             plan_rows.append(
                 {
                     "plan_id": p["plan_id"],

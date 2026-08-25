@@ -253,11 +253,9 @@ def _parse_log_date(arg: str) -> str | None:
 
     Returns None on invalid input."""
     import datetime as _dt
-    from zoneinfo import ZoneInfo
+    from timeutils import ISRAEL_TZ
 
-    israel_today = _dt.datetime.now(_dt.timezone.utc).astimezone(
-        ZoneInfo("Asia/Jerusalem")
-    ).date()
+    israel_today = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
 
     lowered = arg.lower()
     if lowered == "today":

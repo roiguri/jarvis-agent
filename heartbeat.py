@@ -1,13 +1,12 @@
 import asyncio
 import datetime
 import logging
-from zoneinfo import ZoneInfo
+from timeutils import ISRAEL_TZ
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import heartbeat_state
 
-ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 logger = logging.getLogger(__name__)
 

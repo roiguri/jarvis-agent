@@ -1,9 +1,10 @@
 """Reading the record back — weekly adherence and multi-week consistency."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 
+from timeutils import israel_week_bounds
 from tools.fitness._db import ISRAEL_TZ, _fmt_pace, _get_db, _target_for_week
 from tools.registry import tool_register
 
@@ -19,10 +20,7 @@ def get_weekly_fitness_summary() -> str:
     """
     try:
         conn = _get_db()
-        now = datetime.now(timezone.utc)
-        days_since_sunday = (now.weekday() + 1) % 7
-        week_start = (now - timedelta(days=days_since_sunday)).strftime("%Y-%m-%d")
-        week_end = (now + timedelta(days=6 - days_since_sunday)).strftime("%Y-%m-%d")
+        week_start, week_end = israel_week_bounds()
 
         plans = conn.execute("SELECT * FROM plans WHERE status='active'").fetchall()
         lines = [f"Week of {week_start}:"]
@@ -121,7 +119,7 @@ def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
             conn.close()
             return "No matching plans."
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(ISRAEL_TZ)
         this_sunday = now - timedelta(days=(now.weekday() + 1) % 7)
         out = []
         for p in plans:

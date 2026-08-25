@@ -1,9 +1,10 @@
 """Training plans — the weekly target and the history behind it."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 
+from timeutils import israel_week_bounds
 from tools.fitness._db import ISRAEL_TZ, _get_db, _valid_date
 from tools.registry import tool_register
 
@@ -107,10 +108,7 @@ def manage_fitness_plan(
             return f"Updated plan {plan_id}: {summary}."
 
         elif action == "list":
-            now = datetime.now(timezone.utc)
-            days_since_sunday = (now.weekday() + 1) % 7
-            week_start = (now - timedelta(days=days_since_sunday)).strftime("%Y-%m-%d")
-            week_end = (now + timedelta(days=6 - days_since_sunday)).strftime("%Y-%m-%d")
+            week_start, week_end = israel_week_bounds()
             plans = conn.execute("SELECT * FROM plans ORDER BY plan_id").fetchall()
             if not plans:
                 return "No fitness plans found. Use action='create' to add one."
