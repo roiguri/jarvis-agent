@@ -27,6 +27,7 @@ import config
 from tools import registry
 import heartbeat_state
 import turn_context
+from gateway.base import OWNER_THREAD_ID
 
 # Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
 from observability import telemetry
@@ -340,16 +341,44 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     return "--- Today's chat with Roi (Israel time) ---\n" + "\n".join(lines)
 
 
-def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
-    """Today's heartbeat-sent notifications (user scope) — gives the live
-    assistant visibility into what the background tick already pushed today
-    without waiting for the daily log to be rewritten."""
+_MIRROR_CURSOR_PATH = os.path.join(config.DATA_DIR, "agent", "mirror_cursor.json")
+_MIRROR_PREFIX = {
+    "heartbeat": "[Heartbeat]",
+    "reminder": "[Reminder]",
+    "notification": "[Notification]",
+    "llm_notification": "[Notification]",
+}
+_MIRROR_HEADER = "[Messages Jarvis sent you since the last turn:]"
+_MIRROR_MAX_ENTRIES = 20
+_MIRROR_ENTRY_CAP = 2000
+
+
+def _drain_pending_mirrors() -> tuple[str | None, str | None]:
+    """Proactive sends not yet in the owner thread, coalesced into one
+    user-role block, plus the cursor value to stamp once the turn completes.
+
+    notifications.jsonl (written by the Outbox on delivery success) is the
+    queue; the cursor is the last mirrored row's timestamp. One user-role
+    block rather than assistant messages: the reducer drops leading AI
+    messages (Gemini requires user-first), and a single message keeps the
+    wire alternating regardless of backlog. Rows older than start-of-today
+    never drain — that bounds the first run (no cursor file) and any backlog
+    to what the retired prompt slice would have shown. ISO timestamps from a
+    single writer compare lexicographically; equal-stamp splits and clock
+    steps are accepted as re-delivery, never loss.
+    """
     import json
     notif_log = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
     if not os.path.exists(notif_log):
-        return ""
+        return None, None
+    try:
+        with open(_MIRROR_CURSOR_PATH, "r", encoding="utf-8") as f:
+            cursor = json.load(f).get("last_ts", "")
+    except (OSError, ValueError):
+        cursor = ""
     since = _today_israel_start_utc()
-    records = []
+    entries: list[str] = []
+    last_ts: str | None = None
     try:
         with open(notif_log, "r", encoding="utf-8") as f:
             for line in f:
@@ -358,28 +387,41 @@ def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
                     continue
                 try:
                     rec = json.loads(line)
-                    if rec.get("event") != "heartbeat":
+                    ts_s = rec["ts"]
+                    event = rec.get("event", "")
+                    if event == "heartbeat_outcome":  # 1d: context, not an utterance
                         continue
-                    ts = _dt.datetime.fromisoformat(rec["ts"])
+                    ts = _dt.datetime.fromisoformat(ts_s)
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=_dt.timezone.utc)
-                    if ts >= since:
-                        records.append(rec)
+                    if ts < since or (cursor and ts_s <= cursor):
+                        continue
+                    text = (rec.get("message") or "").strip()[:_MIRROR_ENTRY_CAP]
+                    if not text:
+                        continue
+                    entries.append(f"{_MIRROR_PREFIX.get(event, '[Notification]')} {text}")
+                    last_ts = ts_s
                 except (KeyError, ValueError, json.JSONDecodeError):
                     continue
     except OSError:
-        return ""
-    if not records:
-        return ""
-    records = records[-limit:]
-    lines = []
-    for r in records:
-        ts_local = _dt.datetime.fromisoformat(r["ts"]).astimezone(_ISRAEL_TZ).strftime("%H:%M")
-        message = r.get("message", "").replace("\n", " ").strip()
-        if len(message) > 240:
-            message = message[:240] + "..."
-        lines.append(f"[{ts_local}] {message}")
-    return "--- Heartbeat activity today (Israel time) ---\n" + "\n".join(lines)
+        return None, None
+    if not entries:
+        return None, None
+    entries = entries[-_MIRROR_MAX_ENTRIES:]
+    return _MIRROR_HEADER + "\n" + "\n".join(entries), last_ts
+
+
+def _advance_mirror_cursor(last_ts: str) -> None:
+    """Stamp after the turn completed — a failure re-delivers, never loses."""
+    import json
+    try:
+        os.makedirs(os.path.dirname(_MIRROR_CURSOR_PATH), exist_ok=True)
+        tmp = _MIRROR_CURSOR_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"last_ts": last_ts}, f)
+        os.replace(tmp, _MIRROR_CURSOR_PATH)
+    except OSError:
+        logger.exception("mirror cursor advance failed; rows will re-deliver")
 
 
 def build_system_prompt(
@@ -393,8 +435,8 @@ def build_system_prompt(
     memory dir) + AGENTS.md (operating rules, committed under prompts/) +
     USER.md (Roi's profile/preferences, memory dir) + a scope framing line
     + the registry skill block. Scope-specific:
-    - user: today's daily log + today's heartbeat-sent notifications (live
-      feed; complements the daily log which is rewritten only by the tick).
+    - user: today's daily log. (Heartbeat sends reach the user thread as
+      mirrored history via the pending-mirror drain, not as a prompt slice.)
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
       addressed) + yesterday's daily log (older days are reachable via
@@ -440,9 +482,7 @@ def build_system_prompt(
         today = _load_today_daily_log()
         if today:
             parts.append(today)
-        hb_notifs = _load_recent_heartbeat_notifications()
-        if hb_notifs:
-            parts.append(hb_notifs)
+
 
     parts.append(registry.compact_skill_list(scope, active_skills))
     return "\n\n".join(p for p in parts if p)
@@ -652,6 +692,12 @@ def ask_jarvis(
         model=getattr(llm, "model", None),
     )
 
+    # Owner-thread user turns first drain pending proactive sends into the
+    # conversation; the cursor advances only after the turn completes.
+    mirror_block = mirror_cursor = None
+    if scope == "user" and thread_id == OWNER_THREAD_ID:
+        mirror_block, mirror_cursor = _drain_pending_mirrors()
+
     final_response = ""
     try:
         # Build the message content with text and media.
@@ -782,22 +828,17 @@ def ask_jarvis(
                         "text": f"\n[Failed to load {media_type}: {media_path}]"
                     })
 
-            # Use HumanMessage to pass structured content to the LLM
-            message = HumanMessage(content=content)
-            events = agent_executor.stream(
-                {"messages": [message], "scope": scope,
-                 "heartbeat_due_tasks": heartbeat_due_tasks},
-                config,
-                stream_mode="values"
-            )
+            input_messages = [HumanMessage(content=content)]
         else:
-            # Standard text-only message
-            events = agent_executor.stream(
-                {"messages": [("user", user_input)], "scope": scope,
-                 "heartbeat_due_tasks": heartbeat_due_tasks},
-                config,
-                stream_mode="values"
-            )
+            input_messages = [("user", user_input)]
+        if mirror_block:
+            input_messages.insert(0, ("user", mirror_block))
+        events = agent_executor.stream(
+            {"messages": input_messages, "scope": scope,
+             "heartbeat_due_tasks": heartbeat_due_tasks},
+            config,
+            stream_mode="values"
+        )
 
         for event in events:
             last_message = event["messages"][-1]
@@ -812,6 +853,8 @@ def ask_jarvis(
                     )
                 else:
                     final_response = str(content)
+        if mirror_cursor:
+            _advance_mirror_cursor(mirror_cursor)
         return final_response
     except Exception as e:
         acc = telemetry.TURN_ACC.get()

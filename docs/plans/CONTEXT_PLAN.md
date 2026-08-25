@@ -98,7 +98,7 @@ turn, not at delivery time.
 
 *Mechanism.* No new store and no new writer: `notifications.jsonl` — which the Outbox already
 writes on delivery success — **is** the pending queue. A code-owned cursor
-(`jarvis_data/gateway/mirror_cursor.json`, the timestamp of the last mirrored row) marks progress.
+(`jarvis_data/agent/mirror_cursor.json`, the timestamp of the last mirrored row) marks progress.
 At the start of a user-scope turn on the owner thread (both conditions — heartbeat scope never
 drains), `ask_jarvis` reads rows newer than the cursor and coalesces them into **one user-role
 message** with provenance per line, passed in the same `invoke` input ahead of the user's message:

@@ -101,7 +101,7 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | via `get_chat_history` tool | append-only (gateway writes per turn) | n/a |
-| `notifications.jsonl` | jarvis_data/logs | user scope — today's `event="heartbeat"` slice | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
+| `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
 
 The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is the agent's master *index*; the agent consults it on demand with `read_memory` (AGENTS.md instructs it to). Injecting it every turn was considered and rejected — it would spend tokens on an index the agent only needs when navigating memory, and the tool path already covers that need.
 
@@ -118,7 +118,7 @@ prompts/AGENTS.md  (code — operating rules; outside the sandbox)
 USER.md            (jarvis_memory — durable user profile)
 ─ scope == "user" ─────────────────────────────────────────────
    _USER_FRAMING (conversational)  +  today's daily log
-   + today's heartbeat-sent notifications (live slice of notifications.jsonl)
+   (proactive sends reach the thread as mirrored history, not the prompt)
 ─ scope == "heartbeat" ────────────────────────────────────────
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
@@ -136,7 +136,7 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
-- **`user`** — conversational framing + **today's daily log** + **today's heartbeat-sent notifications** (live slice of `notifications.jsonl` filtered to `event="heartbeat"` and timestamps ≥ start-of-Israel-day). The notifications give the chat assistant a live view of what the background tick has already pushed; the daily log carries the richer narrative (still useful, but lagging because it is rewritten only at end-of-tick).
+- **`user`** — conversational framing + **today's daily log**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent. The daily log carries the richer narrative (still useful, but lagging because it is rewritten only at end-of-tick).
 - **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the `[NO_ACTION]` tick contract, present *only* here so it never adds noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
 Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. They sit alongside the daily log rather than replacing it: live for freshness, daily log for narrative.
