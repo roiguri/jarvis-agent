@@ -157,12 +157,12 @@ def default_outbox() -> Outbox:
 
 
 def _origin_entry() -> _Registered:
-    """The registered channel of the running turn's origin thread, falling back
-    to the proactive default for origin-less turns (heartbeat) — the same
-    routing rule get_confirmation() applies, over the send registry."""
-    thread_id = turn_context.current_thread_id()
-    if thread_id:
-        entry = _registry.get(thread_id.split("_", 1)[0])
+    """The registered channel of the running turn's origin, falling back to
+    the proactive default for origin-less turns (heartbeat) — the same routing
+    rule get_confirmation() applies, over the send registry."""
+    name = turn_context.current_channel()
+    if name:
+        entry = _registry.get(name)
         if entry is not None:
             return entry
     return _default_entry()
@@ -185,23 +185,13 @@ def register_confirmation(name: str, store: Confirmation) -> None:
     _confirmation_stores[name] = store
 
 
-def _channel_name_for_thread(thread_id: str | None) -> str | None:
-    """The channel a thread belongs to, by its '<name>_<id>' prefix, when that
-    channel has a registered confirmation store. None for origin-less threads
-    (e.g. the 'heartbeat' thread)."""
-    if not thread_id:
-        return None
-    name = thread_id.split("_", 1)[0]
-    return name if name in _confirmation_stores else None
-
-
 def get_confirmation() -> Confirmation:
     """The confirmation store for the channel of the running turn (its origin),
     so a destructive tool's prompt and ack both stay on the channel the turn
     came from. Falls back to the default channel for origin-less turns
     (heartbeat). Destructive tools call this with no args; the origin is read
     from ambient turn context."""
-    name = _channel_name_for_thread(turn_context.current_thread_id()) or _default_name()
+    name = turn_context.current_channel() or _default_name()
     store = _confirmation_stores.get(name)
     if store is None:
         raise RuntimeError(

@@ -29,9 +29,9 @@ from gateway.base import Channel
 
 logger = logging.getLogger(__name__)
 
-# Event types for notifications.jsonl. Values are frozen: agent.py filters
-# event == "heartbeat" for the user-scope prompt slice, and existing log rows
-# already use these strings.
+# Event types for notifications.jsonl. Values are frozen: agent.py's
+# pending-mirror drain keys provenance prefixes off them, and existing log
+# rows already use these strings.
 EVENT_HEARTBEAT = "heartbeat"
 EVENT_REMINDER = "reminder"
 EVENT_MEDIA = "notification"

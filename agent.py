@@ -26,7 +26,9 @@ import config
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
+import pending_mirrors
 import turn_context
+from gateway.base import OWNER_THREAD_ID
 
 # Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
 from observability import telemetry
@@ -340,48 +342,6 @@ def _load_recent_user_chat(limit: int = 60) -> str:
     return "--- Today's chat with Roi (Israel time) ---\n" + "\n".join(lines)
 
 
-def _load_recent_heartbeat_notifications(limit: int = 20) -> str:
-    """Today's heartbeat-sent notifications (user scope) — gives the live
-    assistant visibility into what the background tick already pushed today
-    without waiting for the daily log to be rewritten."""
-    import json
-    notif_log = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
-    if not os.path.exists(notif_log):
-        return ""
-    since = _today_israel_start_utc()
-    records = []
-    try:
-        with open(notif_log, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    if rec.get("event") != "heartbeat":
-                        continue
-                    ts = _dt.datetime.fromisoformat(rec["ts"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=_dt.timezone.utc)
-                    if ts >= since:
-                        records.append(rec)
-                except (KeyError, ValueError, json.JSONDecodeError):
-                    continue
-    except OSError:
-        return ""
-    if not records:
-        return ""
-    records = records[-limit:]
-    lines = []
-    for r in records:
-        ts_local = _dt.datetime.fromisoformat(r["ts"]).astimezone(_ISRAEL_TZ).strftime("%H:%M")
-        message = r.get("message", "").replace("\n", " ").strip()
-        if len(message) > 240:
-            message = message[:240] + "..."
-        lines.append(f"[{ts_local}] {message}")
-    return "--- Heartbeat activity today (Israel time) ---\n" + "\n".join(lines)
-
-
 def build_system_prompt(
     scope: str,
     active_skills: set[str],
@@ -393,8 +353,8 @@ def build_system_prompt(
     memory dir) + AGENTS.md (operating rules, committed under prompts/) +
     USER.md (Roi's profile/preferences, memory dir) + a scope framing line
     + the registry skill block. Scope-specific:
-    - user: today's daily log + today's heartbeat-sent notifications (live
-      feed; complements the daily log which is rewritten only by the tick).
+    - user: today's daily log. (Heartbeat sends reach the user thread as
+      mirrored history via the pending-mirror drain, not as a prompt slice.)
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
       addressed) + yesterday's daily log (older days are reachable via
@@ -408,13 +368,11 @@ def build_system_prompt(
         f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
         f"[Active scope: {scope}]",
     ]
-    # Origin channel, derived from the turn's thread-id prefix (the "<name>_<id>"
-    # convention every channel follows). A runtime value — no channel-name literal
-    # in this module — so it stays inform-only and channel-agnostic. Skipped for
-    # heartbeat, whose thread is not a channel.
-    thread_id = turn_context.current_thread_id()
-    if scope == "user" and thread_id:
-        lines.append(f"[Channel: {thread_id.split('_', 1)[0]}]")
+    # Origin channel — a runtime value (no channel-name literal in this module),
+    # inform-only. None on origin-less turns (heartbeat), where the line is skipped.
+    channel = turn_context.current_channel()
+    if scope == "user" and channel:
+        lines.append(f"[Channel: {channel}]")
     envelope = "\n".join(lines)
     parts = [
         envelope,
@@ -442,9 +400,7 @@ def build_system_prompt(
         today = _load_today_daily_log()
         if today:
             parts.append(today)
-        hb_notifs = _load_recent_heartbeat_notifications()
-        if hb_notifs:
-            parts.append(hb_notifs)
+
 
     parts.append(registry.compact_skill_list(scope, active_skills))
     return "\n\n".join(p for p in parts if p)
@@ -612,6 +568,7 @@ def ask_jarvis(
     scope: str = "user",
     turn_id: str | None = None,
     heartbeat_due_tasks: list[str] | None = None,
+    channel: str | None = None,
 ) -> str:
     """
     Encapsulates the agent execution and parses complex LangChain message blocks into a clean string.
@@ -629,6 +586,8 @@ def ask_jarvis(
         heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
             blocks injected into the system prompt to these task names.
             None injects the full file. Overwritten in state every turn.
+        channel: origin channel name (router-stamped), or None for
+            origin-less turns. Published via CURRENT_CHANNEL.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -643,12 +602,17 @@ def ask_jarvis(
     _tid_token = telemetry.TURN_ID.set(turn_id)
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
+    _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
         active_skills_start=active_start,
         model=getattr(llm, "model", None),
     )
+
+    mirror_block = mirror_cursor = None
+    if scope == "user" and thread_id == OWNER_THREAD_ID:
+        mirror_block, mirror_cursor = pending_mirrors.drain_pending()
 
     final_response = ""
     try:
@@ -780,22 +744,17 @@ def ask_jarvis(
                         "text": f"\n[Failed to load {media_type}: {media_path}]"
                     })
 
-            # Use HumanMessage to pass structured content to the LLM
-            message = HumanMessage(content=content)
-            events = agent_executor.stream(
-                {"messages": [message], "scope": scope,
-                 "heartbeat_due_tasks": heartbeat_due_tasks},
-                config,
-                stream_mode="values"
-            )
+            input_messages = [HumanMessage(content=content)]
         else:
-            # Standard text-only message
-            events = agent_executor.stream(
-                {"messages": [("user", user_input)], "scope": scope,
-                 "heartbeat_due_tasks": heartbeat_due_tasks},
-                config,
-                stream_mode="values"
-            )
+            input_messages = [("user", user_input)]
+        if mirror_block:
+            input_messages.insert(0, ("user", mirror_block))
+        events = agent_executor.stream(
+            {"messages": input_messages, "scope": scope,
+             "heartbeat_due_tasks": heartbeat_due_tasks},
+            config,
+            stream_mode="values"
+        )
 
         for event in events:
             last_message = event["messages"][-1]
@@ -810,6 +769,8 @@ def ask_jarvis(
                     )
                 else:
                     final_response = str(content)
+        if mirror_cursor:
+            pending_mirrors.advance_cursor(mirror_cursor)
         return final_response
     except Exception as e:
         acc = telemetry.TURN_ACC.get()
@@ -840,6 +801,7 @@ def ask_jarvis(
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
+        turn_context.CURRENT_CHANNEL.reset(_channel_token)
 
 
 def _ack_from_messages(messages) -> dict | None:

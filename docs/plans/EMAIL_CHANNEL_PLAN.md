@@ -80,9 +80,9 @@ channel work in this phase.
   notifications already use.
 - **Correction (independent review, post-write): the "existing cross-scope log-injection" this
   leans on does not actually cover telegram↔app today — it needs to be built as part of Phase 1,
-  not assumed.** Verified: `agent.py`'s injection (`_load_recent_heartbeat_notifications` /
-  its call site) is hardcoded to `event == "heartbeat"` and gets injected into **every** user-scope
-  turn unconditionally, with no per-channel/destination filtering at all. Reusing `event="heartbeat"`
+  not assumed.** Verified against the pre-2026-08-25 code (`_load_recent_heartbeat_notifications`, since
+  replaced by the pending-mirror drain — re-derive this argument against the drain, which is also
+  destination-blind but delivers into the single owner thread rather than per-channel prompts). Reusing `event="heartbeat"`
   for a cross-channel send would broadcast it into every channel's next turn, not just the
   destination's — wrong. Phase 1 needs its own, channel-scoped filter (parallel to the heartbeat
   one, not a reuse of it) so a send tagged for channel X only surfaces in channel X's next turn.

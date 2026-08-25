@@ -12,7 +12,7 @@ import logging
 from telegram import Bot, BotCommand
 from telegram.error import BadRequest
 
-from gateway.base import Channel
+from gateway.base import Channel, OWNER_THREAD_ID
 from gateway.commands import list_commands as _list_slash_commands
 from gateway.channels.telegram.markdown_to_html import convert as md_to_html
 
@@ -31,13 +31,6 @@ def _truncate_markdown(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + _TRUNCATION_TAIL
-
-
-# thread_id format is frozen at telegram_<user_id> for Phase 1. The ":" separator
-# change is a Phase 2 concern coupled to the checkpointer-key migration; changing
-# it here would orphan every existing LangGraph checkpoint and history record.
-def thread_id_for(user_id: int) -> str:
-    return f"telegram_{user_id}"
 
 
 class TelegramChannel(Channel):
@@ -125,7 +118,7 @@ class TelegramChannel(Channel):
 
     @property
     def owner_thread_id(self) -> str:
-        return thread_id_for(self._owner_id)
+        return OWNER_THREAD_ID
 
     # ------------------------------------------------------------------
     # Telegram-specific helpers used by the router / confirmation UI

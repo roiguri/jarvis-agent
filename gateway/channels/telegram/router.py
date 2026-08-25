@@ -12,7 +12,7 @@ import mimetypes
 from telegram import Update
 
 from gateway.base import InboundMessage, OnMessage
-from gateway.channels.telegram.channel import TelegramChannel, thread_id_for as _thread_id
+from gateway.channels.telegram.channel import TelegramChannel
 from gateway.channels.telegram.media_cache import save as _save_media
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class TelegramInboundRouter:
         await self._dispatch(InboundMessage(
             user_id=user_id,
             chat_id=update.effective_chat.id,
-            thread_id=_thread_id(user_id),
+            thread_id=self._channel.owner_thread_id,
             user_text=msg.text or "",
         ))
 
@@ -82,7 +82,7 @@ class TelegramInboundRouter:
             await self._dispatch(InboundMessage(
                 user_id=user_id,
                 chat_id=update.effective_chat.id,
-                thread_id=_thread_id(user_id),
+                thread_id=self._channel.owner_thread_id,
                 user_text=msg.caption or "[IMAGE attachment]",
                 attachments=[attachment],
             ))
@@ -125,7 +125,7 @@ class TelegramInboundRouter:
         await self._dispatch(InboundMessage(
             user_id=user_id,
             chat_id=update.effective_chat.id,
-            thread_id=_thread_id(user_id),
+            thread_id=self._channel.owner_thread_id,
             user_text=msg.caption or "[VIDEO attachment]",
             attachments=[attachment],
         ))
@@ -144,7 +144,7 @@ class TelegramInboundRouter:
         await self._dispatch(InboundMessage(
             user_id=user_id,
             chat_id=update.effective_chat.id,
-            thread_id=_thread_id(user_id),
+            thread_id=self._channel.owner_thread_id,
             user_text=msg.caption or "[AUDIO attachment]",
             attachments=[attachment],
         ))
@@ -170,7 +170,7 @@ class TelegramInboundRouter:
         await self._dispatch(InboundMessage(
             user_id=user_id,
             chat_id=update.effective_chat.id,
-            thread_id=_thread_id(user_id),
+            thread_id=self._channel.owner_thread_id,
             user_text=msg.caption or f"[{kind.upper()} attachment]",
             attachments=[attachment],
         ))
@@ -207,7 +207,7 @@ class TelegramInboundRouter:
             await self._dispatch(InboundMessage(
                 user_id=payload["user_id"],
                 chat_id=payload["chat_id"],
-                thread_id=_thread_id(payload["user_id"]),
+                thread_id=self._channel.owner_thread_id,
                 user_text=user_text,
                 attachments=attachments,
             ))
@@ -217,6 +217,9 @@ class TelegramInboundRouter:
             logger.exception("Error flushing media group %s", group_id)
 
     async def _dispatch(self, inbound: InboundMessage) -> None:
+        # One funnel serves every handler — stamp the origin once here.
+        inbound.channel = self._channel.name
+
         async def keep_typing() -> None:
             while True:
                 await self._channel.send_chat_action(inbound.chat_id, "typing")

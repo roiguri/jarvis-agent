@@ -1,6 +1,7 @@
 # Context — one owner conversation, and the cross-scope bridge
 
-**Status:** planned, not started. Phase 0 first; phases 1a–1d are the committed scope.
+**Status:** phases 0–1c COMPLETE and staging-verified; 1d deferred to #106 (2026-08-25).
+Remaining: phase-0 "after" readings, umbrella soak, merge.
 **Date:** 2026-08-25.
 **Problem record:** [context/PROBLEMS.md](context/PROBLEMS.md) — this plan solves C5 (issue #50)
 and touches C1/A-cluster edges; it deliberately does not restate the problems.
@@ -92,28 +93,118 @@ carry the new thread id; readers that filter by prefix are updated. The heartbea
 unaffected in intent (it already reads all non-heartbeat threads). **Felt test:** start a topic in
 the app, continue it on Telegram, and back.
 
-**1c — the mirror.** When the Outbox successfully delivers an owner-addressed proactive send
-(heartbeat, reminder), append the delivered text into the owner thread's LangGraph state and
-`chat_history.jsonl` — after send success only (matching the Outbox's log-on-success seam),
-idempotent, provenance-prefixed in the text. Delivered text only; the tick's tool calls and
-reasoning stay in the heartbeat thread. **Felt test:** reply to a briefing with a bare pronoun
-("book the second one") and watch it resolve.
+**1c — the mirror (drain-at-next-turn design).** The delivered text of every owner-addressed
+proactive send becomes real conversation history — materialized at the start of the next user
+turn, not at delivery time.
 
-**1d — carryover, then retire the slice.** Two halves that must land together:
+*Mechanism.* No new store and no new writer: `notifications.jsonl` — which the Outbox already
+writes on delivery success — **is** the pending queue. A code-owned cursor
+(`jarvis_data/agent/mirror_cursor.json`, the timestamp of the last mirrored row) marks progress.
+At the start of a user-scope turn on the owner thread (both conditions — heartbeat scope never
+drains), `ask_jarvis` reads rows newer than the cursor and coalesces them into **one user-role
+message** with provenance per line, passed in the same `invoke` input ahead of the user's message:
 
-1. *Silent-outcome carryover:* persist each tick's structured ack (`heartbeat_respond` already
-   produces it) into a one-row, replace-semantics store; the next user turn claims it exactly
-   once and receives it as a labeled internal-context line. Covers ticks that acted without
-   sending anything — the case the mirror cannot.
-2. *Retire `_load_recent_heartbeat_notifications`:* with sends in the thread as real history, the
-   flat slice (240-char truncation, today-only) is a second worse copy — delete it. This is also
-   the cost payback for the mirror's window usage; the phase 0 delta is the check.
+```python
+invoke({"messages": [
+    HumanMessage("[Messages Jarvis sent you since the last turn:]\n[Reminder] …\n[Heartbeat] …"),
+    HumanMessage(user_input),
+]})
+```
 
-Close #50 at the end of 1d.
+User-role-coalesced is load-bearing, not stylistic (independent review, 2026-08-25): the message
+reducer advances the window to the first *user* message (Gemini requires user-first), so a leading
+assistant-role mirror on a fresh thread would be **silently dropped while the cursor still
+advanced** — and multiple assistant-role mirrors would also put consecutive model-role contents on
+the Gemini wire, the exact hazard hermes hit before switching to user-role mirrors. One user-role
+block survives the reducer structurally, keeps the wire alternating, and stays one message
+regardless of backlog. Provenance lives in the text (`[Reminder] …` per line; event → prefix
+covers all four frozen kinds, `llm_notification` included; unknown events render as
+`[Notification]`; `heartbeat_outcome` rows are excluded — they are 1d's).
+
+The cursor (stamped with the **last drained row's timestamp**, never `now()`) advances **only on
+successful turn completion** — not in the exception path — so a failed turn re-delivers.
+First run / missing cursor file: drain a recency window (today only), which re-mirrors at most
+what the old slice already showed; the same window bounds any backlog. Timestamp-equality and
+clock-step edge cases are accepted in writing (microsecond ISO stamps, single writer; a
+monotonic row id is the additive fix if they ever bite).
+
+*Why drain-at-next-turn rather than append-at-delivery* (both references append at delivery):
+our checkpoint writer is not safe to race — a mid-turn `update_state` from the delivery path can
+be orphaned off the checkpoint lineage — and nothing reads the thread between turns, so deferring
+is observably identical, keeps `invoke` the **single** entry point into thread state, and removes
+the race by construction (the drain runs inside the already-serialized turn path). Closest
+reference analogue: OpenClaw's system-event queue, made durable.
+
+*Resistance, case by case:* restart with pending rows → files, nothing lost. Crash mid-turn after
+draining → cursor never advanced → re-delivered next turn (fail-toward-redelivery, the
+`state.json` stamp direction; a checkpointed-then-redelivered block means "seen twice in the
+thread" — accepted and honest). Flood after a long gap → the recency window, with a generous
+per-entry length cap (no 240-char truncation — that was C5 gap 3). Slash commands short-circuit
+before `ask_jarvis`, so command-only interactions leave briefings pending — they wait for a real
+turn. Telemetry expectation, stated so it isn't misread later (E3): user input/turn may show a net
+**rise** after 1c+1d — mirrors ride the window while the deleted slice only shaved the prompt —
+and that is the design working, not a regression.
+
+*Prerequisite fixed under review (1b follow-up):* the claimed "already-serialized turn path" was
+per-channel only — nothing serialized Telegram against jarvis-app, which since 1b means two
+concurrent turns could race the one owner checkpoint. A shared owner-turn lock in
+`process_inbound_message` (also wrapping the confirmation-outcome turn) now provides the
+serialization the drain design assumes.
+
+*Also in 1c:* **retire `_load_recent_heartbeat_notifications`** — the slice reads the same
+delivered-sends log; with those in the thread it is a duplicate feed, and it never covered silent
+ticks anyway (silent ticks write no notification row), so nothing is lost by removing it now.
+Drained messages live in the checkpoint only — deliberately not re-appended to
+`chat_history.jsonl` (they are already recorded in `notifications.jsonl`; double-recording would
+put the same text in two agent-readable logs).
+
+*Delivered text only*, never the tick's tool calls or reasoning — both references' rule.
+**Felt test:** a reminder fires; ask "what did you just remind me about?"; then reply to a
+briefing with a bare pronoun and watch it resolve.
+
+**1d — silent-outcome carryover, on the same rails.** Ticks that act without messaging (sync,
+cleanup, notes) currently leave no trace the user scope sees. The tick writes its structured ack
+to the **same log** as a new event kind (`event="heartbeat_outcome"` — additive; the frozen
+`event="heartbeat"` filter is untouched), and the same drain splits by event: send-events join
+the 1c user-role block; outcome-events become a **labeled internal-context line — never
+transcript text**, because Jarvis never said it (the line both references refuse to cross).
+Review-driven specifics: the writer is `heartbeat.py` directly (silent ticks never reach the
+Outbox — this is a new writer, and GATEWAY.md's "notifications.jsonl is proactive pushes only"
+gets updated with it); **only acted-and-silent ticks write** (a no-op tick writing rows would let
+nothing overwrite something); **all undrained outcomes are delivered, capped** — not
+latest-one-wins, which could discard a real 03:00 sync behind a 07:00 cleanup; the injection
+mechanism is a per-turn state field overwritten every turn, exactly the `heartbeat_due_tasks`
+pattern; `get_notification_history` filters outcome rows so they don't surface as "notifications
+sent". The shared cursor already gives delivered-once for both kinds — no second stamp.
+
+**Open at 1d implementation — the file-naming fork:** outcome rows stretch the file's name (an
+outcome is not a notification). Decide then between keep-one-file-and-filter (as specified above)
+and a separate outcomes file (honest names, but a second file + stamp). Renaming
+`notifications.jsonl` itself is off the table: the log's identity — what was delivered — is
+unchanged by 1c, and the queue is the cursor's *view* of the log, not the file.
+
+**1d deferred (2026-08-25, owner decision):** 1a–1c fixed everything C5's owner experience
+described, the daily log already covers most silent-act awareness (same-day), and no blind spot
+has been felt. The problem is filed as #106 with the design above recorded as ONE candidate —
+whoever opens it reconsiders alternatives against the observed problem rather than inheriting
+this spec. #50 closes on 1a–1c.
+
+Close #50 at the end of 1c (was: 1d).
+
+*Independent review, 2026-08-25:* the design above is post-review — two blockers (the
+cross-channel race; the reducer dropping assistant-role mirrors) and the 1d semantics were found
+by an adversarial pass against the code and fixed here before implementation. The review also
+confirmed: the invoke-input mechanism, the shared-cursor delivered-once property, and the
+ack-walker/telemetry non-interactions.
 
 **Blast radius note (1b):** the spine is the one step with product-visible behavior change and the
 one that touches the checkpoint key. It is deliberately its own PR with its own staging soak
 before 1c builds on it.
+
+**Known deviation from the references, accepted:** Hermes's seed puts the briefing in the session
+even if the user never replies; ours materializes only on the next turn. For every current reader
+(the only consumer of thread state is a turn) this is a non-difference; it is recorded here as
+the one behavior a future feature could trip over.
 
 ---
 

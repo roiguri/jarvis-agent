@@ -377,6 +377,7 @@ class JarvisAppInboundRouter:
             chat_id=0,
             thread_id=self._channel.owner_thread_id,
             user_text=text,
+            channel=self._channel.name,
             attachments=attachments,
         )
         beat = asyncio.create_task(self._thinking_beat())

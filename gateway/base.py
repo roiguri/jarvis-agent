@@ -13,22 +13,27 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable
 
+# The one conversation. Every channel stamps this on the owner's inbound
+# messages and shares the LangGraph thread behind it; a channel is a surface
+# onto the conversation, not a conversation of its own. The turn's origin
+# channel travels separately (InboundMessage.channel -> CURRENT_CHANNEL).
+OWNER_THREAD_ID = "owner"
+
 
 @dataclass
 class InboundMessage:
     """Channel-agnostic message shape delivered by a channel to the app domain.
 
-    `thread_id` is the only field the agent layer uses to namespace per-conversation
-    state (LangGraph checkpointer key + chat_history.jsonl filter). Channels are
-    responsible for producing a stable, channel-prefixed thread_id. The format is
-    deliberately frozen at `telegram_<user_id>` for Phase 1 — the `:` separator
-    change is a Phase 2 concern coupled to the checkpointer-key migration.
+    `thread_id` namespaces per-conversation state (LangGraph checkpointer key +
+    chat_history.jsonl tag). All owner traffic carries OWNER_THREAD_ID.
     """
 
     user_id: int
     chat_id: int
     thread_id: str
     user_text: str
+    # Channel.name of the producer — the turn's origin marker for routing.
+    channel: str = ""
     # Each: {kind, path, mime_type, source}. `path` is an ABSOLUTE,
     # channel-produced filesystem path the agent opens as-is — the channel
     # owns media storage; core/agent never resolve or name a channel.

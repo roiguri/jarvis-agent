@@ -18,11 +18,17 @@ from contextvars import ContextVar
 # that restrict what background turns may do.
 CURRENT_SCOPE: ContextVar[str | None] = ContextVar("current_scope", default=None)
 
-# The running turn's conversation thread id (e.g. "telegram_42"); None outside a
+# The running turn's conversation thread id (e.g. "owner"); None outside a
 # turn. Lets tool bodies discover which channel a turn originated on without the
 # model declaring it — e.g. a destructive tool's confirmation resolves to the
 # origin channel's handler. Set by ask_jarvis alongside CURRENT_SCOPE.
 CURRENT_THREAD_ID: ContextVar[str | None] = ContextVar("current_thread_id", default=None)
+
+
+# The running turn's origin channel name; None on origin-less turns
+# (heartbeat). Router-stamped, set by ask_jarvis — the thread id no longer
+# implies the channel once every channel shares the owner thread.
+CURRENT_CHANNEL: ContextVar[str | None] = ContextVar("current_channel", default=None)
 
 
 def current_scope() -> str:
@@ -33,3 +39,8 @@ def current_scope() -> str:
 def current_thread_id() -> str | None:
     """The running turn's thread id, or None outside a turn."""
     return CURRENT_THREAD_ID.get()
+
+
+def current_channel() -> str | None:
+    """The running turn's origin channel name, or None for origin-less turns."""
+    return CURRENT_CHANNEL.get()
