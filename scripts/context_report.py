@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The context instrument — one script, ~six numbers, run before and after.
 
-Prints the readings the context plan (docs/plans/CONTEXT_PLAN.md phase 0)
+Prints the readings the context plan (docs/plans/archive/CONTEXT_PLAN.md phase 0)
 brackets every phase with: per-scope turn costs and cache ratio from
 turns.jsonl, checkpoint weight per thread from threads.sqlite, and the
 assembled system prompt's section sizes from build_system_prompt itself.
