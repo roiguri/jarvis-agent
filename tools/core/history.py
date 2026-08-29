@@ -3,7 +3,9 @@ import json
 import os
 import tempfile
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+
+from timeutils import ISRAEL_TZ
 from langchain_core.tools import tool
 
 import config
@@ -165,20 +167,30 @@ def get_chat_history(limit: int = 20, since: str | None = None) -> str:
 
     Args:
         limit: max number of entries to return.
-        since: optional ISO 8601 timestamp, offset required. Days are Israel
-               time: '2026-05-08T00:00:00+03:00', not '...Z' (starts at 03:00).
+        since: optional. A plain date '2026-05-08' means the start of that day,
+               Israel time — the day boundary is computed for you. A full
+               ISO 8601 timestamp with a UTC offset makes a precise cut instead.
     """
     if since is not None:
         # Time-filtered path: read all entries and filter, then take last `limit`.
         try:
-            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            # Date-only form: the Israel day boundary is computed here, not by
+            # the caller — a fixed offset in the contract was wrong every
+            # winter (+03:00 is summer-only; IST is +02:00).
+            day = date.fromisoformat(since)
+            since_dt = datetime(day.year, day.month, day.day, tzinfo=ISRAEL_TZ)
         except ValueError:
-            return f"Invalid 'since' timestamp: {since!r}. Use ISO 8601 with an offset, e.g. '2026-05-08T00:00:00+03:00'."
-        if since_dt.tzinfo is None:
-            # Log entries are offset-aware; comparing them against a naive
-            # bound raises TypeError mid-scan. Reject with the offset spelled
-            # out rather than guessing which day boundary was meant.
-            return f"Ambiguous 'since' timestamp: {since!r} has no UTC offset. Use e.g. '{since}+03:00' for Israel time."
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            except ValueError:
+                return (f"Invalid 'since': {since!r}. Use 'YYYY-MM-DD' for the start "
+                        "of an Israel day, or a full ISO 8601 timestamp with an offset.")
+            if since_dt.tzinfo is None:
+                # Log entries are offset-aware; comparing them against a naive
+                # bound raises TypeError mid-scan. Reject rather than guess
+                # which day boundary was meant.
+                return (f"Ambiguous 'since': {since!r} has no UTC offset. Pass a plain "
+                        "'YYYY-MM-DD' for an Israel day, or include an offset.")
         if not os.path.exists(CHAT_LOG):
             return "No chat history found."
         records = []
