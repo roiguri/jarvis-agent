@@ -30,7 +30,7 @@ from tools.google_health._auth import get_access_token, GoogleHealthNotConfigure
 
 BASE = "https://health.googleapis.com/v4"
 USER = "users/me"
-from timeutils import ISRAEL_TZ
+from timeutils import owner_tz, owner_tz_name
 
 _UTC = ZoneInfo("UTC")
 
@@ -62,16 +62,26 @@ def _list(data_type: str, filter_expr: str, page_size: int = 50) -> list[dict]:
 
 
 def _since_local(days: int) -> datetime:
-    """Local (Asia/Jerusalem) midnight `days-1` days ago; days=1 → today 00:00."""
+    """Owner-local midnight `days-1` days ago (Israel unless /tz set an away
+    zone); days=1 → today 00:00. The watch travels with the owner, so its
+    data's day boundaries follow the owner — the one surface that must NOT
+    stay home-anchored."""
     days = max(1, int(days))
-    return datetime.now(ISRAEL_TZ).replace(
+    return datetime.now(owner_tz()).replace(
         hour=0, minute=0, second=0, microsecond=0
     ) - timedelta(days=days - 1)
 
 
 def _local(ts: str) -> datetime:
-    """Parse an API RFC-3339 timestamp to Asia/Jerusalem local time."""
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(ISRAEL_TZ)
+    """Parse an API RFC-3339 timestamp to the owner's local time."""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(owner_tz())
+
+
+def _zone_note() -> str:
+    """' (times in <zone>)' while the owner is away; empty at home, so home
+    output stays byte-identical."""
+    name = owner_tz_name()
+    return f" (times in {name})" if name else ""
 
 
 def _hm(td: timedelta) -> str:
@@ -142,7 +152,7 @@ def check_sleep(nights: int = 1) -> str:
             + (f" — {breakdown}" if breakdown else "")
             + (f". {'; '.join(extras)}." if extras else "")
         )
-    return "Sleep:\n" + "\n".join(lines)
+    return "Sleep" + _zone_note() + ":\n" + "\n".join(lines)
 
 
 def _pace(sec_per_m: float) -> str:
@@ -219,14 +229,15 @@ def _format_workout(p: dict) -> str:
 @tool
 def check_workouts(since_date: str = "", until_date: str = "") -> str:
     """Logged Pixel Watch workout/exercise sessions in a date range
-    (Asia/Jerusalem). `since_date`/`until_date` are inclusive YYYY-MM-DD;
+    (owner-local dates — Israel unless traveling). `since_date`/`until_date`
+    are inclusive YYYY-MM-DD;
     `since_date=""` defaults to today, `until_date=""` means no upper bound.
     For a single day, pass `since_date == until_date`. Reports per session:
     name, time, duration, distance/pace/steps/elevation when available,
     calories, avg HR, HR-zone minutes, and per-km splits for GPS sessions.
     Manually-logged sessions are tagged `(manual)` — their kcal/HR are
     MET-estimated, not measured."""
-    today = datetime.now(ISRAEL_TZ).strftime("%Y-%m-%d")
+    today = datetime.now(owner_tz()).strftime("%Y-%m-%d")
     if since_date:
         try:
             datetime.strptime(since_date, "%Y-%m-%d")
@@ -264,7 +275,7 @@ def check_workouts(since_date: str = "", until_date: str = "") -> str:
 
     if not points:
         return f"No workouts {range_desc}."
-    return f"Workouts {range_desc}:\n\n" + "\n\n".join(_format_workout(p) for p in points)
+    return f"Workouts {range_desc}{_zone_note()}:\n\n" + "\n\n".join(_format_workout(p) for p in points)
 
 
 def _daily(data_type: str, filter_member: str, days: int) -> list[dict]:
