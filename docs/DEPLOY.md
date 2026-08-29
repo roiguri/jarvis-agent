@@ -143,11 +143,13 @@ venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
   ```
   Fast local feedback; bypassable with `git commit --no-verify`.
 - **Merge** — `.github/workflows/ci.yml` runs the guards on every PR and push to `main`, as
-  three independent jobs (`path-isolation`, `channel-agnostic`, `command-replies`). Make each
-  unbypassable by enabling a **branch-protection rule** on `main` (GitHub → Settings → Branches)
-  requiring its check to pass. This is the real gate. (`path-isolation` is already required; add
-  the other two to the required set to enforce them too — until then they run and report but
-  do not block.)
+  four independent jobs (`path-isolation`, `channel-agnostic`, `command-replies`,
+  `timezone-anchors`), all four required under the **branch-protection rule** on `main`
+  (GitHub → Settings → Branches). This is the real gate. `enforce_admins` is deliberately
+  **off**: a red check warns the owner rather than hard-blocking, so an emergency merge stays
+  possible in a one-person repo.
+  The `scripts/test_*.py` harnesses are deliberately **not** in CI — they are hand-run tools,
+  invoked when working on the area they cover.
 - **Deploy** — `deploy/deploy.sh` runs the path check before the restart hand-off.
 
 ## `scripts/ci/check_channel_agnostic.py` — channel-agnostic guard
@@ -184,6 +186,25 @@ venv/bin/python scripts/ci/check_command_replies.py   # exit 0 clean, 1 on a def
 the whole app to render each reply, ~1.5s, too slow for a commit-time guard) and not at
 deploy (layout hygiene, not runtime-state safety). Run it by hand when touching
 `gateway/commands/`.
+
+---
+
+## `scripts/ci/check_timezone_anchors.py` — timezone-anchoring guard
+
+Since `/tz` there are two clocks (`ISRAEL_TZ` and `owner_tz()`), and a wrong pick is invisible
+at home — it only misbehaves while the owner is abroad, so no home test catches it. A pure
+static scan enforcing two things: the seam (nothing outside `timeutils.py` constructs
+`ZoneInfo("Asia/Jerusalem")` or touches `owner_tz.json`), and a declared-anchoring roster —
+every module importing `timeutils` must appear in the guard's `ANCHORS` as `home`, `owner`, or
+`both`. A new time consumer fails until someone applies the rule: *follow the owner only if the
+data source physically travels with the owner*; fixed-place and Israel-dated surfaces stay home.
+Stale entries fail too, so the roster can't rot. The guard forces the question, not the answer.
+
+```bash
+venv/bin/python scripts/ci/check_timezone_anchors.py   # exit 0 clean, 1 on a defect
+```
+
+**Merge** only — its own `timezone-anchors` CI job. Pure static scan, no app import.
 
 ---
 
