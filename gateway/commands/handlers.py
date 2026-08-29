@@ -374,3 +374,47 @@ async def _usage(inbound: InboundMessage, args: list[str]) -> str:
         group_by=group_by, scope_filter=scope_filter,
     )
     return format_usage_table(rows, title=title)
+
+
+@command("tz", "Show or set the owner's current timezone (travel mode)")
+async def _tz(inbound: InboundMessage, args: list[str]) -> str:
+    """The explicit away-mode switch. No args shows the current mode; an IANA
+    name (`/tz Asia/Tokyo`) marks the owner away; `/tz home` returns. The state
+    is code-owned (jarvis_data/agent/owner_tz.json): the model sees it in its
+    prompt envelope but has no tool to change it."""
+    import datetime as dt
+
+    import timeutils
+
+    if not args:
+        away = timeutils.owner_tz_name()
+        pairs: list[tuple[str, str]] = [("Mode", f"away — {away}" if away else "home")]
+        if away:
+            pairs.append((
+                "Owner local time",
+                dt.datetime.now(timeutils.owner_tz()).strftime("%Y-%m-%d %H:%M"),
+            ))
+        pairs.append((
+            "Israel time",
+            dt.datetime.now(timeutils.ISRAEL_TZ).strftime("%Y-%m-%d %H:%M"),
+        ))
+        pairs.append(("Usage", "`/tz Asia/Tokyo` to go away, `/tz home` to return"))
+        return kv_section("Timezone", pairs)
+
+    name = args[0]
+    if name.lower() == "home":
+        timeutils.clear_owner_tz()
+        return "Away mode off — back on home time (Israel)."
+    try:
+        await asyncio.to_thread(timeutils.set_owner_tz, name)
+    except Exception:
+        return (
+            f"Unknown timezone '{name}'. Use an IANA name like `Europe/Lisbon` "
+            "or `Asia/Tokyo`, or `/tz home` to return."
+        )
+    local = dt.datetime.now(timeutils.owner_tz())
+    israel = dt.datetime.now(timeutils.ISRAEL_TZ)
+    return (
+        f"Away mode on — {name}. Owner local time {local.strftime('%Y-%m-%d %H:%M')}, "
+        f"Israel {israel.strftime('%H:%M')}."
+    )

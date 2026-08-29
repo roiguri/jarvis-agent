@@ -7,7 +7,7 @@ import sqlite3
 import time
 import traceback as _tb
 from uuid import uuid4
-from timeutils import ISRAEL_TZ as _ISRAEL_TZ
+from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -365,6 +365,15 @@ def build_system_prompt(
         f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
         f"[Active scope: {scope}]",
     ]
+    # Away mode (/tz): a second clock so the model converts times the owner
+    # speaks. Home has no file and no line — the prompt is byte-identical.
+    away = owner_tz_name()
+    if away:
+        local = now.astimezone(owner_tz())
+        lines.insert(1, (
+            f"[Owner local time: {local.strftime('%A, %Y-%m-%d %H:%M')} ({away}) "
+            "— times the owner speaks are local to them]"
+        ))
     # Origin channel — a runtime value (no channel-name literal in this module),
     # inform-only. None on origin-less turns (heartbeat), where the line is skipped.
     channel = turn_context.current_channel()
