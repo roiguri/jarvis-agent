@@ -17,6 +17,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition
+from langgraph.errors import GraphRecursionError
 
 # Instance paths (JARVIS_ROOT and everything derived from it). First project
 # import: it validates the root and creates the state subtrees before any module
@@ -216,10 +217,29 @@ if not os.getenv("GOOGLE_API_KEY"):
 DB_PATH = os.path.join(config.MEMORY_DIR, "threads.sqlite")
 
 # Initialize the LLM
+# One generation is otherwise unbounded: max_retries alone caps attempts, not
+# the time any single attempt may take. A malformed-function-call run once spent
+# 6m48s and 65k output tokens inside ONE call, which no step budget can catch —
+# the graph never advances while it happens. 60s is ~2x the slowest per-call
+# average ever logged (31s) and above the p99 duration of a WHOLE turn (37s),
+# and it sits under the heartbeat's own 90s budget so a hung call is reported as
+# itself rather than as a blanket tick timeout.
+LLM_CALL_TIMEOUT_S = 60
+
+# Super-steps one turn may take before the graph gives up.
+RECURSION_LIMIT = 25
+
+# A finish reason other than these means the model stopped for its own reason
+# (malformed tool call, token ceiling, safety filter) rather than because it was
+# done. Such a turn can still end the graph normally with empty content, which
+# is how one silently dropped a request while telemetry recorded it as clean.
+_NORMAL_FINISH_REASONS = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
+
 llm = ChatGoogleGenerativeAI(
     model="gemini-3-flash-preview",
     temperature=0.2, # Lower temperature for more deterministic tool usage
-    max_retries=2
+    max_retries=2,
+    timeout=LLM_CALL_TIMEOUT_S,
 )
 
 # ---------------------------------------------------------------------------
@@ -427,6 +447,70 @@ memory = PruningSqliteSaver(conn)
 # (core + active skills) and a per-call system prompt.
 
 
+def _finish_reason(message) -> str:
+    """The provider's stop reason for an AI message, '' when it doesn't say.
+
+    Gemini reports it in response_metadata; treat a missing key as normal
+    rather than as a failure, so a provider that omits it never turns every
+    turn into a false alarm.
+    """
+    if message is None:
+        return ""
+    meta = getattr(message, "response_metadata", None) or {}
+    return str(meta.get("finish_reason") or "")
+
+
+def _record_turn_error(detail: str) -> None:
+    """Stamp the turn accumulator so the record stops reading as clean.
+
+    Only the first error sticks: the earliest cause is the one that explains
+    the turn, and a later symptom must not overwrite it.
+    """
+    acc = telemetry.TURN_ACC.get()
+    if acc is not None and acc.get("error") is None:
+        acc["error"] = detail
+
+
+def _summarize_exhausted_turn(config: dict, scope: str) -> str:
+    """One tool-free call over the exhausted turn's own history.
+
+    Tools are deliberately unbound: the turn ran out of steps precisely because
+    it kept reaching for them, so the only useful question left is what it
+    already established. Any failure here degrades to a plain statement — this
+    is the error path, and it must not raise a second time.
+    """
+    fallback = (
+        "I ran out of steps on this one and stopped before finishing. "
+        "Nothing was left half-saved. Narrowing the request usually gets it through."
+    )
+    try:
+        snap = agent_executor.get_state(config)
+        messages = (snap.values or {}).get("messages", [])
+        if not messages:
+            return fallback
+        ask = HumanMessage(content=(
+            "You ran out of steps before finishing. Do not call any tools. "
+            "Tell the owner plainly what you established, what you did not, and "
+            "what would finish it. Be brief and do not invent a result."
+        ))
+        response = llm.invoke(
+            [SystemMessage(content=build_system_prompt(scope, set()))] + messages + [ask]
+        )
+        telemetry.record_llm_call(response)
+        content = response.content
+        if isinstance(content, list):
+            text = "".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            text = str(content or "")
+        return text.strip() or fallback
+    except Exception:
+        logger.exception("Tool-free summary after step exhaustion failed")
+        return fallback
+
+
 def _llm_node(state: JarvisState) -> dict:
     """Bind the scoped tool set, prepend the system prompt, call the model.
 
@@ -595,7 +679,15 @@ def ask_jarvis(
         channel: origin channel name (router-stamped), or None for
             origin-less turns. Published via CURRENT_CHANNEL.
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        # Declared, not inherited: this is LangGraph's own default, kept because
+        # 2,243 logged turns put the median at 4 LLM calls and p99.5 at 10 — far
+        # below the ceiling — while a runaway tick once reached it and cost 128k
+        # output tokens. Hitting it is handled as a degraded turn below rather
+        # than as a crash, so the budget bounds cost without losing the work.
+        "recursion_limit": RECURSION_LIMIT,
+    }
 
     # --- Telemetry boundary ----------------------------------------------
     # Snapshot active_skills before the graph runs. Empty for a fresh thread.
@@ -762,19 +854,50 @@ def ask_jarvis(
             stream_mode="values"
         )
 
-        for event in events:
-            last_message = event["messages"][-1]
-            if last_message.type == "ai" and last_message.content:
-                content = last_message.content
-                # Parse the response, handling both plain strings and complex list blocks
-                if isinstance(content, list):
-                    final_response = "".join(
-                        block.get("text", "")
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    )
-                else:
-                    final_response = str(content)
+        last_ai = None
+        try:
+            for event in events:
+                last_message = event["messages"][-1]
+                if last_message.type == "ai":
+                    last_ai = last_message
+                if last_message.type == "ai" and last_message.content:
+                    content = last_message.content
+                    # Parse the response, handling both plain strings and complex list blocks
+                    if isinstance(content, list):
+                        final_response = "".join(
+                            block.get("text", "")
+                            for block in content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        )
+                    else:
+                        final_response = str(content)
+        except GraphRecursionError:
+            # The step budget is a ceiling, not an error to hand back raw: the
+            # turn did real work on the way up. Ask once, with no tools bound,
+            # what it established — a degraded but honest answer beats a crash
+            # that leaves the owner (and the next turn) inventing a reason.
+            logger.error(
+                "Turn %s hit the %d-super-step budget; degrading to a tool-free summary.",
+                turn_id, RECURSION_LIMIT,
+            )
+            _record_turn_error(f"GraphRecursionError: step budget {RECURSION_LIMIT} reached")
+            final_response = _summarize_exhausted_turn(config, scope)
+        else:
+            reason = _finish_reason(last_ai)
+            if not final_response.strip() and reason not in _NORMAL_FINISH_REASONS:
+                # The graph ended normally but the model stopped for its own
+                # reason and produced no text. Left alone this collapses to ""
+                # and is reported as a clean turn, which is how a request was
+                # once dropped in silence.
+                logger.warning(
+                    "Turn %s ended with finish_reason=%s and no text.", turn_id, reason
+                )
+                _record_turn_error(f"finish_reason: {reason}")
+                final_response = (
+                    "I stopped mid-response and didn't produce an answer "
+                    f"(the model reported `{reason}`). Nothing was saved or sent. "
+                    "Ask again — rephrasing or splitting the request usually gets past it."
+                )
         if mirror_cursor:
             pending_mirrors.advance_cursor(mirror_cursor)
         return final_response
