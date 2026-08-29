@@ -6,6 +6,8 @@ name: CI
 #   - channel-agnostic  — the app stays channel-agnostic (check_channel_agnostic.py)
 #   - command-replies   — slash-command replies survive both renderers
 #                         (check_command_replies.py)
+#   - timezone-anchors  — every timezone consumer declares its clock
+#                         (check_timezone_anchors.py)
 # Make each a hard gate with a branch-protection rule on `main` (GitHub → Settings →
 # Branches) requiring its check to pass. (The pre-commit hook is the fast local half
 # and runs the first two — command-replies boots the app, too slow for a hook; see
@@ -56,3 +58,14 @@ jobs:
         # Runs every registered command against a seeded scratch JARVIS_ROOT (same
         # dummy-secret trick as check_paths) and validates the reply markdown.
         run: python scripts/ci/check_command_replies.py
+
+  timezone-anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Timezone-anchoring check
+        # Pure static source scan — no app import and no deps, so no pip install.
+        run: python scripts/ci/check_timezone_anchors.py
