@@ -862,6 +862,16 @@ def _reschedule(
     # before its start — the two ways in must agree or an item means something
     # different depending on how it was made.
     elif st and et and et < st and not finish:
+        # Same cross-zone refusal as schedule: across timezones an end earlier
+        # than its start is not a midnight signal (Tokyo 17:00 to LA 10:00 is
+        # same-day), so the date is asked for, never inferred.
+        dep_tz, arr_tz = entry["departure_timezone"], entry["arrival_timezone"]
+        if dep_tz and arr_tz and dep_tz != arr_tz:
+            raise TravelError(
+                f"This crosses timezones ({dep_tz} to {arr_tz}), so the arrival date "
+                "cannot be guessed from the clock — an arrival earlier than its "
+                "departure may be the same day or two days later. Pass end_date."
+            )
         finish = (date.fromisoformat(start) + timedelta(days=1)).isoformat()
         sets.append("end_date = ?"); args.append(finish)
         said.append(f"ending the next day ({finish})")
