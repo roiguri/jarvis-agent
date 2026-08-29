@@ -44,7 +44,6 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "heartbeat.py": ("home", "daily-log naming and late-fire annotation are Israel by design"),
     "heartbeat_state.py": ("home", "due: windows are defined in Israel time"),
     "observability/usage.py": ("home", "usage buckets report the server's own Israel-dated activity"),
-    "pending_mirrors.py": ("home", "never-drain cutoff is the Israel day boundary"),
     "tools/core/history.py": ("home", "since= day boundary matches the Israel-dated logs it slices"),
     "tools/core/scheduling.py": ("both", "Israel rendering + away-mode owner-local echo"),
     "tools/fitness/_db.py": ("home", "workout dates are Israel-local strings; the gym is in Israel"),

@@ -5,15 +5,16 @@ cursor file holds the last mirrored row's timestamp. The next user turn on the
 owner thread drains rows past the cursor as ONE user-role block (the reducer
 drops leading assistant-role messages, and one message keeps the Gemini wire
 alternating), and the cursor advances only after that turn completes — a
-failed turn re-delivers, never loses. Rows older than start-of-today never
-drain, which bounds the first run and any backlog.
+failed turn re-delivers, never loses. Rows older than 24 hours never drain,
+which bounds the first run and any backlog. A rolling window, not a calendar
+day: a day boundary in any fixed zone lands mid-evening somewhere the owner
+travels, silently dropping a send between its delivery and the owner's reply.
 """
 
 import datetime as _dt
 import json
 import logging
 import os
-from timeutils import ISRAEL_TZ as _ISRAEL_TZ
 
 import config
 
@@ -35,11 +36,6 @@ MAX_ENTRIES = 20
 ENTRY_CAP = 2000
 
 
-def _today_start_utc() -> _dt.datetime:
-    now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(_dt.timezone.utc)
-
-
 def drain_pending() -> tuple[str | None, str | None]:
     """(user-role block, cursor value to stamp after the turn) or (None, None).
 
@@ -53,7 +49,7 @@ def drain_pending() -> tuple[str | None, str | None]:
             cursor = json.load(f).get("last_ts", "")
     except (OSError, ValueError):
         cursor = ""
-    since = _today_start_utc()
+    since = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)
     entries: list[str] = []
     last_ts: str | None = None
     try:
