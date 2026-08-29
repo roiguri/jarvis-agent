@@ -57,7 +57,8 @@ def _notes_of(header: str) -> str | None:
 
 
 def _build_block(
-    name: str, cadence: str, due: str, instruction: str, notes: str
+    name: str, cadence: str, due: str, instruction: str, notes: str,
+    paused: bool = False,
 ) -> list[str]:
     """A canonical task block: header line + two-space-indented body.
 
@@ -69,6 +70,8 @@ def _build_block(
     fields = [f"- **{name}**", cadence]
     if due:
         fields.append(f"due: {due}")
+    if paused:
+        fields.append("paused")
     fields.append(f"notes: `{notes}`")
     block = [" | ".join(fields)]
     block += [f"  {line}".rstrip() for line in instruction.strip().splitlines()]
@@ -129,12 +132,19 @@ def manage_heartbeat_task(
     due: str = "",
     instruction: str = "",
 ) -> str:
-    """Create, update, delete or list the recurring heartbeat tasks in
-    HEARTBEAT.md. Use this — never write_memory — to change the task list.
+    """Create, update, delete, pause, resume or list the recurring heartbeat
+    tasks in HEARTBEAT.md. Use this — never write_memory — to change the task
+    list.
 
     Use for RECURRING or CONDITIONAL proactive wishes ("check in after my
     workouts", "every Sunday summarize my week"). For a one-shot ping at a
     fixed moment ("remind me at 15:00 to call") use manage_reminder instead.
+
+    Prefer pause over delete when the owner wants a task to stop only for now
+    ("stop the gym reminders while I'm away"): a paused task keeps its
+    cadence, window, instruction and accumulated notes file, and is skipped
+    entirely until resumed. Delete is for tasks that should not come back.
+    Only pause or resume when the owner asks — never on your own initiative.
 
     Changes land immediately. Invalid input (bad cadence, bad due window,
     duplicate/unknown name) is rejected with the reason and the file stays
@@ -143,7 +153,8 @@ def manage_heartbeat_task(
     update keeps the fields you left empty.
 
     Args:
-        action: "create" | "update" | "delete" | "list".
+        action: "create" | "update" | "delete" | "pause" | "resume" | "list".
+            pause/resume take only `name`; every other field is kept as-is.
         name: kebab-case task name, e.g. "post-class-checkin". Required for
             create/update/delete.
         cadence: how often the task should be considered, e.g. "1h", "24h",
@@ -163,11 +174,15 @@ def manage_heartbeat_task(
         for t in tasks:
             cadence_s = "?" if t.cadence is None else str(t.cadence)
             due_s = f" | due: {t.due}" if t.due else ""
-            lines.append(f"- {t.name} | every {cadence_s}{due_s}")
+            paused_s = " | PAUSED" if t.paused else ""
+            lines.append(f"- {t.name} | every {cadence_s}{due_s}{paused_s}")
         return "Current heartbeat tasks:\n" + "\n".join(lines)
 
-    if action not in ("create", "update", "delete"):
-        return f"Error: unknown action '{action}'. Use create, update, delete or list."
+    if action not in ("create", "update", "delete", "pause", "resume"):
+        return (
+            f"Error: unknown action '{action}'. Use create, update, delete, "
+            "pause, resume or list."
+        )
     if not _NAME_RE.match(name.strip()):
         return (
             f"Error: invalid task name {name!r} — use kebab-case "
@@ -178,6 +193,14 @@ def manage_heartbeat_task(
         return (
             "Error: heartbeat ticks may not create new tasks (update/delete/list "
             "only). Propose the new task to Roi in chat instead."
+        )
+    # Pausing is the owner's call, made in conversation. A tick that could
+    # pause a task could silence itself, which is exactly the automatic
+    # behaviour this feature exists to avoid.
+    if action in ("pause", "resume") and turn_context.current_scope() == "heartbeat":
+        return (
+            f"Error: heartbeat ticks may not {action} tasks — only Roi can, in "
+            "chat. Mention it in your tick summary instead."
         )
 
     try:
@@ -214,7 +237,7 @@ def manage_heartbeat_task(
                 )
             new_due = due.strip()
             notes = _default_notes(name)
-        else:  # update
+        else:  # update / pause / resume — every unset field keeps its value
             if name not in existing:
                 return f"Error: no task named '{name}' in HEARTBEAT.md."
             prior = next(
@@ -253,22 +276,41 @@ def manage_heartbeat_task(
                 ).strip()
                 if not instruction:
                     return f"Error: '{name}' has no body to keep — pass an instruction."
+        # create starts unpaused; update preserves whatever the task already
+        # was (an edit must never silently switch it back on); pause/resume
+        # are the only actions that move it.
+        if action == "create":
+            new_paused = False
+        elif action == "update":
+            new_paused = prior.paused
+        else:
+            new_paused = action == "pause"
+        if action in ("pause", "resume") and prior.paused == new_paused:
+            state = "already paused" if new_paused else "not paused"
+            return f"Heartbeat task '{name}' is {state} — nothing changed."
+
         if new_due and heartbeat_state.parse_window(new_due) is None:
             return (
                 f"Error: unparseable due window {new_due!r}. Use forms like "
                 "'06:00-22:00', 'Tue,Sat 20:30±3h', '09:00±2h' (or 'none' to clear)."
             )
 
-        new_block = _build_block(name, norm_cadence, new_due, instruction, notes)
+        new_block = _build_block(
+            name, norm_cadence, new_due, instruction, notes, paused=new_paused
+        )
         if action == "create":
             new_blocks = blocks + [(name, new_block)]
         else:
             new_blocks = [(n, b if n != name else new_block) for n, b in blocks]
         new_text = _render(preamble, new_blocks)
+        verb = {
+            "create": "created",
+            "update": "updated",
+            "pause": "paused — it will be skipped entirely until resumed",
+            "resume": "resumed — it is due again from the next tick",
+        }[action]
         ok_text = (
-            f"Heartbeat task '{name}' "
-            f"{'created' if action == 'create' else 'updated'}:\n\n"
-            + "\n".join(new_block)
+            f"Heartbeat task '{name}' {verb}:\n\n" + "\n".join(new_block)
         )
 
     # Validate the full candidate exactly as the gate will read it: the
@@ -280,7 +322,12 @@ def manage_heartbeat_task(
     else:
         expected_names = existing | {name}
         t = parsed.get(name)
-        if t is None or t.cadence is None or (new_due and t.window is None):
+        if (
+            t is None
+            or t.cadence is None
+            or (new_due and t.window is None)
+            or t.paused != new_paused
+        ):
             return (
                 "Error: internal validation failed — the resulting task would not "
                 "parse cleanly. HEARTBEAT.md was not modified."

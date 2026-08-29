@@ -56,6 +56,10 @@ _HEADER_RE = re.compile(r"^-\s*\*\*(?P<name>[^*]+?)\*\*(?P<rest>.*)$")
 _CADENCE_RE = re.compile(r"every\s+(?P<n>\d+)\s*(?P<unit>hours?|days?|h|d)\b", re.IGNORECASE)
 # Optional due window field inside the header's "|"-separated segments.
 _DUE_FIELD_RE = re.compile(r"due:\s*(?P<spec>[^|`]+)", re.IGNORECASE)
+# Optional "paused" flag: a bare field of its own between pipes. Anchored to
+# the field boundaries so it cannot be matched out of a word in the notes path
+# or an instruction fragment that shares the line.
+_PAUSED_RE = re.compile(r"(?:^|\|)\s*paused\s*(?=\||$)", re.IGNORECASE)
 # Window spec: "[Day[,Day...] ]HH:MM-HH:MM" or "[Day[,Day...] ]HH:MM±Nh"
 # (± also accepted as "+-" or "+/-" for ASCII-only editing).
 _WINDOW_RE = re.compile(
@@ -136,6 +140,7 @@ class HeartbeatTask:
     raw: str  # the header line as written
     due: str | None = None  # raw due: spec, if present
     window: DueWindow | None = None  # None = no (or unparseable) window → open
+    paused: bool = False  # owner-declared; skipped by the gate without running
 
 
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
@@ -233,7 +238,12 @@ def parse_tasks_text(text: str) -> list[HeartbeatTask]:
                 )
         tasks.append(
             HeartbeatTask(
-                name=name, cadence=cadence, raw=line.strip(), due=due_raw, window=window
+                name=name,
+                cadence=cadence,
+                raw=line.strip(),
+                due=due_raw,
+                window=window,
+                paused=bool(_PAUSED_RE.search(rest)),
             )
         )
     return tasks
@@ -249,8 +259,10 @@ def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
     """
     preamble, blocks = split_blocks(text)
     keep = set(due_names)
+    paused = {t.name for t in parse_tasks_text(text) if t.paused}
     kept = [b for name, b in blocks if name in keep]
-    omitted = [name for name, _ in blocks if name not in keep]
+    omitted = [n for n, _ in blocks if n not in keep and n not in paused]
+    omitted_paused = [n for n, _ in blocks if n not in keep and n in paused]
 
     out: list[str] = []
     if preamble:
@@ -262,6 +274,13 @@ def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
             f"({len(omitted)} other task(s) are not due this tick and are "
             f"omitted here: {', '.join(omitted)}. Do not act on them; the "
             f"full list lives in HEARTBEAT.md.)"
+        )
+    # Named apart from merely-not-due ones: "not due yet" invites the model to
+    # plan around a next run, which is wrong for a task switched off entirely.
+    if omitted_paused:
+        out.append(
+            f"({len(omitted_paused)} task(s) paused by the owner, not scheduled "
+            f"until resumed: {', '.join(omitted_paused)}.)"
         )
     return "\n\n".join(p for p in out if p)
 
@@ -323,6 +342,11 @@ def any_due(
 
     due: list[str] = []
     for t in tasks:
+        # Paused wins over everything: no cadence maths, no window check, and
+        # the task never reaches due_names — so a tick with nothing else due
+        # returns without a model call at all.
+        if t.paused:
+            continue
         if t.window is not None and not t.window.is_open(now):
             continue
         cadence_due = False
