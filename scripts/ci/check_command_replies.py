@@ -50,6 +50,9 @@ CASES: list[tuple[str, str]] = [
     ("/usage week", "strict"),
     ("/usage today heartbeat", "strict"),
     ("/usage 32.13", "strict"),    # invalid date → usage help
+    ("/tz", "strict"),
+    ("/tz home", "strict"),
+    ("/tz Nowhere/Nope", "strict"),  # invalid zone → usage help
     ("/nope", "strict"),           # router's unknown-command reply
 ]
 

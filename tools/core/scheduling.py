@@ -5,7 +5,7 @@ import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
-from timeutils import ISRAEL_TZ
+from timeutils import ISRAEL_TZ, owner_tz
 
 from langchain_core.tools import tool
 
@@ -64,6 +64,16 @@ def _remove_event(event_id: str) -> None:
         _save_events(data)
 
 
+def _owner_local_note(fire_at_dt: datetime) -> str:
+    """Away-mode suffix (/tz): the same instant on the owner's own clock, so a
+    wrong model conversion is visible without mental math. Empty at home, so
+    every rendering stays byte-identical there."""
+    tz = owner_tz()
+    if tz is ISRAEL_TZ:
+        return ""
+    return f" ({fire_at_dt.astimezone(tz).strftime('%Y-%m-%d %H:%M')} {tz.key})"
+
+
 # ---------------------------------------------------------------------------
 # LangChain tools
 # ---------------------------------------------------------------------------
@@ -102,6 +112,9 @@ def manage_reminder(
             fire_at_dt = datetime.fromisoformat(fire_at.replace("Z", "+00:00"))
         except ValueError as e:
             return f"Error: invalid fire_at — {e}. Use ISO 8601 UTC, e.g. '2026-05-08T09:00:00Z'."
+        if fire_at_dt.tzinfo is None:
+            return ("Error: fire_at has no timezone offset, so the instant is ambiguous. "
+                    "Use ISO 8601 UTC, e.g. '2026-05-08T09:00:00Z'.")
         if fire_at_dt <= datetime.now(timezone.utc):
             return "Error: fire_at must be in the future."
 
@@ -125,7 +138,8 @@ def manage_reminder(
         now_israel = datetime.now(ISRAEL_TZ)
         fire_israel = fire_at_dt.astimezone(ISRAEL_TZ)
         return (
-            f"Reminder [{event_id}] scheduled for {fire_israel.strftime('%Y-%m-%d %H:%M Israel time')}: \"{text}\". "
+            f"Reminder [{event_id}] scheduled for {fire_israel.strftime('%Y-%m-%d %H:%M Israel time')}"
+            f"{_owner_local_note(fire_at_dt)}: \"{text}\". "
             f"(Current time is {now_israel.strftime('%Y-%m-%d %H:%M Israel time')}. Do not call manage_reminder again for this request.)"
         )
 
@@ -142,7 +156,7 @@ def manage_reminder(
             delta = fire_dt - now
             total_secs = delta.total_seconds()
             due_str = f"in {int(total_secs // 3600)}h {int((total_secs % 3600) // 60)}m" if total_secs > 0 else "overdue"
-            lines.append(f"[{e['id']}] {fire_israel.strftime('%Y-%m-%d %H:%M Israel time')} ({due_str}): \"{e['text']}\"")
+            lines.append(f"[{e['id']}] {fire_israel.strftime('%Y-%m-%d %H:%M Israel time')}{_owner_local_note(fire_dt)} ({due_str}): \"{e['text']}\"")
         return "\n".join(lines)
 
     elif action == "delete":
