@@ -146,7 +146,7 @@ USER.md and MEMORY.md are injected into every prompt in both scopes, so every li
 permanent per-turn tax, with no pressure to curate between weekly audit passes.
 
 **C5 — A message the heartbeat sent is not part of the conversation the user scope sees, so replies
-to it land without an antecedent.** `MEASURED`
+to it land without an antecedent.** `RESOLVED`
 The owner experiences this as conversations that feel glitchy and out of context. `notify_owner`
 writes the sent text to `notifications.jsonl` only — it never enters the telegram thread's
 checkpoint and is never appended to `chat_history.jsonl` under that thread. The user scope recovers
@@ -166,6 +166,12 @@ it as `_load_recent_heartbeat_notifications()` (`agent.py:343`): flat `[HH:MM] t
 The reverse direction has the same shape but is better served: the heartbeat scope receives today's
 user chat with roles and timestamps (`_load_recent_user_chat`, 60 entries), which is nearer to a
 transcript than to a summary — though still injected as prompt text rather than as history.
+
+Resolved by the context plan's phases 1a–1c (PR #102, prod since 2026-08-25;
+[../archive/CONTEXT_PLAN.md](../archive/CONTEXT_PLAN.md)): delivered notifications are mirrored
+into the one `owner` thread as real history on the next user turn, and the prompt slice is gone.
+Gaps 1–3 are closed outright; of gap 4, yesterday's messages now persist in the window, while a
+tick that acted *without* notifying is still invisible — that remainder is filed as #106.
 
 ---
 
@@ -294,7 +300,7 @@ without anyone testing them:
 | E1, E6 | #36 | instance of, and wider — covers both scopes, and containment as well as legibility |
 | C1 | #81 | complement — C1 is unbounded injection, #81 is unrecoverable truncation |
 | C3 | #61, #60 | complement — content Jarvis saw once and cannot reach again |
-| C5 | #50 | stated here |
+| C5 | #50 | stated here — resolved; #50 closed on phases 1a–1c |
 | B1, B4 | #24 | dependency — the Israel-time duplication any clock work must cross |
 | — | #18 | the umbrella; points at this file rather than restating it |
 

@@ -1,11 +1,13 @@
 # Context — one owner conversation, and the cross-scope bridge
 
-**Status:** phases 0–1c COMPLETE and staging-verified; 1d deferred to #106 (2026-08-25).
-Remaining: phase-0 "after" readings, umbrella soak, merge.
+**Status:** COMPLETE and ARCHIVED (2026-08-29). Phases 0–1c shipped via PR #102, in prod since
+deploy-2026-08-25-1; after-readings taken 2026-08-29 (table below). 1d deferred to #106.
+Phases 2–4 and the deferred items below remain tracked by [../context/PROBLEMS.md](../context/PROBLEMS.md)
+via umbrella #18 — deliberately not re-filed as per-phase issues.
 **Date:** 2026-08-25.
-**Problem record:** [context/PROBLEMS.md](context/PROBLEMS.md) — this plan solves C5 (issue #50)
+**Problem record:** [../context/PROBLEMS.md](../context/PROBLEMS.md) — this plan solves C5 (issue #50)
 and touches C1/A-cluster edges; it deliberately does not restate the problems.
-**Evidence:** [context/REFERENCE_ARCHITECTURES.md](context/REFERENCE_ARCHITECTURES.md) (source-level
+**Evidence:** [../context/REFERENCE_ARCHITECTURES.md](../context/REFERENCE_ARCHITECTURES.md) (source-level
 deep dives of OpenClaw and hermes-agent, 2026-08-25). The mechanisms below are the two systems'
 convergence points, not inventions.
 
@@ -58,7 +60,7 @@ unfiled.
 ## Phase 0 — the instrument (preliminary)
 
 One script, `scripts/context_report.py`, printing from data that already exists (recipes in
-[context/RESEARCH.md](context/RESEARCH.md) §2):
+[../context/RESEARCH.md](../context/RESEARCH.md) §2):
 
 - input tokens/turn and turns/day, per scope (`turns.jsonl`)
 - cache-hit ratio per scope (`turns.jsonl` cached-token fields)
@@ -70,13 +72,25 @@ Run once → baseline table below. Re-run at the end of each phase; the deltas a
 Baseline taken 2026-08-25 (`JARVIS_ROOT=/app … --days 7` — **prod data, read-only**; staging's
 traffic is dev noise). One known-unparseable turns.jsonl line reported and skipped.
 
-| Reading | Baseline 2026-08-25 | After 1b | After 1d |
+| Reading | Baseline 2026-08-25 | After 1b+1c (2026-08-29) | After 1d |
 |---|---|---|---|
-| user input/turn | 83,203 (53 turns; 2.55 llm calls/turn) | | |
-| heartbeat input/turn | 67,561 (110 turns; 3.80 llm calls/turn) | | |
-| user cache ratio | 36.7% (heartbeat: 41.8%) | | |
-| checkpoint bytes, owner threads | telegram 48,106 + jarvis-app 67,590 (heartbeat thread: 51,241) | one thread: | |
-| user prompt total (chars) | 7,831 at 05:48 UTC — before any notification slice; the slice varies 0–~5k with time of day, so compare same-time runs | | (slice retired) |
+| user input/turn | 83,203 (53 turns; 2.55 llm calls/turn) | 83,860 (7 turns; 2.71 llm calls/turn) | — |
+| heartbeat input/turn | 67,561 (110 turns; 3.80 llm calls/turn) | 88,582 (42 turns; 3.24 llm calls/turn) | — |
+| user cache ratio | 36.7% (heartbeat: 41.8%) | 33.2% (heartbeat: 44.5%) | — |
+| checkpoint bytes, owner threads | telegram 48,106 + jarvis-app 67,590 (heartbeat thread: 51,241) | one thread: owner 121,055 (heartbeat: 70,947; old per-channel rows frozen in the DB — #12's territory) | — |
+| user prompt total (chars) | 7,831 at 05:48 UTC — before any notification slice; the slice varies 0–~5k with time of day, so compare same-time runs | 8,736 at 13:47 UTC — **no notification slice exists any more**, so time of day no longer matters | (slice retired) |
+
+After-reading notes (2026-08-29, `JARVIS_ROOT=/app … --days 3` — window starts after
+deploy-2026-08-25-1 landed 1a–1c in prod, so it contains no pre-spine traffic):
+
+- **User cost is flat** (83.2k → 83.9k input/turn) where the plan predicted a rise — mirrors in
+  the window replaced the deleted slice at no net cost. Caveat: only 7 user turns in the window.
+- **The 1d column stays empty by design** — 1d was deferred to #106, so "slice retired" landed
+  with 1c and there is no further reading to take.
+- **Heartbeat input/turn rose 31%** (67.6k → 88.6k). Phase 1 barely touched the heartbeat scope
+  (its chat slice is unchanged); the drivers are its own checkpoint growth (51k → 71k bytes) and
+  the window's task mix (6.6 tool calls/turn), and its cache ratio improved. Recorded here so the
+  umbrella (#18) sees it; not attributed to this plan.
 
 Context for the trend: user input/turn was 46.7k at the 07-16 baseline and 78.6k at 08-06
 (PROBLEMS.md §0) — still climbing; the user scope is where window weight lands.
