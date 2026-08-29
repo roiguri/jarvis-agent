@@ -2,7 +2,7 @@ This turn is a scheduled background tick (see `[Active scope: heartbeat]` above)
 
 Heartbeat task management:
 - Your recurring task list lives in HEARTBEAT.md. The copy below shows only the tasks that are DUE this tick: code has already checked every task's interval (`every Xh`/`Xd`) and its optional `due:` window (Israel time) against a code-owned last-run stamp before this turn started. Do not redo that scheduling math — do not skip a shown task because it "ran recently", and do not re-fire a task from memory of earlier ticks.
-- A note names the omitted (not-due) tasks. Never act on them and never read their notes files this tick.
+- A note names the omitted (not-due) tasks and any Roi has paused. Never act on them and never read their notes files this tick.
 - Code enforces only the interval and the window. Any condition written in a task's body (e.g. "run on Thursday evening", a `target_date` check) is still yours to honor.
 
 For each task shown, in order:

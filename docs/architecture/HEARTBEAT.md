@@ -74,7 +74,7 @@ only input to the gate).
 ## Task grammar
 
 ```
-- **<task-name>** | every <N><unit> [| due: <window>] | notes: `heartbeat/<file>.md`
+- **<task-name>** | every <N><unit> [| due: <window>] [| paused] | notes: `heartbeat/<file>.md`
   <free-form prose instruction — the model's brief, never parsed by code>
 ```
 
@@ -85,6 +85,10 @@ only input to the gate).
   radius; `+-`/`+/-` accepted), each optionally prefixed by weekdays
   (`Tue,Sat 20:30±3h`). Enforced by the gate — if a task reaches the model,
   its window is open.
+- **`paused`** (optional): a bare field switching the task off. Matched only as
+  a whole field between pipes, so a notes path or window containing the word is
+  not the flag. Owner-declared and manual — nothing in the system sets or clears
+  it on its own.
 - **`notes:`/`state:` pointer**: both words accepted; names the task's notes
   file.
 
@@ -99,7 +103,14 @@ only input to the gate).
 
 ## The gate (`heartbeat_state.any_due`)
 
-A task is due when **cadence elapsed AND window open**, where cadence elapsed
+A task is due when **not paused AND cadence elapsed AND window open**. `paused`
+short-circuits first: no cadence maths, no window check, and the task never
+enters `due_names` — so a tick whose only candidates are paused makes no model
+call at all. Pausing does not touch `state.json`, so a task resumed after a long
+pause is immediately cadence-due and runs on the next tick inside its window.
+That is intended: resuming is when you want the check to happen.
+
+Otherwise, cadence elapsed
 means: never stamped, stamp unreadable, cadence unparseable, or
 `now − last_run ≥ cadence` (less `CADENCE_GRACE`). Empty/unreadable
 `HEARTBEAT.md` → `(True, None)`: run the model with the *full* file rather than
@@ -146,8 +157,12 @@ computes that start internally.
 
 Only due task blocks are injected; the preamble is kept and omitted tasks are
 named in a single line so the model knows they exist and are not due
-(`prompts/heartbeat.md` forbids acting on omitted tasks). Cold start / gate
-failure (`due_names=None`) injects the full file.
+(`prompts/heartbeat.md` forbids acting on omitted tasks). Paused tasks are named
+in a *separate* line: "not due yet" invites the model to reason about a next
+run, which is wrong for a task the owner switched off. Cold start / gate failure
+(`due_names=None`) injects the full file, paused tasks included and carrying no
+note — an accepted, bounded cost of the deliberate fail-open: a gate that cannot
+say what is due cannot vouch for what is paused either.
 
 ## The ack (`heartbeat_respond`)
 
@@ -159,12 +174,21 @@ picked up). Missing ack → warning, no stamp, task re-fires — safe.
 
 ## Authoring (`manage_heartbeat_task`)
 
-`create` / `update` / `delete` / `list` in `tools/core/heartbeat.py`, bound in
-both scopes. Validates the mutated file end-to-end before writing it (the
-changed task must round-trip through the same parser the gate uses; all other
-tasks must survive byte-identical), then writes via the memory module's atomic,
-lock-serialized writer. `update` keeps unspecified fields; `due="none"` clears
-a window.
+`create` / `update` / `delete` / `pause` / `resume` / `list` in
+`tools/core/heartbeat.py`, bound in both scopes. Validates the mutated file
+end-to-end before writing it (the changed task must round-trip through the same
+parser the gate uses; all other tasks must survive byte-identical), then writes
+via the memory module's atomic, lock-serialized writer. `update` keeps
+unspecified fields; `due="none"` clears a window.
+
+`pause` / `resume` take only `name` and run through the same keep-everything
+path as `update`, so cadence, window, instruction and a hand-named notes path
+all survive. They are the *only* way to move the flag — `update` has no `paused`
+argument and preserves whatever the task already was, so an unrelated edit can
+never silently switch a task back on. Both are **rejected in heartbeat scope**
+(like `create`): a tick that could pause a task could silence itself, which is
+the automatic behavior the feature exists to avoid. Re-pausing an already-paused
+task is a no-op with a plain message rather than an error.
 
 Changes land immediately — no confirmation step. HEARTBEAT.md is a
 Jarvis-managed file, and validation (not an owner tap) is what protects it: a
