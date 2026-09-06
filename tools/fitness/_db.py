@@ -38,13 +38,14 @@ def _init_db():
             tracking_mode       TEXT NOT NULL CHECK(tracking_mode IN ('flexible_quota', 'strict_sequential')),
             weekly_target_count INTEGER,
             status              TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'completed')),
-            start_date          DATE
+            start_date          DATE,
+            binding             TEXT
         );
 
         CREATE TABLE IF NOT EXISTS workouts (
             workout_id      INTEGER PRIMARY KEY AUTOINCREMENT,
             plan_id         INTEGER,
-            arbox_class_id  TEXT UNIQUE,
+            external_id     TEXT UNIQUE,
             scheduled_time  DATETIME NOT NULL,
             status          TEXT DEFAULT 'scheduled'
                                 CHECK(status IN ('scheduled','completed','missed')),
@@ -97,21 +98,62 @@ def _init_db():
             effective_from DATE NOT NULL,
             FOREIGN KEY(plan_id) REFERENCES plans(plan_id)
         );
+
+        CREATE TABLE IF NOT EXISTS session_types (
+            name       TEXT PRIMARY KEY,
+            stat_shape TEXT NOT NULL CHECK(stat_shape IN ('strength', 'cardio', 'none'))
+        );
     """)
     conn.commit()
 
-    # Migrate existing databases: add new columns if missing
+    # session_types is a soft vocabulary, seeded here and only here: it drives
+    # the stat-enrichers' automatic routing (which child table fits a row), it
+    # does not gate workout creation — an unlisted session_type is still a
+    # valid workout, it just gets no automatic stat routing. Adding a type is
+    # a one-line edit to this seed.
+    conn.executemany(
+        "INSERT OR IGNORE INTO session_types (name, stat_shape) VALUES (?, ?)",
+        [
+            ("crossfit", "strength"),
+            ("running", "cardio"),
+            ("walking", "cardio"),
+            ("hiking", "cardio"),
+            ("mobility", "none"),
+        ],
+    )
+    conn.commit()
+
+    # Migrate existing databases: add new columns if missing. The rename
+    # generalizes the Arbox idempotency key: `external_id` is unique per
+    # `source` (index below), so a future non-Arbox sync (e.g. watch sessions)
+    # is just another source value, not another column.
     for sql in [
         "ALTER TABLE workouts ADD COLUMN session_type TEXT DEFAULT 'crossfit'",
         "ALTER TABLE workouts ADD COLUMN wod_result TEXT",
         "ALTER TABLE workouts ADD COLUMN notes TEXT",
         "ALTER TABLE plans ADD COLUMN start_date DATE",
+        "ALTER TABLE plans ADD COLUMN binding TEXT",
+        "ALTER TABLE workouts RENAME COLUMN arbox_class_id TO external_id",
     ]:
         try:
             conn.execute(sql)
             conn.commit()
         except Exception:
-            pass  # column already exists
+            pass  # column already exists (or, for the rename, already renamed)
+
+    # The declared uniqueness contract is per-source. Migrated databases also
+    # keep the stricter single-column UNIQUE the renamed column carried from
+    # its original definition — harmless, since distinct sources' ids don't
+    # collide in practice — so fresh databases declare the same column-level
+    # UNIQUE above to keep the two schema histories equivalent.
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_source_external "
+            "ON workouts(source, external_id) WHERE external_id IS NOT NULL"
+        )
+        conn.commit()
+    except Exception:
+        pass
 
     # One-time, idempotent backfill: a plan with no start_date but with
     # existing workouts gets dated from its earliest workout, so adherence
@@ -126,6 +168,26 @@ def _init_db():
             ") "
             "WHERE start_date IS NULL "
             "  AND EXISTS (SELECT 1 FROM workouts w WHERE w.plan_id = plans.plan_id)"
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+    # One-time, idempotent backfill: stamp each plan's logging channel by
+    # applying the retiring attachment heuristics a final time — the plan
+    # named like Running gets binding='running' (any status: a paused running
+    # plan should still receive runs when reactivated), and the lowest-id
+    # *active* remaining plan gets binding='arbox' (exactly what the old
+    # "first active plan" LIMIT-1 pick resolved to). Other plans stay NULL —
+    # no channel — until set via manage_fitness_plan. The IS NULL guards make
+    # this a no-op on every subsequent boot.
+    try:
+        conn.execute(
+            "UPDATE plans SET binding='running' WHERE binding IS NULL AND name LIKE '%Running%'"
+        )
+        conn.execute(
+            "UPDATE plans SET binding='arbox' WHERE binding IS NULL AND status='active' "
+            "AND plan_id = (SELECT MIN(plan_id) FROM plans WHERE binding IS NULL AND status='active')"
         )
         conn.commit()
     except Exception:
