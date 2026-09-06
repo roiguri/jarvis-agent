@@ -83,8 +83,19 @@ def _sync_registered_classes() -> str:
 
     conn = _get_db()
     try:
-        plan = conn.execute("SELECT plan_id FROM plans WHERE status='active' LIMIT 1").fetchone()
-        plan_id = plan["plan_id"] if plan else None
+        # Synced classes attach to the one active arbox-bound plan — declared
+        # via plans.binding, never guessed. Zero or several matches is a
+        # configuration problem the owner has to resolve; erroring beats
+        # attaching a class to the wrong plan's quota.
+        bound = conn.execute(
+            "SELECT plan_id FROM plans WHERE status='active' AND binding='arbox'"
+        ).fetchall()
+        if len(bound) != 1:
+            raise RuntimeError(
+                f"expected exactly one active plan with binding='arbox', found {len(bound)} — "
+                "fix with manage_fitness_plan (set binding / status) and retry"
+            )
+        plan_id = bound[0]["plan_id"]
 
         results = []
         for cls in registered:
