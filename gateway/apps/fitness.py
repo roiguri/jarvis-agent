@@ -33,19 +33,15 @@ from gateway.apps.registry import (
     register_app,
 )
 from timeutils import israel_week_bounds
-from tools.fitness._db import _FITNESS_RO_URI, _fmt_pace, _target_for_week, ISRAEL_TZ
+from tools.fitness._adherence import completed_count, completed_count_all, streak_weeks
+from tools.fitness._db import _FITNESS_RO_URI, _fmt_pace, ISRAEL_TZ
 
 # Marks cover a full year, one block per week (a plan's cadence is weekly, not
-# daily — unlike GitHub's per-day contribution graph). The streak below is
+# daily — unlike GitHub's per-day contribution graph). The streak is
 # deliberately NOT bounded by this: it is a display window, not the streak's
-# actual range.
+# actual range (see tools/fitness/_adherence.py, the one streak implementation
+# this dashboard and the chat report both use).
 _MARKS_WEEKS = 52
-
-# A defensive bound on the streak walk-back, never expected to bind — a streak is
-# only as long as it has genuinely been held, but an unbounded loop still needs a
-# backstop against a malformed plan row (e.g. a NULL start_date that never
-# resolves to a miss).
-_STREAK_SAFETY_CAP = 1500  # ~29 years
 
 _HISTORY_PAGE_SIZE = 20
 
@@ -54,67 +50,6 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_FITNESS_RO_URI, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
-
-
-def _weekly_completed_count(conn: sqlite3.Connection, plan_id: int, week_start: str, week_end: str) -> int:
-    return conn.execute(
-        "SELECT COUNT(*) FROM workouts WHERE plan_id=? AND status='completed' "
-        "AND date(scheduled_time) BETWEEN ? AND ?",
-        (plan_id, week_start, week_end),
-    ).fetchone()[0]
-
-
-def _weekly_completed_count_all(conn: sqlite3.Connection, week_start: str, week_end: str) -> int:
-    """Same as `_weekly_completed_count` but across every workout, no `plan_id` filter.
-
-    A workout counts here regardless of whether its plan is active, paused,
-    completed, or it was never attached to a plan at all (`plan_id IS NULL`) —
-    the per-plan count structurally can't see any of those, since it always
-    filters on one specific `plan_id`.
-    """
-    return conn.execute(
-        "SELECT COUNT(*) FROM workouts WHERE status='completed' "
-        "AND date(scheduled_time) BETWEEN ? AND ?",
-        (week_start, week_end),
-    ).fetchone()[0]
-
-
-def _streak_weeks(conn: sqlite3.Connection, plan: sqlite3.Row, now: datetime) -> int | None:
-    """Consecutive weeks that met the target *in force during that week*, counting back from last week.
-
-    Each week is judged against its own historical target
-    (`plan_target_history`, via `_target_for_week`) rather than the plan's
-    current one — raising or lowering the goal later never rewrites whether an
-    already-elapsed week counted. The in-progress current week is judged
-    separately and added on top only if it has already met its target — an
-    unmet current week is pending, not a miss, so it doesn't zero out a streak
-    just because the week isn't over yet. Walks backward from last week until
-    the first miss or the plan's `start_date`, whichever comes first — no upper
-    bound beyond the safety cap. A plan with no current target reports `None`
-    rather than a fabricated number.
-    """
-    target = plan["weekly_target_count"]
-    if not target:
-        return None
-    start_date = plan["start_date"]
-    streak = 0
-    for i in range(1, _STREAK_SAFETY_CAP):
-        week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
-        if start_date and week_end < start_date:
-            break
-        week_target = _target_for_week(conn, plan["plan_id"], week_start, target)
-        if not week_target:
-            break
-        if _weekly_completed_count(conn, plan["plan_id"], week_start, week_end) >= week_target:
-            streak += 1
-        else:
-            break
-
-    this_week_start, this_week_end = israel_week_bounds(now)
-    this_week_target = _target_for_week(conn, plan["plan_id"], this_week_start, target)
-    if this_week_target and _weekly_completed_count(conn, plan["plan_id"], this_week_start, this_week_end) >= this_week_target:
-        streak += 1
-    return streak
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -136,7 +71,13 @@ def _crossfit_summary(wod_result: str | None, notes: str | None, description: st
 
 
 def _running_summary(cardio: sqlite3.Row) -> str:
-    """Duration always present; distance/pace/HR each independently optional."""
+    """Duration always present *when a cardio row exists*; distance/pace/HR each
+    independently optional. A running-typed workout can also have no cardio row
+    at all (the history query LEFT JOINs it), in which case every cardio column
+    is NULL — fall back to the same notes/description chain crossfit rows use
+    rather than formatting None."""
+    if cardio["duration_min"] is None:
+        return _crossfit_summary(None, cardio["notes"], cardio["description"])
     parts = [f"{cardio['duration_min']:.0f} min"]
     if cardio["distance_km"]:
         parts.append(f"{cardio['distance_km']} km")
@@ -161,7 +102,7 @@ def _dashboard_sync() -> dict[str, Any]:
         overall_total_year = 0
         for i in range(_MARKS_WEEKS - 1, -1, -1):
             week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
-            count = _weekly_completed_count_all(conn, week_start, week_end)
+            count = completed_count_all(conn, week_start, week_end)
             overall_marks.append({"week_start": week_start, "count": count})
             overall_total_year += count
 
@@ -172,7 +113,7 @@ def _dashboard_sync() -> dict[str, Any]:
             # Oldest first: i counts down from 51 weeks ago to this week (i=0).
             for i in range(_MARKS_WEEKS - 1, -1, -1):
                 week_start, week_end = israel_week_bounds(now - timedelta(weeks=i))
-                count = _weekly_completed_count(conn, p["plan_id"], week_start, week_end)
+                count = completed_count(conn, p["plan_id"], week_start, week_end)
                 marks.append({"week_start": week_start, "count": count})
                 total_year += count
 
@@ -183,8 +124,8 @@ def _dashboard_sync() -> dict[str, Any]:
                     "name": p["name"],
                     "tracking_mode": p["tracking_mode"],
                     "weekly_target_count": p["weekly_target_count"],
-                    "this_week_done": _weekly_completed_count(conn, p["plan_id"], this_week_start, this_week_end),
-                    "streak_weeks": _streak_weeks(conn, p, now),
+                    "this_week_done": completed_count(conn, p["plan_id"], this_week_start, this_week_end),
+                    "streak_weeks": streak_weeks(conn, p["plan_id"], p["weekly_target_count"], p["start_date"], now),
                     "total_year": total_year,
                     "marks": marks,
                 }

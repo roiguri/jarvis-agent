@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from langchain_core.tools import tool
 
 from timeutils import israel_week_bounds
+from tools.fitness._adherence import completed_count, streak_weeks
 from tools.fitness._db import ISRAEL_TZ, _fmt_pace, _get_db, _target_for_week
 from tools.registry import tool_register
 
@@ -120,7 +121,6 @@ def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
             return "No matching plans."
 
         now = datetime.now(ISRAEL_TZ)
-        this_sunday = now - timedelta(days=(now.weekday() + 1) % 7)
         out = []
         for p in plans:
             target = p["weekly_target_count"] or 0
@@ -130,35 +130,16 @@ def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
             lines = [f"{p['name']} (target {tgt_label}/week, status {p['status']}){since}:"]
             hits = 0
             eligible = 0
-            streak = 0
-            streak_open = True
             for i in range(weeks):
-                wk = this_sunday - timedelta(weeks=i)
-                ws = wk.strftime("%Y-%m-%d")
-                we = (wk + timedelta(days=6)).strftime("%Y-%m-%d")
+                ws, we = israel_week_bounds(now - timedelta(weeks=i))
                 if sd and we < sd:
                     continue  # week ends before the plan began — not a miss
                 eligible += 1
                 week_target = _target_for_week(conn, p["plan_id"], ws, target)
-                done = conn.execute(
-                    "SELECT COUNT(*) FROM workouts WHERE plan_id=? AND status='completed' "
-                    "AND date(scheduled_time) BETWEEN ? AND ?",
-                    (p["plan_id"], ws, we),
-                ).fetchone()[0]
+                done = completed_count(conn, p["plan_id"], ws, we)
                 met = isinstance(week_target, int) and week_target > 0 and done >= week_target
                 if met:
                     hits += 1
-                # The current week (i==0) is still in progress: count it toward
-                # the streak if already met, but an unmet current week is
-                # pending, not a miss, so it must not close out the streak —
-                # only i>=1 (a week that has fully elapsed) can do that.
-                if i == 0:
-                    if met:
-                        streak += 1
-                elif streak_open and met:
-                    streak += 1
-                else:
-                    streak_open = False
                 tag = "✓" if met else "·"
                 label = "this week" if i == 0 else f"-{i}w"
                 wk_tgt_label = week_target if week_target else "?"
@@ -166,9 +147,19 @@ def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
             if eligible == 0:
                 lines.append(f"  → plan started {sd}; no weeks in the last {weeks}w window.")
             else:
+                # The streak is the plan's real one (shared with the app
+                # dashboard), not clipped to this report's window — flag it
+                # when it reaches past what the lines above show.
+                streak = streak_weeks(conn, p["plan_id"], p["weekly_target_count"], sd, now)
+                if streak is None:
+                    streak_label = "n/a (no weekly target)"
+                elif streak > weeks:
+                    streak_label = f"{streak}w (extends beyond this {weeks}w window)"
+                else:
+                    streak_label = f"{streak}w"
                 pct = round(100 * hits / eligible)
                 lines.append(
-                    f"  → {hits}/{eligible} weeks met ({pct}%); current streak {streak}w"
+                    f"  → {hits}/{eligible} weeks met ({pct}%); current streak {streak_label}"
                 )
             out.append("\n".join(lines))
         conn.close()
