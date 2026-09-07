@@ -45,6 +45,7 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "heartbeat_state.py": ("home", "due: windows are defined in Israel time"),
     "observability/usage.py": ("home", "usage buckets report the server's own Israel-dated activity"),
     "tools/core/history.py": ("home", "since= day boundary matches the Israel-dated logs it slices"),
+    "tools/fitness/_adherence.py": ("home", "adherence weeks are Israel-Sunday-anchored counting windows by design"),
     "tools/core/scheduling.py": ("both", "Israel rendering + away-mode owner-local echo"),
     "tools/fitness/_db.py": ("home", "workout dates are Israel-local strings; the gym is in Israel"),
     "tools/fitness/plans.py": ("home", "Sunday-anchored Israel week quotas"),
