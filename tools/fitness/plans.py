@@ -19,13 +19,15 @@ def manage_fitness_plan(
     weekly_target_count: int | None = None,
     status: str | None = None,
     start_date: str | None = None,
+    binding: str | None = None,
 ) -> str:
     """Create, update, or list fitness plans.
 
     action='create': Create a new plan. Requires name, tracking_mode ('flexible_quota' or
         'strict_sequential'), and weekly_target_count. start_date defaults to today.
     action='update': Update an existing plan. Requires plan_id. Provide any fields to change:
-        name, weekly_target_count, status ('active', 'paused', 'completed'), or start_date.
+        name, weekly_target_count, status ('active', 'paused', 'completed'), start_date,
+        or binding.
     action='list': List all plans with current status, start date, and this-week session counts.
 
     Args:
@@ -36,10 +38,16 @@ def manage_fitness_plan(
         weekly_target_count: How many sessions per week to aim for
         status: 'active', 'paused', or 'completed'
         start_date: 'YYYY-MM-DD' the plan begins. Adherence reports ignore weeks before it. Create defaults to today.
+        binding: Which logging channel feeds this plan — 'arbox' (gym class sync),
+            'running' (running sessions), or 'manual' (manually logged sessions).
+            Create defaults to 'manual'. At most one active plan per binding.
     """
+    _VALID_BINDINGS = ("arbox", "running", "manual")
     try:
         if start_date is not None and not _valid_date(start_date):
             return "Error: start_date must be 'YYYY-MM-DD'."
+        if binding is not None and binding not in _VALID_BINDINGS:
+            return f"Error: binding must be one of {', '.join(_VALID_BINDINGS)}."
         conn = _get_db()
         if action == "create":
             if not all([name, tracking_mode, weekly_target_count is not None]):
@@ -48,8 +56,8 @@ def manage_fitness_plan(
                 return "Error: tracking_mode must be 'flexible_quota' or 'strict_sequential'."
             sd = start_date or datetime.now(ISRAEL_TZ).strftime("%Y-%m-%d")
             conn.execute(
-                "INSERT INTO plans (name, tracking_mode, weekly_target_count, start_date) VALUES (?, ?, ?, ?)",
-                (name, tracking_mode, weekly_target_count, sd),
+                "INSERT INTO plans (name, tracking_mode, weekly_target_count, start_date, binding) VALUES (?, ?, ?, ?, ?)",
+                (name, tracking_mode, weekly_target_count, sd, binding or "manual"),
             )
             conn.commit()
             pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -59,7 +67,7 @@ def manage_fitness_plan(
             )
             conn.commit()
             conn.close()
-            return f"Created plan '{name}' (id={pid}, mode={tracking_mode}, target={weekly_target_count}/week, start={sd})."
+            return f"Created plan '{name}' (id={pid}, mode={tracking_mode}, target={weekly_target_count}/week, start={sd}, binding={binding or 'manual'})."
 
         elif action == "update":
             if not plan_id:
@@ -73,8 +81,10 @@ def manage_fitness_plan(
                 fields.append("status = ?"); values.append(status)
             if start_date:
                 fields.append("start_date = ?"); values.append(start_date)
+            if binding:
+                fields.append("binding = ?"); values.append(binding)
             if not fields:
-                return "Error: provide at least one field to update (name, weekly_target_count, status, start_date)."
+                return "Error: provide at least one field to update (name, weekly_target_count, status, start_date, binding)."
 
             # Capture the pre-update target so a real change can be recorded in
             # plan_target_history — past weeks stay judged by the target that
@@ -123,7 +133,8 @@ def manage_fitness_plan(
                 lines.append(
                     f"[{p['plan_id']}] {p['name']} | {p['tracking_mode']} | "
                     f"target: {target}/week | this week: {done}/{target} | "
-                    f"status: {p['status']} | start: {start}"
+                    f"status: {p['status']} | start: {start} | "
+                    f"binding: {p['binding'] or '—'}"
                 )
             conn.close()
             return "\n".join(lines)

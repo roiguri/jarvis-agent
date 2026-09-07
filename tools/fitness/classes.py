@@ -48,7 +48,7 @@ def _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str):
     params = [now_str, horizon_str]
     if registered_ids:
         placeholders = ",".join("?" * len(registered_ids))
-        where += f" AND arbox_class_id NOT IN ({placeholders})"
+        where += f" AND external_id NOT IN ({placeholders})"
         params += list(registered_ids)
 
     doomed = conn.execute(
@@ -98,7 +98,7 @@ def _sync_registered_classes() -> str:
 
             conn.execute(
                 """INSERT OR IGNORE INTO workouts
-                   (arbox_class_id, plan_id, scheduled_time, description, source)
+                   (external_id, plan_id, scheduled_time, description, source)
                    VALUES (?, ?, ?, ?, 'arbox')""",
                 (schedule_id, plan_id, scheduled_dt, wod or None),
             )
