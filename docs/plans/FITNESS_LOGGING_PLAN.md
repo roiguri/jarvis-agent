@@ -154,9 +154,10 @@ app poll.
   `stat_shape` is strength; keep the explicit `workout_id` escape hatch. Together with manual
   rows' midday sentinel time (vs Arbox rows' real class time), this settles the
   double-session-day tie-break that previously attached stats to the wrong row.
-- **`log_running_session` becomes a deprecation shim**: same signature, internally
-  `log_workout` + `log_cardio_stats`, docstring pointing at the new pair; delete after the
-  cutover has held in prod for a while.
+- **`log_running_session` is deleted outright** (no deprecation shim). A shim was planned
+  to keep recent thread history executable, but the observability log showed the tool was
+  called exactly twice ever in prod, last on 2026-07-29 — far outside any 50-message
+  window — so there is no in-context history to protect.
 - **Provenance gating** (FitTrackee's lesson): tools never edit the identity fields
   (`scheduled_time`, `external_id`, status flips owned by the sync) of `source='arbox'` rows;
   enrichment (`wod_result`, stats, notes) stays allowed. Manual rows stay fully editable.

@@ -434,49 +434,6 @@ def log_cardio_stats(
 
 @tool_register(namespace="fitness")
 @tool
-def log_running_session(
-    duration_min: float,
-    description: str,
-    distance_km: float | None = None,
-    avg_hr: int | None = None,
-    pain_level: int = 0,
-    prehab_done: bool = False,
-    prehab_notes: str = "",
-    notes: str = "",
-    date: str | None = None,
-) -> str:
-    """Deprecated alias for log_cardio_stats — prefer that tool.
-
-    Kept so recent conversation history stays executable; records the session
-    and stats exactly as log_cardio_stats(description=...) does.
-
-    Args:
-        duration_min: Total session duration in minutes (e.g. 32.0)
-        description: Session description from the running program
-            (e.g. 'Phase 0 Session 1: 30-min brisk walk')
-        distance_km: Distance covered in km (from watch GPS)
-        avg_hr: Average heart rate in bpm
-        pain_level: 0=none, 1=slight, 2=moderate, 3=stop-sign
-        prehab_done: Whether pre-hab exercises were completed after the session
-        prehab_notes: Description of pre-hab done (e.g. 'Tibialis 3×15, Calf raises 3×15')
-        notes: Any additional session notes
-        date: Session date as YYYY-MM-DD (defaults to today in Israel time)
-    """
-    return log_cardio_stats.func(
-        duration_min=duration_min,
-        distance_km=distance_km,
-        avg_hr=avg_hr,
-        pain_level=pain_level,
-        prehab_done=prehab_done,
-        prehab_notes=prehab_notes,
-        notes=notes,
-        description=description,
-        date=date,
-    )
-
-
-@tool_register(namespace="fitness")
-@tool
 def log_wod_result(
     result: str,
     workout_id: int | None = None,
