@@ -14,9 +14,10 @@ from tools.fitness.classes import (  # noqa: F401
 )
 from tools.fitness.logs import (  # noqa: F401
     get_today_workout_id,
+    log_cardio_stats,
     log_exercise_stats,
-    log_running_session,
     log_wod_result,
+    log_workout,
     query_exercise_history,
 )
 from tools.fitness.plans import manage_fitness_plan  # noqa: F401
@@ -33,9 +34,10 @@ __all__ = [
     "get_daily_programming",
     "get_today_workout_id",
     "get_weekly_fitness_summary",
+    "log_cardio_stats",
     "log_exercise_stats",
-    "log_running_session",
     "log_wod_result",
+    "log_workout",
     "manage_fitness_plan",
     "query_exercise_history",
     "query_fitness_db",
