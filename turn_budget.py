@@ -9,7 +9,7 @@ the loop.
 
 import contextvars
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 COMPLETED = "completed"
 WRAPPED_UP = "wrapped_up"
@@ -22,12 +22,10 @@ class TurnOutcome:
     kind: str
     # Owner-presentable; may be "" for a legitimately quiet turn.
     text: str
-    # Why the turn did not complete normally, technical (logs); None when it did.
-    reason: str | None = None
-    # The same, in plain language for the owner; None when it completed.
+    # Why it did not complete normally, in plain language; None when it did.
     cause: str | None = None
     # (tool name, count) for every tool call that succeeded this turn.
-    committed_calls: tuple[tuple[str, int], ...] = field(default_factory=tuple)
+    committed_calls: tuple[tuple[str, int], ...] = ()
 
     @property
     def finished(self) -> bool:
@@ -76,7 +74,7 @@ def describe_error(exc: BaseException) -> str:
     """A plain-language cause. Upstream conditions are told apart from our own
     faults because they call for different reactions: retry later vs. report."""
     text = f"{type(exc).__name__}: {exc}"
-    if any(s in text for s in ("503", "UNAVAILABLE", "502", "Bad Gateway", "high demand")):
+    if any(s in text for s in ("503", "UNAVAILABLE", "502")):
         return "the model service was unavailable (overloaded upstream)"
     if any(s in text for s in ("504", "DEADLINE_EXCEEDED", "Timeout", "timed out")):
         return "the model took too long to respond"
@@ -101,11 +99,7 @@ def failure_text(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
     return f"I couldn't finish that: {cause}. {committed_sentence(calls)}"
 
 
-def failure_note(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
+def failure_note(reply: str, calls: tuple[tuple[str, int], ...]) -> str:
     """Written into the thread so the next turn knows what already landed."""
-    done = (
-        f" Tool calls that completed before it stopped: {committed_summary(calls)} — "
-        "their effects are saved; do not re-run them, check current state first."
-        if calls else " No tool call completed."
-    )
-    return f"[The previous turn did not finish: {cause}.{done}]"
+    rerun = " Do not re-run those calls; check current state first." if calls else ""
+    return f"[This turn did not finish. I told the owner: {reply}{rerun}]"

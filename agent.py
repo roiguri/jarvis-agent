@@ -899,7 +899,6 @@ def ask_jarvis(
             outcome = turn_budget.TurnOutcome(
                 turn_budget.BUDGET_EXHAUSTED,
                 _summarize_exhausted_turn(config, scope),
-                reason=f"step budget {RECURSION_LIMIT} reached",
                 cause="it ran out of steps",
                 committed_calls=turn_budget.committed_calls(),
             )
@@ -917,7 +916,6 @@ def ask_jarvis(
                 outcome = _failed_outcome(
                     config,
                     f"the model stopped mid-response without an answer (it reported `{reason}`)",
-                    f"finish_reason: {reason}",
                     suffix=" Rephrasing or splitting the request usually gets past it.",
                 )
             else:
@@ -928,15 +926,10 @@ def ask_jarvis(
     except Exception as e:
         logger.exception("Turn %s failed", turn_id)
         _record_turn_error(f"{type(e).__name__}: {e}")
-        outcome = _failed_outcome(
-            config, turn_budget.describe_error(e), f"{type(e).__name__}: {e}"
-        )
+        outcome = _failed_outcome(config, turn_budget.describe_error(e))
     finally:
         if mirror_cursor and input_checkpointed:
-            try:
-                pending_mirrors.advance_cursor(mirror_cursor)
-            except Exception:
-                logger.exception("Turn %s: failed to advance the mirror cursor", turn_id)
+            pending_mirrors.advance_cursor(mirror_cursor)
         acc = telemetry.TURN_ACC.get()
         if acc is not None:
             acc["outcome"] = outcome.kind if outcome else turn_budget.FAILED
@@ -965,9 +958,7 @@ def ask_jarvis(
     return outcome
 
 
-def _failed_outcome(
-    config: dict, cause: str, reason: str, suffix: str = ""
-) -> turn_budget.TurnOutcome:
+def _failed_outcome(config: dict, cause: str, suffix: str = "") -> turn_budget.TurnOutcome:
     """A ``failed`` outcome, with its note written into the thread.
 
     Appended as the llm node's output: a failed turn can only end on a
@@ -976,21 +967,16 @@ def _failed_outcome(
     graph routes to END — the next turn starts clean.
     """
     calls = turn_budget.committed_calls()
+    text = turn_budget.failure_text(cause, calls) + suffix
     try:
         agent_executor.update_state(
             config,
-            {"messages": [AIMessage(content=turn_budget.failure_note(cause, calls))]},
+            {"messages": [AIMessage(content=turn_budget.failure_note(text, calls))]},
             as_node="llm",
         )
     except Exception:
         logger.exception("Could not write the failure note into the thread")
-    return turn_budget.TurnOutcome(
-        turn_budget.FAILED,
-        turn_budget.failure_text(cause, calls) + suffix,
-        reason=reason,
-        cause=cause,
-        committed_calls=calls,
-    )
+    return turn_budget.TurnOutcome(turn_budget.FAILED, text, cause=cause, committed_calls=calls)
 
 
 def _ack_from_messages(messages) -> dict | None:

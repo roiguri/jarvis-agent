@@ -48,19 +48,20 @@ def check(name, got, want=True):
 
 
 class FakeLLM:
-    """Plays a script: each entry is an AIMessage to return or an exception to raise."""
+    """Plays a script: each entry is an AIMessage to return or an exception to
+    raise. Records every request it was sent."""
 
     model = "fake-model"
 
     def __init__(self, script):
         self.script = list(script)
-        self.calls = 0
+        self.sent = []
 
     def bind_tools(self, tools):
         return self
 
     def invoke(self, messages, **kwargs):
-        self.calls += 1
+        self.sent.append(list(messages))
         item = self.script.pop(0)
         if isinstance(item, BaseException):
             raise item
@@ -100,7 +101,7 @@ check("failed: committed calls counted", out.committed_calls, (("list_memory", 2
 check("failed: reply names committed calls", "list_memory ×2" in out.text, True)
 msgs = thread_messages("t_fail")
 check("failed: note is last message", isinstance(msgs[-1], AIMessage), True)
-check("failed: note says do not re-run", "do not re-run" in msgs[-1].content, True)
+check("failed: note says do not re-run", "Do not re-run" in msgs[-1].content, True)
 check("failed: note keeps tool pairs valid", isinstance(msgs[-2], ToolMessage), True)
 row = last_turn_row()
 check("failed: turns.jsonl outcome", row.get("outcome"), "failed")
@@ -128,7 +129,8 @@ agent.llm = FakeLLM([AIMessage(
 )])
 out = agent.ask_jarvis("do the thing", "t_finish")
 check("finish_reason: kind", out.kind, turn_budget.FAILED)
-check("finish_reason: reason recorded", out.reason, "finish_reason: MALFORMED_FUNCTION_CALL")
+check("finish_reason: recorded in turns.jsonl",
+      last_turn_row().get("error"), "finish_reason: MALFORMED_FUNCTION_CALL")
 check("finish_reason: reply names it", "MALFORMED_FUNCTION_CALL" in out.text, True)
 
 # --- 4. Mirror cursor advances on a failed turn (no duplicate mirror) ------

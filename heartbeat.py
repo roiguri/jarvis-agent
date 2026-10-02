@@ -91,12 +91,12 @@ async def run_heartbeat() -> None:
     except asyncio.TimeoutError:
         logger.error("Heartbeat: agent turn timed out after 90s — skipping")
         await _notify_tick_failed(
-            TurnOutcome(FAILED, "", reason="timeout 90s", cause="it timed out after 90s"),
+            TurnOutcome(FAILED, "", cause="it timed out after 90s"),
             due_names, now_israel,
         )
         return
     if not outcome.finished:
-        logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.reason)
+        logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.cause)
 
     # Structured tick-ack: delivery and stamping key off it.
     try:
