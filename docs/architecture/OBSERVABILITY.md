@@ -65,7 +65,8 @@ All four live in `/app/jarvis_data/logs/`. All four use the shared `_append_line
   "active_skills_start": [],
   "active_skills_end": ["media/radarr"],
   "no_action": false,
-  "error": null
+  "error": null,
+  "outcome": "completed"
 }
 ```
 
@@ -78,6 +79,11 @@ Source: built up across a turn by `observability.telemetry.record_turn_start` (a
 It is a **diagnostic, not a billing field**, and this is the one way it differs from `cache_read_tokens`. Cache reads are *input* billed at a discount, so `estimate_usd` subtracts them out of the billable-input bucket. Reasoning tokens are *output* billed at the ordinary output rate and are already counted in `output_tokens` — adding them anywhere in `estimate_usd` would double-count. They are recorded because `thinking_level` (Gemini 3.x) is the largest cost/quality dial available and this is the only observable it moves: without it, a successful `thinking_level` tuning cannot be distinguished from a quality regression, and a model whose reasoning appetite is eating the budget is invisible until the invoice arrives.
 
 `no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: `no_action = not ack.notify`, and a tick with no ack delivers nothing, so it counts as a no-op. Computed in `ask_jarvis`'s `finally`.
+
+`outcome` is how the turn ended, from the vocabulary in `turn_budget.py`: `completed`,
+`wrapped_up` (finished after the budget's wrap-up notice), `budget_exhausted` (stopped by the turn
+budget, answered with a tool-free summary) or `failed` (an exception or an abnormal model stop;
+`error` carries the detail). `null` on rows written before the field existed.
 
 ### `tool_calls.jsonl` — one record per tool invocation
 

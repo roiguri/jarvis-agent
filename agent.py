@@ -10,7 +10,7 @@ from uuid import uuid4
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentState
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -28,6 +28,7 @@ import config
 from tools import registry
 import heartbeat_state
 import pending_mirrors
+import turn_budget
 import turn_context
 from gateway.base import OWNER_THREAD_ID
 
@@ -481,7 +482,8 @@ def _summarize_exhausted_turn(config: dict, scope: str) -> str:
     """
     fallback = (
         "I ran out of steps on this one and stopped before finishing. "
-        "Nothing was left half-saved. Narrowing the request usually gets it through."
+        f"{turn_budget.committed_sentence(turn_budget.committed_calls())} "
+        "Narrowing the request usually gets it through."
     )
     try:
         snap = agent_executor.get_state(config)
@@ -623,6 +625,7 @@ def _tool_node(state: JarvisState) -> dict:
                 content=result if isinstance(result, str) else str(result),
                 name=name, tool_call_id=call_id,
             ))
+            turn_budget.record_committed(name)
         telemetry.record_tool_call(
             tool_name=name, namespace=ns, destructive=destructive,
             duration_ms=int((time.perf_counter() - t0) * 1000),
@@ -659,9 +662,14 @@ def ask_jarvis(
     turn_id: str | None = None,
     heartbeat_due_tasks: list[str] | None = None,
     channel: str | None = None,
-) -> str:
+) -> turn_budget.TurnOutcome:
     """
-    Encapsulates the agent execution and parses complex LangChain message blocks into a clean string.
+    Run one agent turn and classify how it ended.
+
+    Never raises for a failed turn: an exception becomes a ``failed`` outcome
+    whose text names the cause and the tool calls that already committed, and
+    the same note is written into the thread so the next turn knows too.
+    Callers decide only where ``outcome.text`` goes.
 
     Args:
         user_input: the text message from the user
@@ -701,6 +709,7 @@ def ask_jarvis(
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
     _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
+    _committed_token = turn_budget.begin_turn()
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -713,6 +722,11 @@ def ask_jarvis(
         mirror_block, mirror_cursor = pending_mirrors.drain_pending()
 
     final_response = ""
+    outcome: turn_budget.TurnOutcome | None = None
+    # The first streamed event means the input (mirror block included) is in
+    # the checkpoint — from then on the drained mirrors are part of the thread
+    # whether or not the turn finishes, so the cursor must advance.
+    input_checkpointed = False
     try:
         # Build the message content with text and media.
         if media_attachments:
@@ -857,6 +871,7 @@ def ask_jarvis(
         last_ai = None
         try:
             for event in events:
+                input_checkpointed = True
                 last_message = event["messages"][-1]
                 if last_message.type == "ai":
                     last_ai = last_message
@@ -881,7 +896,13 @@ def ask_jarvis(
                 turn_id, RECURSION_LIMIT,
             )
             _record_turn_error(f"GraphRecursionError: step budget {RECURSION_LIMIT} reached")
-            final_response = _summarize_exhausted_turn(config, scope)
+            outcome = turn_budget.TurnOutcome(
+                turn_budget.BUDGET_EXHAUSTED,
+                _summarize_exhausted_turn(config, scope),
+                reason=f"step budget {RECURSION_LIMIT} reached",
+                cause="it ran out of steps",
+                committed_calls=turn_budget.committed_calls(),
+            )
         else:
             reason = _finish_reason(last_ai)
             if not final_response.strip() and reason not in _NORMAL_FINISH_REASONS:
@@ -893,20 +914,32 @@ def ask_jarvis(
                     "Turn %s ended with finish_reason=%s and no text.", turn_id, reason
                 )
                 _record_turn_error(f"finish_reason: {reason}")
-                final_response = (
-                    "I stopped mid-response and didn't produce an answer "
-                    f"(the model reported `{reason}`). Nothing was saved or sent. "
-                    "Ask again — rephrasing or splitting the request usually gets past it."
+                outcome = _failed_outcome(
+                    config,
+                    f"the model stopped mid-response without an answer (it reported `{reason}`)",
+                    f"finish_reason: {reason}",
+                    suffix=" Rephrasing or splitting the request usually gets past it.",
                 )
-        if mirror_cursor:
-            pending_mirrors.advance_cursor(mirror_cursor)
-        return final_response
+            else:
+                outcome = turn_budget.TurnOutcome(
+                    turn_budget.COMPLETED, final_response,
+                    committed_calls=turn_budget.committed_calls(),
+                )
     except Exception as e:
-        acc = telemetry.TURN_ACC.get()
-        if acc is not None and acc.get("error") is None:
-            acc["error"] = f"{type(e).__name__}: {e}"
-        raise
+        logger.exception("Turn %s failed", turn_id)
+        _record_turn_error(f"{type(e).__name__}: {e}")
+        outcome = _failed_outcome(
+            config, turn_budget.describe_error(e), f"{type(e).__name__}: {e}"
+        )
     finally:
+        if mirror_cursor and input_checkpointed:
+            try:
+                pending_mirrors.advance_cursor(mirror_cursor)
+            except Exception:
+                logger.exception("Turn %s: failed to advance the mirror cursor", turn_id)
+        acc = telemetry.TURN_ACC.get()
+        if acc is not None:
+            acc["outcome"] = outcome.kind if outcome else turn_budget.FAILED
         # End-state active_skills + no_action signal — read from the post-run
         # checkpoint snapshot. Falls back to active_start so the record stays
         # consistent even if get_state fails (rare).
@@ -928,6 +961,36 @@ def ask_jarvis(
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
         turn_context.CURRENT_CHANNEL.reset(_channel_token)
+        turn_budget.end_turn(_committed_token)
+    return outcome
+
+
+def _failed_outcome(
+    config: dict, cause: str, reason: str, suffix: str = ""
+) -> turn_budget.TurnOutcome:
+    """A ``failed`` outcome, with its note written into the thread.
+
+    Appended as the llm node's output: a failed turn can only end on a
+    ToolMessage or its HumanMessage (the tool node never raises), so an
+    AIMessage after either keeps the history valid, and with no tool calls the
+    graph routes to END — the next turn starts clean.
+    """
+    calls = turn_budget.committed_calls()
+    try:
+        agent_executor.update_state(
+            config,
+            {"messages": [AIMessage(content=turn_budget.failure_note(cause, calls))]},
+            as_node="llm",
+        )
+    except Exception:
+        logger.exception("Could not write the failure note into the thread")
+    return turn_budget.TurnOutcome(
+        turn_budget.FAILED,
+        turn_budget.failure_text(cause, calls) + suffix,
+        reason=reason,
+        cause=cause,
+        committed_calls=calls,
+    )
 
 
 def _ack_from_messages(messages) -> dict | None:

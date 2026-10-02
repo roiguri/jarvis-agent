@@ -73,6 +73,9 @@ def record_turn_start(
         "active_skills_end": [],
         "no_action": False,
         "error": None,
+        # completed | wrapped_up | budget_exhausted | failed (turn_budget); the
+        # caller sets it before record_turn_end.
+        "outcome": None,
     }
     TURN_ACC.set(acc)
     return acc

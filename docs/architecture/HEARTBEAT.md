@@ -35,6 +35,8 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
+        ├─ no ack AND the turn did not finish (failed / budget_exhausted /
+        │  timeout) → code-built notice, event="heartbeat_failed"
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
         │                event="heartbeat")         send + log-on-success
         └─ stamp(acted_tasks) → state.json          only acted tasks advance,
@@ -46,6 +48,17 @@ The ack is authoritative end to end: `acted_tasks` drives state stamping,
 `notify`/`notification_text` drive message delivery. The reply text is a
 terse tick log only; a tick with no ack delivers nothing and its tasks
 re-run next tick (unstamped).
+
+**A broken tick is not silent.** When the turn ends without finishing
+(`TurnOutcome` from `turn_budget.py`: an exception, an abnormal model stop, the
+step budget, or the tick timeout) *and* left no ack, the owner gets a short
+notice built in code — never by the model, which may be what failed — naming
+the time, the due tasks, the plain-language cause and any tool calls that had
+already committed. It goes through the Outbox with `event="heartbeat_failed"`,
+so it is logged and the pending-mirror drain carries it into the owner thread
+as `[Heartbeat failed] …`: the chat side learns of the failure as history
+instead of reconstructing a reason. A finished tick that merely omitted its ack
+sends nothing extra.
 
 **Delivery before stamping.** The send goes through the gateway Outbox, which
 returns an outcome instead of raising. Stamps advance only when the tick had

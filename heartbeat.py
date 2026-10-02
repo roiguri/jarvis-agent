@@ -67,6 +67,7 @@ async def run_heartbeat() -> None:
     from agent import ask_jarvis, get_heartbeat_ack
     from gateway.factory import default_outbox
     from gateway.outbox import EVENT_HEARTBEAT
+    from turn_budget import FAILED, TurnOutcome
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
     today = now_israel.strftime("%Y-%m-%d")
@@ -80,7 +81,7 @@ async def run_heartbeat() -> None:
 
     logger.info("Heartbeat: running agent turn")
     try:
-        await asyncio.wait_for(
+        outcome = await asyncio.wait_for(
             asyncio.to_thread(
                 ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
                 scope="heartbeat", heartbeat_due_tasks=due_names,
@@ -89,10 +90,13 @@ async def run_heartbeat() -> None:
         )
     except asyncio.TimeoutError:
         logger.error("Heartbeat: agent turn timed out after 90s — skipping")
+        await _notify_tick_failed(
+            TurnOutcome(FAILED, "", reason="timeout 90s", cause="it timed out after 90s"),
+            due_names, now_israel,
+        )
         return
-    except Exception as e:
-        logger.error("Heartbeat: agent turn failed: %s", e)
-        return
+    if not outcome.finished:
+        logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.reason)
 
     # Structured tick-ack: delivery and stamping key off it.
     try:
@@ -103,6 +107,10 @@ async def run_heartbeat() -> None:
     acted: list[str] = []
     if ack is None:
         logger.warning("Heartbeat: no heartbeat_respond call this tick — not stamping")
+        # A tick that broke before acking is the one silence the owner must
+        # hear about; a finished tick that merely forgot the ack is not.
+        if not outcome.finished:
+            await _notify_tick_failed(outcome, due_names, now_israel)
     else:
         logger.info(
             "Heartbeat: ack acted_tasks=%s notify=%s summary=%r",
@@ -157,6 +165,29 @@ async def run_heartbeat() -> None:
                 logger.info("Heartbeat: stamped last_run for %s", stamped)
             except Exception:
                 logger.exception("Heartbeat: failed to stamp last_run state")
+
+
+async def _notify_tick_failed(
+    outcome, due_names: list[str] | None, now_israel: datetime.datetime
+) -> None:
+    """Tell the owner a tick broke. Built in code, not by the model — the model
+    may be what failed. Sent with an event so it is logged and mirrored into
+    the owner thread, where the chat side learns of the failure as history."""
+    from gateway.factory import default_outbox
+    from gateway.outbox import EVENT_HEARTBEAT_FAILED
+    from turn_budget import committed_summary
+
+    tasks = ", ".join(due_names) if due_names else "all tasks"
+    text = (
+        f"Heartbeat check at {now_israel.strftime('%H:%M')} Israel time didn't finish: "
+        f"{outcome.cause or 'unknown cause'}. Tasks: {tasks}."
+    )
+    if outcome.committed_calls:
+        text += f" Already done before it stopped: {committed_summary(outcome.committed_calls)}."
+    text += " They run again on the next tick while still due."
+    result = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT_FAILED)
+    if not result.ok:
+        logger.error("Heartbeat: failed to send the tick-failure notice: %s", result.error)
 
 
 async def fire_reminder(event: dict) -> None:

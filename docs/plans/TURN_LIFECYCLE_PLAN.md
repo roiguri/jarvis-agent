@@ -14,18 +14,18 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 
 ## Checklist
 
-**Slice 0 — outcome type + honest failure** (independent of slices 1–3; ship first)
-- [ ] New `turn_budget.py`: `TurnOutcome` (`kind`, `text`, `reason`, `committed_calls`)
-- [ ] `ask_jarvis` returns `TurnOutcome`; model/upstream exceptions become `kind="failed"` instead of raising
-- [ ] Failure text built in the runtime: error class (upstream overloaded/timeout vs internal) + committed tool calls by name and count + "do not re-run these"
-- [ ] Failure note written into the thread checkpoint as an `AIMessage` (both scopes)
-- [ ] Mirror cursor advances once the turn's input is checkpointed, not only on success
-- [ ] Replace the false "Nothing was left half-saved" fallback in `_summarize_exhausted_turn`
-- [ ] `outcome` field (`completed` / `wrapped_up` / `budget_exhausted` / `failed`) in `turns.jsonl`
-- [ ] User callers: one `main.py` helper used by `process_inbound_message` **and** `on_confirmation_outcome`; sends `outcome.text`, chat-logs it
-- [ ] Heartbeat: logs `outcome.reason` (the real cause) instead of a generic error
-- [ ] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT_FAILED)`
-- [ ] New frozen event `heartbeat_failed` in `gateway/outbox.py` + `[Heartbeat failed]` prefix in `pending_mirrors.PREFIX`
+**Slice 0 — outcome type + honest failure** (independent of slices 1–3; ship first) — offline harness: `scripts/test_turn_lifecycle.py`
+- [x] New `turn_budget.py`: `TurnOutcome` (`kind`, `text`, `reason`, `committed_calls`)
+- [x] `ask_jarvis` returns `TurnOutcome`; model/upstream exceptions become `kind="failed"` instead of raising
+- [x] Failure text built in the runtime: error class (upstream overloaded/timeout vs internal) + committed tool calls by name and count + "do not re-run these"
+- [x] Failure note written into the thread checkpoint as an `AIMessage` (both scopes)
+- [x] Mirror cursor advances once the turn's input is checkpointed, not only on success
+- [x] Replace the false "Nothing was left half-saved" fallback in `_summarize_exhausted_turn`
+- [x] `outcome` field (`completed` / `wrapped_up` / `budget_exhausted` / `failed`) in `turns.jsonl`
+- [x] User callers: one `main.py` helper used by `process_inbound_message` **and** `on_confirmation_outcome`; sends `outcome.text`, chat-logs it
+- [x] Heartbeat: logs `outcome.reason` (the real cause) instead of a generic error
+- [x] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT_FAILED)`
+- [x] New frozen event `heartbeat_failed` in `gateway/outbox.py` + `[Heartbeat failed]` prefix in `pending_mirrors.PREFIX`
 - [ ] Staging: forced user-turn exception after a write → reply names committed calls; thread note present next turn; no duplicate mirror block
 - [ ] Staging: forced heartbeat failure → owner notice on the default channel; mirrored into the owner thread on the next user turn
 
