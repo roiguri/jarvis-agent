@@ -42,11 +42,11 @@ from observability import telemetry
 # State schema — sliding message window + media blob stripping
 # ---------------------------------------------------------------------------
 # The default AgentState accumulates messages forever. We override the reducer
-# so that when a turn starts the list is trimmed to the most recent
-# MAX_MESSAGES entries, cut at a turn boundary. Within a turn the window only
-# grows: trimming on every write let a turn with ~40 tool calls slice off its
-# own HumanMessage mid-flight, leaving a history the model rejects. Storage
-# stays bounded by the cap plus one turn's traffic.
+# so that when a turn starts the list is trimmed to whole turns fitting in
+# MAX_MESSAGES — always keeping the previous turn, however long. Within a turn
+# the window only grows: trimming on every write let a turn with ~40 tool calls
+# slice off its own HumanMessage mid-flight, leaving a history the model
+# rejects. Storage stays bounded by the cap plus up to two turns' traffic.
 MAX_MESSAGES = 50
 
 # Gemini's documented ceiling for inline media. The API also recommends the
@@ -152,13 +152,21 @@ def _add_and_trim(existing: list, new: list) -> list:
     combined = add_messages(stripped_existing, new)
     if not _starts_turn(new):
         return combined
-    # A raw index slice can land mid-tool-call-sequence, producing orphaned
-    # function-call or tool-response messages at the start that the LLM rejects.
-    # Cutting at a HumanMessage never splits a call from its response, and one
-    # always exists: this write's own input sits at the tail of the window.
-    window = combined[-MAX_MESSAGES:]
-    first = next(i for i, msg in enumerate(window) if isinstance(msg, HumanMessage))
-    return window[first:]
+    # Cut only where a turn starts — a raw index slice can land mid-tool-call
+    # sequence, leaving orphaned calls or responses the LLM rejects. A turn
+    # starts at a HumanMessage not preceded by one (a mirror block and the
+    # message it precedes are one turn's input). Keep the earliest start that
+    # fits in the cap, but never drop the previous turn: one long turn would
+    # otherwise leave only the new input, and "continue" would see nothing.
+    starts = [
+        i for i, msg in enumerate(combined)
+        if isinstance(msg, HumanMessage)
+        and (i == 0 or not isinstance(combined[i - 1], HumanMessage))
+    ]
+    cut = next((i for i in starts if len(combined) - i <= MAX_MESSAGES), starts[-1])
+    if len(starts) >= 2:
+        cut = min(cut, starts[-2])
+    return combined[cut:]
 
 def _merge_skills(existing, new):
     """Reducer for active_skills.

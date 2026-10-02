@@ -122,7 +122,7 @@ class JarvisState(AgentState):
 
 | Field | Reducer | Lifetime |
 |---|---|---|
-| `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting) and always cut at a `HumanMessage`, so a call is never separated from its response. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
+| `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting), and only by whole turns, so a call is never separated from its response. The previous turn is always kept, however long — a long turn followed by "continue" must still see what it is continuing. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
 | `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
 | `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |

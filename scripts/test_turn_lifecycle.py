@@ -318,11 +318,24 @@ msgs = thread_messages("t_fanout")
 check("fan-out: checkpoint keeps prior history",
       any(isinstance(m, HumanMessage) and m.content == "chat 23" for m in msgs), True)
 check("fan-out: window grew past the cap within the turn", len(msgs) > agent.MAX_MESSAGES, True)
-agent.llm = FakeLLM([AIMessage(content="ok")])
-agent.ask_jarvis("after the fan-out", "t_fanout")
+rec = FakeLLM([AIMessage(content="ok")])
+agent.llm = rec
+agent.ask_jarvis("continue", "t_fanout")
+sent_next = rec.sent[0][1:]
+check("long turn: next turn still sees its answer",
+      any(isinstance(m, AIMessage) and m.content == "done fanning out" for m in sent_next), True)
+check("long turn: next turn starts on the long turn's input",
+      isinstance(sent_next[0], HumanMessage) and sent_next[0].content == "FANOUT REQUEST", True)
+agent.llm = FakeLLM([AIMessage(content="ok again")])
+agent.ask_jarvis("one more", "t_fanout")
 msgs = thread_messages("t_fanout")
-check("fan-out: next turn trims back under the cap", len(msgs) <= agent.MAX_MESSAGES, True)
-check("fan-out: trimmed window starts on a HumanMessage", isinstance(msgs[0], HumanMessage), True)
+check("long turn: dropped once it is two turns back", len(msgs) <= agent.MAX_MESSAGES, True)
+check("long turn: trimmed window starts on a HumanMessage", isinstance(msgs[0], HumanMessage), True)
+check("reducer: a mirror block and its message stay together",
+      [m.content for m in agent._add_and_trim(
+          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(80)],
+          [HumanMessage("[mirror]"), HumanMessage("reply")],
+      )][-2:], ["[mirror]", "reply"])
 
 print()
 if FAILS:
