@@ -11,7 +11,9 @@ from uuid import uuid4
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage, HumanMessage, SystemMessage, ToolMessage, convert_to_messages,
+)
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentState
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -40,9 +42,11 @@ from observability import telemetry
 # State schema — sliding message window + media blob stripping
 # ---------------------------------------------------------------------------
 # The default AgentState accumulates messages forever. We override the reducer
-# so that after every state update the list is trimmed to the most recent
-# MAX_MESSAGES entries. This cap is enforced before the checkpoint is written
-# to SQLite, so storage stays bounded regardless of conversation length.
+# so that when a turn starts the list is trimmed to the most recent
+# MAX_MESSAGES entries, cut at a turn boundary. Within a turn the window only
+# grows: trimming on every write let a turn with ~40 tool calls slice off its
+# own HumanMessage mid-flight, leaving a history the model rejects. Storage
+# stays bounded by the cap plus one turn's traffic.
 MAX_MESSAGES = 50
 
 # Gemini's documented ceiling for inline media. The API also recommends the
@@ -135,17 +139,30 @@ def _strip_media_blobs(msg):
     return HumanMessage(content=new_content, id=msg.id)
 
 
+def _starts_turn(new) -> bool:
+    """Whether a state write carries user input — the only point a turn begins."""
+    items = new if isinstance(new, list) else [new]
+    return any(isinstance(m, HumanMessage) for m in convert_to_messages(items))
+
+
 def _add_and_trim(existing: list, new: list) -> list:
-    from langchain_core.messages import HumanMessage
     # Strip blobs from existing messages — they have already been seen by the
     # LLM. New messages keep their blobs so the LLM can process them this turn.
     stripped_existing = [_strip_media_blobs(msg) for msg in existing]
-    combined = add_messages(stripped_existing, new)[-MAX_MESSAGES:]
+    combined = add_messages(stripped_existing, new)
+    if not _starts_turn(new):
+        return combined
     # A raw index slice can land mid-tool-call-sequence, producing orphaned
     # function-call or tool-response messages at the start that the LLM rejects.
-    # Advance to the first HumanMessage to guarantee a valid conversation boundary.
-    for i, msg in enumerate(combined):
+    # Cutting at a HumanMessage never splits a call from its response.
+    window = combined[-MAX_MESSAGES:]
+    for i, msg in enumerate(window):
         if isinstance(msg, HumanMessage):
+            return window[i:]
+    # Unreachable while the input itself is a HumanMessage at the tail; kept so
+    # no path ever hands the model a raw slice: keep from the last turn start.
+    for i in range(len(combined) - 1, -1, -1):
+        if isinstance(combined[i], HumanMessage):
             return combined[i:]
     return combined
 

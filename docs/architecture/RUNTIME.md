@@ -114,7 +114,7 @@ So for everything but the few scope-declared tools, scope gates neither tools no
 
 ```python
 class JarvisState(AgentState):
-    messages: Required[Annotated[list, _add_and_trim]]   # unchanged (sliding window + blob strip)
+    messages: Required[Annotated[list, _add_and_trim]]   # window trimmed at turn start + blob strip
     scope: str                                            # "user" | "heartbeat"; set on first turn, then stable
     active_skills: Annotated[set[str], _merge_skills]     # namespaces activated in this thread
     heartbeat_due_tasks: list[str] | None                 # heartbeat scope: which HEARTBEAT.md blocks to inject
@@ -122,7 +122,7 @@ class JarvisState(AgentState):
 
 | Field | Reducer | Lifetime |
 |---|---|---|
-| `messages` | `_add_and_trim` (existing) | Sliding window of 50, pruned to one checkpoint per thread by `PruningSqliteSaver`. |
+| `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting) and always cut at a `HumanMessage`, so a call is never separated from its response. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
 | `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
 | `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |

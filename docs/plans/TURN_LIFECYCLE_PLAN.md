@@ -29,11 +29,11 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [ ] Staging: forced user-turn exception after a write → reply names committed calls; thread note present next turn; no duplicate mirror block
 - [ ] Staging: forced heartbeat failure → owner notice on the default channel; mirrored into the owner thread on the next user turn
 
-**Slice 1 — trim at turn boundaries**
-- [ ] `_add_and_trim` trims only when `new` contains a `HumanMessage`; otherwise appends
-- [ ] Trim cut never starts on a `ToolMessage` or splits a tool-call/response pair
-- [ ] No-human fallback returns a valid boundary, never a raw slice
-- [ ] RUNTIME.md `messages` row updated
+**Slice 1 — trim at turn boundaries** — offline harness reproduces JRV-01 on the old reducer
+- [x] `_add_and_trim` trims only when `new` contains a `HumanMessage`; otherwise appends
+- [x] Trim cut never starts on a `ToolMessage` or splits a tool-call/response pair
+- [x] No-human fallback returns a valid boundary, never a raw slice
+- [x] RUNTIME.md `messages` row updated
 - [ ] Staging: 40+ tool-call turn completes; checkpoint keeps its `HumanMessage` + prior history
 
 **Slice 2 — budget enforced in the graph**

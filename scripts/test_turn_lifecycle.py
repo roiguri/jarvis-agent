@@ -282,6 +282,60 @@ out = agent.ask_jarvis("disk is full", "t_disk")
 telemetry._append_line = real_append
 check("telemetry failure: turn still completes", (out.kind, out.text), (turn_budget.COMPLETED, "still fine"))
 
+# --- 6. Trim at turn boundaries (JRV-01) ----------------------------------
+check("reducer: non-turn write never trims",
+      len(agent._add_and_trim(
+          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(50)],
+          [ToolMessage(content="r", tool_call_id="x")],
+      )), 51)
+check("reducer: turn start trims to the cap",
+      len(agent._add_and_trim(
+          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(80)],
+          [HumanMessage("next")],
+      )) <= agent.MAX_MESSAGES, True)
+
+
+class RecordingLLM(FakeLLM):
+    """Also records what each call was sent, to prove the turn kept its input."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self.sent = []
+
+    def invoke(self, messages, **kwargs):
+        self.sent.append(list(messages))
+        return super().invoke(messages, **kwargs)
+
+
+# Prior history so the window is already near the cap when the big turn starts.
+for i in range(24):
+    agent.llm = FakeLLM([AIMessage(content=f"reply {i}")])
+    agent.ask_jarvis(f"chat {i}", "t_fanout")
+# The incidents' shape: several moderate fan-outs adding up past the cap.
+STEPS, PER_STEP = 3, 20
+rec = RecordingLLM([
+    AIMessage(content="", tool_calls=[
+        tool_call("list_memory", {}, 1000 * step + n) for n in range(PER_STEP)
+    ])
+    for step in range(STEPS)
+] + [AIMessage(content="done fanning out")])
+agent.llm = rec
+out = agent.ask_jarvis("FANOUT REQUEST", "t_fanout")
+check("fan-out: turn completes", out.kind, turn_budget.COMPLETED)
+last = rec.sent[-1][1:]  # drop the system prompt
+check("fan-out: last call still carries the turn's input",
+      any(isinstance(m, HumanMessage) and m.content == "FANOUT REQUEST" for m in last), True)
+check("fan-out: last call starts on a valid boundary", isinstance(last[0], HumanMessage), True)
+msgs = thread_messages("t_fanout")
+check("fan-out: checkpoint keeps prior history",
+      any(isinstance(m, HumanMessage) and m.content == "chat 23" for m in msgs), True)
+check("fan-out: window grew past the cap within the turn", len(msgs) > agent.MAX_MESSAGES, True)
+agent.llm = FakeLLM([AIMessage(content="ok")])
+agent.ask_jarvis("after the fan-out", "t_fanout")
+msgs = thread_messages("t_fanout")
+check("fan-out: next turn trims back under the cap", len(msgs) <= agent.MAX_MESSAGES, True)
+check("fan-out: trimmed window starts on a HumanMessage", isinstance(msgs[0], HumanMessage), True)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {FAILS}")
