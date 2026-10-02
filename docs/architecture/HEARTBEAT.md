@@ -49,16 +49,12 @@ The ack is authoritative end to end: `acted_tasks` drives state stamping,
 terse tick log only; a tick with no ack delivers nothing and its tasks
 re-run next tick (unstamped).
 
-**A broken tick is not silent.** When the turn ends without finishing
-(`TurnOutcome` from `turn_budget.py`: an exception, an abnormal model stop, the
-step budget, or the tick timeout) *and* left no ack, the owner gets a short
-notice built in code — never by the model, which may be what failed — naming
-the time, the due tasks, the plain-language cause and any tool calls that had
-already committed. It goes through the Outbox with `event="heartbeat_failed"`,
-so it is logged and the pending-mirror drain carries it into the owner thread
-as `[Heartbeat failed] …`: the chat side learns of the failure as history
-instead of reconstructing a reason. A finished tick that merely omitted its ack
-sends nothing extra.
+**A broken tick is not silent.** A tick that ends unfinished (`TurnOutcome`,
+`turn_budget.py`) *and* left no ack sends the owner a code-built
+`heartbeat_failed` notice — never model-written, since the model may be what
+failed — naming the due tasks, the cause and any tool calls that ran. Logged
+like any proactive send, it is mirrored into the owner thread as
+`[Heartbeat failed] …`. A finished tick that merely omitted its ack sends nothing.
 
 **Delivery before stamping.** The send goes through the gateway Outbox, which
 returns an outcome instead of raising. Stamps advance only when the tick had

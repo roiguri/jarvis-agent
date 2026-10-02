@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 import traceback as _tb
+from collections import Counter
 from uuid import uuid4
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
@@ -482,7 +483,7 @@ def _summarize_exhausted_turn(config: dict, scope: str) -> str:
     """
     fallback = (
         "I ran out of steps on this one and stopped before finishing. "
-        f"{turn_budget.committed_sentence(turn_budget.committed_calls())} "
+        f"{turn_budget.committed_sentence(_committed_calls())} "
         "Narrowing the request usually gets it through."
     )
     try:
@@ -521,23 +522,17 @@ def _llm_node(state: JarvisState) -> dict:
     the very next model call.
 
     Telemetry: on success calls record_llm_call (token usage rolls up to the
-    turn accumulator). On exception sets acc['error'] and re-raises — the
-    single turn-end record is emitted by ask_jarvis's finally, never here.
+    turn accumulator). An exception propagates to ask_jarvis, which records it
+    and emits the single turn-end record.
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
     due_tasks = state.get("heartbeat_due_tasks")
     bound_llm = llm.bind_tools(registry.get_tools(scope, active))
-    try:
-        response = bound_llm.invoke(
-            [SystemMessage(content=build_system_prompt(scope, active, due_tasks))]
-            + state["messages"]
-        )
-    except Exception as e:
-        acc = telemetry.TURN_ACC.get()
-        if acc is not None and acc.get("error") is None:
-            acc["error"] = f"{type(e).__name__}: {e}"
-        raise
+    response = bound_llm.invoke(
+        [SystemMessage(content=build_system_prompt(scope, active, due_tasks))]
+        + state["messages"]
+    )
     telemetry.record_llm_call(response)
     return {"messages": [response]}
 
@@ -625,7 +620,7 @@ def _tool_node(state: JarvisState) -> dict:
                 content=result if isinstance(result, str) else str(result),
                 name=name, tool_call_id=call_id,
             ))
-            turn_budget.record_committed(name)
+            turn_budget.COMMITTED.get()[name] += 1
         telemetry.record_tool_call(
             tool_name=name, namespace=ns, destructive=destructive,
             duration_ms=int((time.perf_counter() - t0) * 1000),
@@ -709,7 +704,7 @@ def ask_jarvis(
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
     _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
-    _committed_token = turn_budget.begin_turn()
+    _committed_token = turn_budget.COMMITTED.set(Counter())
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -900,7 +895,7 @@ def ask_jarvis(
                 turn_budget.BUDGET_EXHAUSTED,
                 _summarize_exhausted_turn(config, scope),
                 cause="it ran out of steps",
-                committed_calls=turn_budget.committed_calls(),
+                committed_calls=_committed_calls(),
             )
         else:
             reason = _finish_reason(last_ai)
@@ -921,7 +916,7 @@ def ask_jarvis(
             else:
                 outcome = turn_budget.TurnOutcome(
                     turn_budget.COMPLETED, final_response,
-                    committed_calls=turn_budget.committed_calls(),
+                    committed_calls=_committed_calls(),
                 )
     except Exception as e:
         logger.exception("Turn %s failed", turn_id)
@@ -957,8 +952,12 @@ def ask_jarvis(
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
         turn_context.CURRENT_CHANNEL.reset(_channel_token)
-        turn_budget.end_turn(_committed_token)
+        turn_budget.COMMITTED.reset(_committed_token)
     return outcome
+
+
+def _committed_calls() -> tuple[tuple[str, int], ...]:
+    return tuple(turn_budget.COMMITTED.get().most_common())
 
 
 def _failed_outcome(
@@ -976,7 +975,7 @@ def _failed_outcome(
     otherwise the thread's last HumanMessage is the previous turn's, and a
     heartbeat would read that turn's ack as this one's.
     """
-    calls = turn_budget.committed_calls()
+    calls = _committed_calls()
     text = turn_budget.failure_text(cause, calls) + suffix
     written = [HumanMessage(content=unsaved_input)] if unsaved_input is not None else []
     written.append(AIMessage(content=turn_budget.failure_note(cause, calls)))

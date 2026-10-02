@@ -35,28 +35,7 @@ class TurnOutcome:
 # Successful tool calls this turn, by name. Set per turn by ask_jarvis; the
 # tool node records into it. Its effects are already saved when a later step
 # fails, which is exactly what the owner and the next turn must be told.
-_COMMITTED: contextvars.ContextVar[Counter | None] = contextvars.ContextVar(
-    "turn_committed_calls", default=None
-)
-
-
-def begin_turn() -> contextvars.Token:
-    return _COMMITTED.set(Counter())
-
-
-def end_turn(token: contextvars.Token) -> None:
-    _COMMITTED.reset(token)
-
-
-def record_committed(tool_name: str) -> None:
-    calls = _COMMITTED.get()
-    if calls is not None:
-        calls[tool_name] += 1
-
-
-def committed_calls() -> tuple[tuple[str, int], ...]:
-    calls = _COMMITTED.get()
-    return tuple(calls.most_common()) if calls else ()
+COMMITTED: contextvars.ContextVar[Counter] = contextvars.ContextVar("turn_committed_calls")
 
 
 _SUMMARY_MAX_NAMES = 6
@@ -77,6 +56,13 @@ _STATUS_CAUSE = {
     429: "the model quota was exhausted",
     403: "the model service refused the API credentials",
 }
+# Fallback when no status code is attached: match status names, never digits.
+_STATUS_NAMES = {
+    503: ("UNAVAILABLE",),
+    504: ("DEADLINE_EXCEEDED", "Timeout", "timed out"),
+    429: ("RESOURCE_EXHAUSTED",),
+    403: ("PERMISSION_DENIED",),
+}
 
 
 def describe_error(exc: BaseException) -> str:
@@ -85,22 +71,14 @@ def describe_error(exc: BaseException) -> str:
 
     The provider's HTTP status wins when the error (or what it wraps) carries
     one; otherwise the message is matched, by status name, not bare digits."""
-    err: BaseException | None = exc
-    while err is not None:
-        code = getattr(err, "code", None)
-        if isinstance(code, int):
-            return _STATUS_CAUSE.get(code, f"an internal error on my side ({type(exc).__name__})")
-        err = err.__cause__
-    text = str(exc)
-    if "UNAVAILABLE" in text:
-        return _STATUS_CAUSE[503]
-    if any(s in text for s in ("DEADLINE_EXCEEDED", "Timeout", "timed out")):
-        return _STATUS_CAUSE[504]
-    if "RESOURCE_EXHAUSTED" in text:
-        return _STATUS_CAUSE[429]
-    if "PERMISSION_DENIED" in text:
-        return _STATUS_CAUSE[403]
-    return f"an internal error on my side ({type(exc).__name__})"
+    err, code = exc, None
+    while err is not None and not isinstance(code, int):
+        code, err = getattr(err, "code", None), err.__cause__
+    if not isinstance(code, int):
+        text = str(exc)
+        code = next((c for c, names in _STATUS_NAMES.items()
+                     if any(n in text for n in names)), None)
+    return _STATUS_CAUSE.get(code, f"an internal error on my side ({type(exc).__name__})")
 
 
 def committed_sentence(calls: tuple[tuple[str, int], ...]) -> str:

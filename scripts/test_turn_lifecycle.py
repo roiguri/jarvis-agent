@@ -83,20 +83,25 @@ def last_turn_row():
         return json.loads(f.readlines()[-1])
 
 
-UPSTREAM_503 = RuntimeError(
-    "Error calling model 'gemini': 503 UNAVAILABLE. This model is currently experiencing high demand."
-)
+def upstream_503():
+    # A fresh exception per use: re-raising one instance chains every earlier
+    # traceback onto the next.
+    return RuntimeError("Error calling model 'gemini': 503 UNAVAILABLE. High demand.")
+
+
+def run_tick():
+    heartbeat._last_tick_start = None
+    asyncio.run(heartbeat.run_heartbeat())
 
 # --- 1. Upstream failure after a committed tool call -----------------------
 agent.llm = FakeLLM([
     AIMessage(content="", tool_calls=[
         tool_call("list_memory", {}, 1), tool_call("list_memory", {}, 2),
     ]),
-    UPSTREAM_503,
+    upstream_503(),
 ])
 out = agent.ask_jarvis("tidy my memory", "t_fail")
 check("failed: kind", out.kind, turn_budget.FAILED)
-check("failed: never raised, has text", bool(out.text), True)
 check("failed: cause names upstream", "unavailable" in (out.cause or ""), True)
 check("failed: committed calls counted", out.committed_calls, (("list_memory", 2),))
 check("failed: reply names committed calls", "list_memory ×2" in out.text, True)
@@ -140,7 +145,7 @@ with open(os.path.join(LOG_DIR, "notifications.jsonl"), "w", encoding="utf-8") a
         "ts": datetime.now(timezone.utc).isoformat(), "event": "heartbeat",
         "message": "morning briefing",
     }) + "\n")
-agent.llm = FakeLLM([UPSTREAM_503])
+agent.llm = FakeLLM([upstream_503()])
 agent.ask_jarvis("reply to briefing", OWNER_THREAD_ID)
 block, _ = pending_mirrors.drain_pending()
 check("mirror: drained block not re-delivered after failure", block, None)
@@ -160,12 +165,11 @@ class FakeOutbox:
 
 factory.default_outbox = lambda: FakeOutbox()
 heartbeat_state.any_due = lambda now: (True, ["inbox-check"])
-heartbeat._last_tick_start = None
 agent.llm = FakeLLM([
     AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 10)]),
-    UPSTREAM_503,
+    upstream_503(),
 ])
-asyncio.run(heartbeat.run_heartbeat())
+run_tick()
 check("heartbeat failed: one notice sent", len(sent), 1)
 if sent:
     event, text = sent[0]
@@ -178,20 +182,18 @@ check("heartbeat failed: mirror prefix registered",
 
 # A tick that finishes with an ack sends nothing extra.
 sent.clear()
-heartbeat._last_tick_start = None
 agent.llm = FakeLLM([
     AIMessage(content="", tool_calls=[tool_call("heartbeat_respond", {
         "acted_tasks": [], "notify": False, "summary": "nothing to do",
     }, 11)]),
     AIMessage(content="tick done"),
 ])
-asyncio.run(heartbeat.run_heartbeat())
+run_tick()
 check("heartbeat ok: no failure notice", [e for e, _ in sent if e == "heartbeat_failed"], [])
 
 # A tick that fails before its input is checkpointed must not pick up the
 # previous tick's ack: no stale briefing, no stale stamp, a failure notice.
 sent.clear()
-heartbeat._last_tick_start = None
 agent.llm = FakeLLM([
     AIMessage(content="", tool_calls=[tool_call("heartbeat_respond", {
         "acted_tasks": ["inbox-check"], "notify": True,
@@ -199,7 +201,7 @@ agent.llm = FakeLLM([
     }, 12)]),
     AIMessage(content="tick done"),
 ])
-asyncio.run(heartbeat.run_heartbeat())
+run_tick()
 check("stale ack setup: briefing sent", [t for _, t in sent], ["OLD BRIEFING"])
 sent.clear()
 stamped = []
@@ -212,8 +214,7 @@ def locked_stream(*args, **kwargs):
 
 
 agent.agent_executor.stream = locked_stream
-heartbeat._last_tick_start = None
-asyncio.run(heartbeat.run_heartbeat())
+run_tick()
 agent.agent_executor.stream = real_stream
 check("unsaved input: no stale briefing re-sent", "OLD BRIEFING" not in [t for _, t in sent], True)
 check("unsaved input: no stale stamp", stamped, [])

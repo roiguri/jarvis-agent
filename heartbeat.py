@@ -180,7 +180,7 @@ async def _notify_tick_failed(
     tasks = ", ".join(due_names) if due_names else "all tasks"
     text = (
         f"Heartbeat check at {now_israel.strftime('%H:%M')} Israel time didn't finish: "
-        f"{outcome.cause or 'unknown cause'}. Tasks: {tasks}."
+        f"{outcome.cause}. Tasks: {tasks}."
     )
     if outcome.committed_calls:
         text += f" Already done before it stopped: {committed_summary(outcome.committed_calls)}."

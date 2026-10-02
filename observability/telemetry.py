@@ -175,8 +175,8 @@ def record_turn_end(
     """Finalize the current turn: stamp ended_at + duration, append one line
     to turns.jsonl, clear TURN_ACC.
 
-    `error` is sourced from acc["error"] — callers set it when an exception
-    is caught (`_llm_node`, `ask_jarvis` try/finally) before re-raising.
+    `error` is sourced from acc["error"] — `ask_jarvis` sets it when a turn
+    fails or ends abnormally; `outcome` likewise, before calling this.
     Idempotent: a second call with TURN_ACC already cleared is a no-op.
     """
     acc = TURN_ACC.get()
