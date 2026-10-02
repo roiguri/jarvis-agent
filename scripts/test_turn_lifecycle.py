@@ -10,6 +10,7 @@ call, an abnormal finish reason, a normal completion, a failed heartbeat tick.
 
 import asyncio
 import json
+import sqlite3
 import os
 import pathlib
 import sys
@@ -101,7 +102,7 @@ check("failed: committed calls counted", out.committed_calls, (("list_memory", 2
 check("failed: reply names committed calls", "list_memory ×2" in out.text, True)
 msgs = thread_messages("t_fail")
 check("failed: note is last message", isinstance(msgs[-1], AIMessage), True)
-check("failed: note says do not re-run", "Do not re-run" in msgs[-1].content, True)
+check("failed: note says changes are saved", "Any changes they made are saved" in msgs[-1].content, True)
 check("failed: note keeps tool pairs valid", isinstance(msgs[-2], ToolMessage), True)
 row = last_turn_row()
 check("failed: turns.jsonl outcome", row.get("outcome"), "failed")
@@ -120,7 +121,7 @@ agent.llm = FakeLLM([RuntimeError("boom")])
 out = agent.ask_jarvis("hello", "t_internal")
 check("internal: kind", out.kind, turn_budget.FAILED)
 check("internal: cause is internal", "internal error" in (out.cause or ""), True)
-check("internal: says nothing changed", "Nothing was changed" in out.text, True)
+check("internal: says nothing changed", "nothing was changed" in out.text, True)
 
 # --- 3. Abnormal finish reason --------------------------------------------
 agent.llm = FakeLLM([AIMessage(
@@ -186,6 +187,73 @@ agent.llm = FakeLLM([
 ])
 asyncio.run(heartbeat.run_heartbeat())
 check("heartbeat ok: no failure notice", [e for e, _ in sent if e == "heartbeat_failed"], [])
+
+# A tick that fails before its input is checkpointed must not pick up the
+# previous tick's ack: no stale briefing, no stale stamp, a failure notice.
+sent.clear()
+heartbeat._last_tick_start = None
+agent.llm = FakeLLM([
+    AIMessage(content="", tool_calls=[tool_call("heartbeat_respond", {
+        "acted_tasks": ["inbox-check"], "notify": True,
+        "notification_text": "OLD BRIEFING", "summary": "sent",
+    }, 12)]),
+    AIMessage(content="tick done"),
+])
+asyncio.run(heartbeat.run_heartbeat())
+check("stale ack setup: briefing sent", [t for _, t in sent], ["OLD BRIEFING"])
+sent.clear()
+stamped = []
+heartbeat_state.stamp = lambda names, when: stamped.extend(names) or names
+real_stream = agent.agent_executor.stream
+
+
+def locked_stream(*args, **kwargs):
+    raise sqlite3.OperationalError("database is locked")
+
+
+agent.agent_executor.stream = locked_stream
+heartbeat._last_tick_start = None
+asyncio.run(heartbeat.run_heartbeat())
+agent.agent_executor.stream = real_stream
+check("unsaved input: no stale briefing re-sent", "OLD BRIEFING" not in [t for _, t in sent], True)
+check("unsaved input: no stale stamp", stamped, [])
+check("unsaved input: failure notice sent", [e for e, _ in sent], ["heartbeat_failed"])
+check("unsaved input: thread has this tick's input before the note",
+      isinstance(thread_messages("heartbeat")[-2], HumanMessage), True)
+
+# --- 5b. Error classification and telemetry that cannot fail a turn --------
+
+
+class FakeAPIError(Exception):
+    def __init__(self, code, msg):
+        super().__init__(msg)
+        self.code = code
+
+
+wrapped = RuntimeError("Error calling model")
+wrapped.__cause__ = FakeAPIError(503, "UNAVAILABLE")
+check("describe_error: status code through the cause chain",
+      turn_budget.describe_error(wrapped), "the model service was unavailable (overloaded upstream)")
+check("describe_error: a 400 mentioning 503 is not upstream",
+      "internal error" in turn_budget.describe_error(FakeAPIError(400, "bad arg near 503")), True)
+
+from observability import telemetry  # noqa: E402
+
+real_append = telemetry._append_line
+
+
+def full_disk(path, record):
+    raise OSError(28, "No space left on device")
+
+
+telemetry._append_line = full_disk
+agent.llm = FakeLLM([
+    AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 20)]),
+    AIMessage(content="still fine"),
+])
+out = agent.ask_jarvis("disk is full", "t_disk")
+telemetry._append_line = real_append
+check("telemetry failure: turn still completes", (out.kind, out.text), (turn_budget.COMPLETED, "still fine"))
 
 print()
 if FAILS:

@@ -926,7 +926,10 @@ def ask_jarvis(
     except Exception as e:
         logger.exception("Turn %s failed", turn_id)
         _record_turn_error(f"{type(e).__name__}: {e}")
-        outcome = _failed_outcome(config, turn_budget.describe_error(e))
+        outcome = _failed_outcome(
+            config, turn_budget.describe_error(e),
+            unsaved_input=None if input_checkpointed else user_input,
+        )
     finally:
         if mirror_cursor and input_checkpointed:
             pending_mirrors.advance_cursor(mirror_cursor)
@@ -958,22 +961,27 @@ def ask_jarvis(
     return outcome
 
 
-def _failed_outcome(config: dict, cause: str, suffix: str = "") -> turn_budget.TurnOutcome:
+def _failed_outcome(
+    config: dict, cause: str, suffix: str = "", unsaved_input: str | None = None
+) -> turn_budget.TurnOutcome:
     """A ``failed`` outcome, with its note written into the thread.
 
     Appended as the llm node's output: a failed turn can only end on a
-    ToolMessage or its HumanMessage (the tool node never raises), so an
-    AIMessage after either keeps the history valid, and with no tool calls the
-    graph routes to END — the next turn starts clean.
+    ToolMessage or its HumanMessage (the tool node never raises — its telemetry
+    writes are guarded), so an AIMessage after either keeps the history valid,
+    and with no tool calls the graph routes to END — the next turn starts clean.
+
+    ``unsaved_input`` is the turn's text when it failed before its input reached
+    the checkpoint. It is written ahead of the note so the turn boundary moves:
+    otherwise the thread's last HumanMessage is the previous turn's, and a
+    heartbeat would read that turn's ack as this one's.
     """
     calls = turn_budget.committed_calls()
     text = turn_budget.failure_text(cause, calls) + suffix
+    written = [HumanMessage(content=unsaved_input)] if unsaved_input is not None else []
+    written.append(AIMessage(content=turn_budget.failure_note(cause, calls)))
     try:
-        agent_executor.update_state(
-            config,
-            {"messages": [AIMessage(content=turn_budget.failure_note(text, calls))]},
-            as_node="llm",
-        )
+        agent_executor.update_state(config, {"messages": written}, as_node="llm")
     except Exception:
         logger.exception("Could not write the failure note into the thread")
     return turn_budget.TurnOutcome(turn_budget.FAILED, text, cause=cause, committed_calls=calls)

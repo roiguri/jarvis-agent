@@ -70,27 +70,47 @@ def committed_summary(calls: tuple[tuple[str, int], ...]) -> str:
     return ", ".join(parts)
 
 
+_STATUS_CAUSE = {
+    502: "the model service was unavailable (overloaded upstream)",
+    503: "the model service was unavailable (overloaded upstream)",
+    504: "the model took too long to respond",
+    429: "the model quota was exhausted",
+    403: "the model service refused the API credentials",
+}
+
+
 def describe_error(exc: BaseException) -> str:
     """A plain-language cause. Upstream conditions are told apart from our own
-    faults because they call for different reactions: retry later vs. report."""
-    text = f"{type(exc).__name__}: {exc}"
-    if any(s in text for s in ("503", "UNAVAILABLE", "502")):
-        return "the model service was unavailable (overloaded upstream)"
-    if any(s in text for s in ("504", "DEADLINE_EXCEEDED", "Timeout", "timed out")):
-        return "the model took too long to respond"
-    if any(s in text for s in ("429", "RESOURCE_EXHAUSTED")):
-        return "the model quota was exhausted"
-    if any(s in text for s in ("403", "PERMISSION_DENIED")):
-        return "the model service refused the API credentials"
+    faults because they call for different reactions: retry later vs. report.
+
+    The provider's HTTP status wins when the error (or what it wraps) carries
+    one; otherwise the message is matched, by status name, not bare digits."""
+    err: BaseException | None = exc
+    while err is not None:
+        code = getattr(err, "code", None)
+        if isinstance(code, int):
+            return _STATUS_CAUSE.get(code, f"an internal error on my side ({type(exc).__name__})")
+        err = err.__cause__
+    text = str(exc)
+    if "UNAVAILABLE" in text:
+        return _STATUS_CAUSE[503]
+    if any(s in text for s in ("DEADLINE_EXCEEDED", "Timeout", "timed out")):
+        return _STATUS_CAUSE[504]
+    if "RESOURCE_EXHAUSTED" in text:
+        return _STATUS_CAUSE[429]
+    if "PERMISSION_DENIED" in text:
+        return _STATUS_CAUSE[403]
     return f"an internal error on my side ({type(exc).__name__})"
 
 
 def committed_sentence(calls: tuple[tuple[str, int], ...]) -> str:
+    # Reads count too — the tool surface carries no read/write flag — so the
+    # wording claims only what is true of every call: it ran.
     if not calls:
-        return "Nothing was changed before it stopped."
+        return "No tool call had completed, so nothing was changed."
     return (
         f"Before it stopped I had already run: {committed_summary(calls)}. "
-        "Those changes are saved — check them before asking me to redo anything."
+        "Anything those calls changed is saved — check before asking me to redo it."
     )
 
 
@@ -99,7 +119,12 @@ def failure_text(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
     return f"I couldn't finish that: {cause}. {committed_sentence(calls)}"
 
 
-def failure_note(reply: str, calls: tuple[tuple[str, int], ...]) -> str:
-    """Written into the thread so the next turn knows what already landed."""
-    rerun = " Do not re-run those calls; check current state first." if calls else ""
-    return f"[This turn did not finish. I told the owner: {reply}{rerun}]"
+def failure_note(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
+    """Written into the thread so the next turn knows what already landed.
+    Scope-neutral: what the owner was told differs by scope."""
+    ran = (
+        f" Tool calls that completed: {committed_summary(calls)}. Any changes they "
+        "made are saved — check current state before repeating a write."
+        if calls else " No tool call completed."
+    )
+    return f"[This turn did not finish: {cause}.{ran}]"

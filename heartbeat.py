@@ -137,10 +137,10 @@ async def run_heartbeat() -> None:
     delivered_ok = True
     if deliver:
         logger.info("Heartbeat: sending message to user")
-        outcome = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT)
-        delivered_ok = outcome.ok
-        if not outcome.ok:
-            logger.error("Heartbeat: failed to send message: %s", outcome.error)
+        sent = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT)
+        delivered_ok = sent.ok
+        if not sent.ok:
+            logger.error("Heartbeat: failed to send message: %s", sent.error)
     else:
         logger.info("Heartbeat: nothing to send")
 
