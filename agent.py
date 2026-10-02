@@ -154,17 +154,11 @@ def _add_and_trim(existing: list, new: list) -> list:
         return combined
     # A raw index slice can land mid-tool-call-sequence, producing orphaned
     # function-call or tool-response messages at the start that the LLM rejects.
-    # Cutting at a HumanMessage never splits a call from its response.
+    # Cutting at a HumanMessage never splits a call from its response, and one
+    # always exists: this write's own input sits at the tail of the window.
     window = combined[-MAX_MESSAGES:]
-    for i, msg in enumerate(window):
-        if isinstance(msg, HumanMessage):
-            return window[i:]
-    # Unreachable while the input itself is a HumanMessage at the tail; kept so
-    # no path ever hands the model a raw slice: keep from the last turn start.
-    for i in range(len(combined) - 1, -1, -1):
-        if isinstance(combined[i], HumanMessage):
-            return combined[i:]
-    return combined
+    first = next(i for i, msg in enumerate(window) if isinstance(msg, HumanMessage))
+    return window[first:]
 
 def _merge_skills(existing, new):
     """Reducer for active_skills.

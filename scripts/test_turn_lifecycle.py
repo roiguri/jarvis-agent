@@ -295,25 +295,13 @@ check("reducer: turn start trims to the cap",
       )) <= agent.MAX_MESSAGES, True)
 
 
-class RecordingLLM(FakeLLM):
-    """Also records what each call was sent, to prove the turn kept its input."""
-
-    def __init__(self, script):
-        super().__init__(script)
-        self.sent = []
-
-    def invoke(self, messages, **kwargs):
-        self.sent.append(list(messages))
-        return super().invoke(messages, **kwargs)
-
-
 # Prior history so the window is already near the cap when the big turn starts.
 for i in range(24):
     agent.llm = FakeLLM([AIMessage(content=f"reply {i}")])
     agent.ask_jarvis(f"chat {i}", "t_fanout")
 # The incidents' shape: several moderate fan-outs adding up past the cap.
 STEPS, PER_STEP = 3, 20
-rec = RecordingLLM([
+rec = FakeLLM([
     AIMessage(content="", tool_calls=[
         tool_call("list_memory", {}, 1000 * step + n) for n in range(PER_STEP)
     ])
