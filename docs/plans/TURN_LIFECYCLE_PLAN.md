@@ -1,6 +1,7 @@
 # Turn lifecycle — bounded, honest, self-consistent turns
 
-**Status:** planned, not started. Branch `feat/turn-lifecycle`. Decisions marked **OPEN** are still under discussion.
+**Status:** slices 0–3 implemented as a native GitHub stack (#122–#126), code-reviewed and
+revised; staging checks and slice 4 pending. Decisions marked **OPEN** are still under discussion.
 **Date:** 2026-10-02.
 **Goal:** a turn always ends in one of a small set of named outcomes, never destroys its own
 context, is bounded by wall-clock time rather than an arbitrary step count, and always tells the
@@ -15,7 +16,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 ## Checklist
 
 **Slice 0 — outcome type + honest failure** (independent of slices 1–3; ship first) — offline harness: `scripts/test_turn_lifecycle.py`
-- [x] New `turn_budget.py`: `TurnOutcome` (`kind`, `text`, `reason`, `committed_calls`)
+- [x] New `turn_budget.py`: `TurnOutcome` (`kind`, `text`, `cause`, `committed_calls`)
 - [x] `ask_jarvis` returns `TurnOutcome`; model/upstream exceptions become `kind="failed"` instead of raising
 - [x] Failure text built in the runtime: error class (upstream overloaded/timeout vs internal) + committed tool calls by name and count + "do not re-run these"
 - [x] Failure note written into the thread checkpoint as an `AIMessage` (both scopes)
@@ -23,7 +24,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] Replace the false "Nothing was left half-saved" fallback in `_summarize_exhausted_turn`
 - [x] `outcome` field (`completed` / `wrapped_up` / `budget_exhausted` / `failed`) in `turns.jsonl`
 - [x] User callers: one `main.py` helper used by `process_inbound_message` **and** `on_confirmation_outcome`; sends `outcome.text`, chat-logs it
-- [x] Heartbeat: logs `outcome.reason` (the real cause) instead of a generic error
+- [x] Heartbeat: logs `outcome.cause` (the real cause) instead of a generic error
 - [x] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT, metadata={"tick_failed": True})`
 - [x] No new event: the notice is an ordinary heartbeat send, its log row marked `"tick_failed": true`
 - [ ] Staging: forced user-turn exception after a write → reply names committed calls; thread note present next turn; no duplicate mirror block
@@ -32,13 +33,13 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 **Slice 1 — trim at turn boundaries** — offline harness reproduces JRV-01 on the old reducer
 - [x] `_add_and_trim` trims only when `new` contains a `HumanMessage`; otherwise appends
 - [x] Trim cut never starts on a `ToolMessage` or splits a tool-call/response pair
-- [x] No-human fallback returns a valid boundary, never a raw slice
+- [x] Trim by whole turns, always keeping the previous turn (review fix: one long turn used to leave only the new input)
 - [x] RUNTIME.md `messages` row updated
 - [ ] Staging: 40+ tool-call turn completes; checkpoint keeps its `HumanMessage` + prior history
 
 **Slice 2 — budget enforced in the graph** — numbers kept at today's behaviour (13 calls; heartbeat 90s) until slice 3
 - [x] `ScopePolicy` (budget + wrap-up notice + exhaustion ask) and `POLICIES` per scope in `turn_budget.py`
-- [x] Budget tracker created by `ask_jarvis`, carried in a ContextVar (same pattern as `TURN_ACC`)
+- [x] Budget tracker created by `ask_jarvis`, carried in a ContextVar; it counts calls and input tokens itself (never reads telemetry)
 - [x] `_llm_node` checks the tracker before every call: `ok` / `wrap_up` / `exhausted`
 - [x] `wrap_up`: scope's notice appended to the request only — never persisted to the checkpoint
 - [x] `exhausted`: model called with no tools + scope's exhaustion ask → graph ends normally → `outcome = budget_exhausted`
@@ -161,8 +162,9 @@ From source (`NousResearch/hermes-agent` @ `009afb3a`, `openclaw/openclaw` @ `d0
 5. **Failures are classified once, in the runtime, and remembered.** The runtime writes the
    failure note (committed work, "do not re-run") into the thread for both scopes; callers only
    decide where the text goes.
-6. **A failed heartbeat tells the owner.** `failed` and `budget_exhausted` ticks send a short
-   code-built notice to the default channel (no model call — the model may be what failed).
+6. **A failed heartbeat tells the owner.** A `failed` or `budget_exhausted` tick that left no
+   `heartbeat_respond` ack sends a short code-built notice (a tick that acked what it finished
+   delivers and stamps as usual) to the default channel (no model call — the model may be what failed).
    Because it is an Outbox send with an event, it is logged to `notifications.jsonl` and the
    pending-mirror drain carries it into the owner thread, so the chat side knows a tick failed
    instead of inventing a reason (#36 incident 1). Easy to reverse if it proves noisy; slice 4
@@ -183,7 +185,7 @@ caller ──► │ ask_jarvis(scope) → policy = POLICIES[scope]; tracker →
            │     wrap_up   → scope notice appended to the request (not stored)  │
            │     exhausted → no tools bound + scope exhaustion ask → END        │
            │   exception   → failure note written to the thread                 │
-           │   returns TurnOutcome(kind, text, reason, committed_calls)         │
+           │   returns TurnOutcome(kind, text, cause, committed_calls)          │
            └────────────────────────────────────────────────────────────────────┘
 user callers (inbound, confirmation outcome) → one main.py helper: send outcome.text
 heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (tick_failed)
@@ -191,7 +193,7 @@ heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (t
 
 | | user | heartbeat |
 |---|---|---|
-| Budget | deadline / step guard / tokens (slice 3) | 90s / 25 steps / tokens |
+| Budget | deadline / LLM calls / input tokens (slice 3) | 90s / 13 calls / input tokens |
 | Wrap-up notice | finish the deliverable from what you have; only mandatory writes | call `heartbeat_respond` now, listing only tasks you completed |
 | Exhaustion ask | what is done, what is not, what would finish it | list what was completed (no ack → no stamp → re-run, as today) |
 | Failure delivery | `outcome.text` as the reply | code-built `tick_failed` heartbeat notice to the default channel |
@@ -228,7 +230,7 @@ Independent of everything else; ship first. Introduces `TurnOutcome` and moves f
 classification into the runtime (see Architecture).
 
 - Failure text names the error class and the turn's committed tool calls by name and count
-  (from the telemetry accumulator — e.g. *"I'd already run 11 manage_itinerary calls before this
+  (counted by the turn's tracker — e.g. *"I'd already run 11 manage_itinerary calls before this
   failed — check before asking me to redo it."*).
 - The note is appended to the thread checkpoint as an `AIMessage` — valid after anything a failed
   turn can leave behind, because the tool node never raises: the turn ends on a `ToolMessage` or
@@ -237,15 +239,16 @@ classification into the runtime (see Architecture).
 - `_summarize_exhausted_turn`'s fallback claims *"Nothing was left half-saved"* — false, since
   earlier tool calls commit. Replaced with the committed-work wording (the function itself goes in
   slice 2).
-- Heartbeat failure notice is built in code from the due task names, `outcome.reason`, and the
+- Heartbeat failure notice is built in code from the due task names, `outcome.cause`, and the
   committed calls; it says the tasks re-run next tick if still due.
 
 ## Slice 1 — trim at turn boundaries (JRV-01, B3)
 
 - `_add_and_trim`: trim only when `new` contains a `HumanMessage`; otherwise append.
-- Trim cut point is always valid: never start on a `ToolMessage` or on an `AIMessage` whose
-  tool calls are answered after the cut. The no-human fallback returns a valid boundary, never
-  a raw slice.
+- Trim by whole turns: cut only at a turn start (a `HumanMessage` not preceded by one), at
+  the earliest start that fits the cap but never past the previous turn's start. Never starts on
+  a `ToolMessage` or separates a call from its response; a long turn followed by "continue"
+  still sees what it is continuing. Storage: the cap plus up to two turns.
 - Media-blob stripping is unchanged.
 - Docs: RUNTIME.md `messages` row; PROBLEMS.md B3 (`MEASURED`, points here).
 
@@ -314,7 +317,14 @@ Prod after-readings, defined now so they are taken from the instrument, not reca
   Fits the graph — the stream already yields per super-step — but touches the lock, the
   checkpoint and both channels. Revisit only if queueing still hurts once turns are bounded.
 - **Hung tools.** The budget is checked between super-steps; a tool that blocks inside the tool
-  node is bounded only by its own client timeouts. Not observed in the window.
+  node is bounded only by its own client timeouts. Not observed in the window. Without
+  `asyncio.wait_for`, a hung tool inside a tick holds the APScheduler job, so later ticks are
+  skipped (APScheduler `max_instances=1`) — the accepted trade against two turns on one thread.
+  If it ever happens: a watchdog that logs/notifies once a tick is well past its deadline,
+  without cancelling it.
+- **Read vs write tools.** Committed-call reporting counts every successful tool call, reads
+  included, because the registry carries no read/write flag; the wording only claims the calls
+  ran. A per-tool flag would let "do not repeat" apply to writes alone.
 - **Fan-out at the source.** 37 parallel `manage_wishlist` calls in one step is a tool-shape
   problem (batch-capable tools, idempotent writes); belongs with the travel-tool work
   (register family 5).
