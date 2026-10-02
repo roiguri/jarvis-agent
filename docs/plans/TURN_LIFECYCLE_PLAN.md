@@ -36,19 +36,19 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] RUNTIME.md `messages` row updated
 - [ ] Staging: 40+ tool-call turn completes; checkpoint keeps its `HumanMessage` + prior history
 
-**Slice 2 — budget enforced in the graph**
-- [ ] `ScopePolicy` (budget + wrap-up notice + exhaustion ask) and `POLICIES` per scope in `turn_budget.py`
-- [ ] Budget tracker created by `ask_jarvis`, carried in a ContextVar (same pattern as `TURN_ACC`)
-- [ ] `_llm_node` checks the tracker before every call: `ok` / `wrap_up` / `exhausted`
-- [ ] `wrap_up`: scope's notice appended to the request only — never persisted to the checkpoint
-- [ ] `exhausted`: model called with no tools + scope's exhaustion ask → graph ends normally → `outcome = budget_exhausted`
-- [ ] Remove the `GraphRecursionError` catch + out-of-graph `_summarize_exhausted_turn`; `recursion_limit` becomes a backstop above the step guard
-- [ ] Per-call `timeout` passed per invoke, capped to the remaining budget (verify the kwarg reaches the client on staging)
-- [ ] Heartbeat drops `asyncio.wait_for(..., 90)`; its bound comes from its `ScopePolicy`
+**Slice 2 — budget enforced in the graph** — numbers kept at today's behaviour (13 calls; heartbeat 90s) until slice 3
+- [x] `ScopePolicy` (budget + wrap-up notice + exhaustion ask) and `POLICIES` per scope in `turn_budget.py`
+- [x] Budget tracker created by `ask_jarvis`, carried in a ContextVar (same pattern as `TURN_ACC`)
+- [x] `_llm_node` checks the tracker before every call: `ok` / `wrap_up` / `exhausted`
+- [x] `wrap_up`: scope's notice appended to the request only — never persisted to the checkpoint
+- [x] `exhausted`: model called with no tools + scope's exhaustion ask → graph ends normally → `outcome = budget_exhausted`
+- [x] Remove the `GraphRecursionError` catch + out-of-graph `_summarize_exhausted_turn`; `recursion_limit` becomes a backstop above the step guard
+- [x] Per-call `timeout` passed per invoke, capped to the remaining budget (verify the kwarg reaches the client on staging)
+- [x] Heartbeat drops `asyncio.wait_for(..., 90)`; its bound comes from its `ScopePolicy`
 - [ ] 504 retry policy decided and applied (per-invoke `max_retries`)
 - [ ] Staging: tiny temporary deadline → notice in the request, correct outcome, owner lock released only after the thread ends
 - [ ] Staging: heartbeat wrap-up → tick acks only the tasks it completed; those stamp, the rest re-run
-- [ ] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
+- [x] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
 
 **Slice 3 — budget numbers** (requires slice 1 shipped)
 - [ ] Decide provisional numbers (see slice 3 — OPEN)
@@ -204,7 +204,9 @@ Why these choices:
   `GraphRecursionError` catch and the out-of-graph summary call.
 - **Wrap-up notice is request-only.** Hermes persists its notice; PROBLEMS.md F2 shows a polluted
   checkpoint re-seeds its own behaviour, so "stop now" text must not sit in history for later
-  turns to imitate. Appending at the tail also leaves the cached prefix intact.
+  turns to imitate. It is a trailing user turn — the shape the exhaustion ask (and the old
+  step-exhaustion summary before it) already used in prod — rather than text spliced into the
+  last tool result. Appending at the tail also leaves the cached prefix intact.
 - **Per-call timeout per invoke.** `ChatGoogleGenerativeAI` reads `timeout` and `max_retries`
   from call kwargs, so capping a call to the remaining budget needs no second client.
 - **`turn_budget.py` as a top-level module** beside `turn_context.py` / `heartbeat_state.py`;

@@ -35,9 +35,8 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
-        ├─ no ack AND the turn did not finish (failed / budget_exhausted /
-        │  timeout) → code-built notice, event="heartbeat",
-        │  metadata tick_failed=true
+        ├─ no ack AND the turn did not finish (failed / budget_exhausted)
+        │  → code-built notice, event="heartbeat", tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
         │                event="heartbeat")         send + log-on-success
         └─ stamp(acted_tasks) → state.json          only acted tasks advance,

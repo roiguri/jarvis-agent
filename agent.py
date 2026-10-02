@@ -6,7 +6,6 @@ import os
 import sqlite3
 import time
 import traceback as _tb
-from collections import Counter
 from uuid import uuid4
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
@@ -20,7 +19,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition
-from langgraph.errors import GraphRecursionError
 
 # Instance paths (JARVIS_ROOT and everything derived from it). First project
 # import: it validates the root and creates the state subtrees before any module
@@ -237,13 +235,11 @@ DB_PATH = os.path.join(config.MEMORY_DIR, "threads.sqlite")
 # the time any single attempt may take. A malformed-function-call run once spent
 # 6m48s and 65k output tokens inside ONE call, which no step budget can catch —
 # the graph never advances while it happens. 60s is ~2x the slowest per-call
-# average ever logged (31s) and above the p99 duration of a WHOLE turn (37s),
-# and it sits under the heartbeat's own 90s budget so a hung call is reported as
-# itself rather than as a blanket tick timeout.
+# average ever logged (31s) and above the p99 duration of a WHOLE turn (37s).
 LLM_CALL_TIMEOUT_S = 60
-
-# Super-steps one turn may take before the graph gives up.
-RECURSION_LIMIT = 25
+# Floor for a call's timeout once it is capped to the turn's remaining budget:
+# a near-zero timeout would only turn "out of time" into an opaque failure.
+MIN_CALL_TIMEOUT_S = 15
 
 # A finish reason other than these means the model stopped for its own reason
 # (malformed tool call, token ceiling, safety filter) rather than because it was
@@ -487,45 +483,18 @@ def _record_turn_error(detail: str) -> None:
         acc["error"] = detail
 
 
-def _summarize_exhausted_turn(config: dict, scope: str) -> str:
-    """One tool-free call over the exhausted turn's own history.
-
-    Tools are deliberately unbound: the turn ran out of steps precisely because
-    it kept reaching for them, so the only useful question left is what it
-    already established. Any failure here degrades to a plain statement — this
-    is the error path, and it must not raise a second time.
-    """
-    fallback = (
-        "I ran out of steps on this one and stopped before finishing. "
-        f"{turn_budget.committed_sentence(_committed_calls())} "
-        "Narrowing the request usually gets it through."
-    )
-    try:
-        snap = agent_executor.get_state(config)
-        messages = (snap.values or {}).get("messages", [])
-        if not messages:
-            return fallback
-        ask = HumanMessage(content=(
-            "You ran out of steps before finishing. Do not call any tools. "
-            "Tell the owner plainly what you established, what you did not, and "
-            "what would finish it. Be brief and do not invent a result."
-        ))
-        response = llm.invoke(
-            [SystemMessage(content=build_system_prompt(scope, set()))] + messages + [ask]
+def _ai_text(message) -> str:
+    """The text blocks of an AI message joined; '' for none or no message."""
+    if message is None:
+        return ""
+    content = message.content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
         )
-        telemetry.record_llm_call(response)
-        content = response.content
-        if isinstance(content, list):
-            text = "".join(
-                b.get("text", "") for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        else:
-            text = str(content or "")
-        return text.strip() or fallback
-    except Exception:
-        logger.exception("Tool-free summary after step exhaustion failed")
-        return fallback
+    return str(content or "")
 
 
 def _llm_node(state: JarvisState) -> dict:
@@ -542,11 +511,27 @@ def _llm_node(state: JarvisState) -> dict:
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
     due_tasks = state.get("heartbeat_due_tasks")
-    bound_llm = llm.bind_tools(registry.get_tools(scope, active))
-    response = bound_llm.invoke(
-        [SystemMessage(content=build_system_prompt(scope, active, due_tasks))]
-        + state["messages"]
+    messages = list(state["messages"])
+
+    # The turn budget is checked here because every model call passes through
+    # this node. Exhaustion makes this the last call — no tools bound, so the
+    # reply carries no tool calls and the graph ends through its normal route.
+    # Both notices ride on this request only, never the checkpoint: "stop now"
+    # text left in history would be imitated by later turns.
+    tracker = turn_budget.TRACKER.get()
+    tracker.check()
+    if tracker.exhausted_by:
+        runnable = llm
+        messages.append(HumanMessage(content=tracker.policy.exhaustion_ask))
+    else:
+        runnable = llm.bind_tools(registry.get_tools(scope, active))
+        if tracker.wrapped_up:
+            messages.append(HumanMessage(content=tracker.policy.wrap_up_notice))
+    response = runnable.invoke(
+        [SystemMessage(content=build_system_prompt(scope, active, due_tasks))] + messages,
+        timeout=max(MIN_CALL_TIMEOUT_S, min(LLM_CALL_TIMEOUT_S, tracker.remaining_s())),
     )
+    tracker.record_call(response)
     telemetry.record_llm_call(response)
     return {"messages": [response]}
 
@@ -634,7 +619,7 @@ def _tool_node(state: JarvisState) -> dict:
                 content=result if isinstance(result, str) else str(result),
                 name=name, tool_call_id=call_id,
             ))
-            turn_budget.COMMITTED.get()[name] += 1
+            turn_budget.TRACKER.get().committed[name] += 1
         telemetry.record_tool_call(
             tool_name=name, namespace=ns, destructive=destructive,
             duration_ms=int((time.perf_counter() - t0) * 1000),
@@ -696,14 +681,13 @@ def ask_jarvis(
         channel: origin channel name (router-stamped), or None for
             origin-less turns. Published via CURRENT_CHANNEL.
     """
+    tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
         "configurable": {"thread_id": thread_id},
-        # Declared, not inherited: this is LangGraph's own default, kept because
-        # 2,243 logged turns put the median at 4 LLM calls and p99.5 at 10 — far
-        # below the ceiling — while a runaway tick once reached it and cost 128k
-        # output tokens. Hitting it is handled as a degraded turn below rather
-        # than as a crash, so the budget bounds cost without losing the work.
-        "recursion_limit": RECURSION_LIMIT,
+        # A backstop just above what the budget allows (two super-steps per LLM
+        # call): the budget ends turns, so reaching this means a bug in it, and
+        # it surfaces as a failed turn.
+        "recursion_limit": 2 * tracker.policy.budget.max_llm_calls + 4,
     }
 
     # --- Telemetry boundary ----------------------------------------------
@@ -718,7 +702,7 @@ def ask_jarvis(
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
     _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
-    _committed_token = turn_budget.COMMITTED.set(Counter())
+    _tracker_token = turn_budget.TRACKER.set(tracker)
     telemetry.record_turn_start(
         thread_id=thread_id,
         scope=scope,
@@ -878,39 +862,15 @@ def ask_jarvis(
         )
 
         last_ai = None
-        try:
-            for event in events:
-                input_checkpointed = True
-                last_message = event["messages"][-1]
-                if last_message.type == "ai":
-                    last_ai = last_message
-                if last_message.type == "ai" and last_message.content:
-                    content = last_message.content
-                    # Parse the response, handling both plain strings and complex list blocks
-                    if isinstance(content, list):
-                        final_response = "".join(
-                            block.get("text", "")
-                            for block in content
-                            if isinstance(block, dict) and block.get("type") == "text"
-                        )
-                    else:
-                        final_response = str(content)
-        except GraphRecursionError:
-            # The step budget is a ceiling, not an error to hand back raw: the
-            # turn did real work on the way up. Ask once, with no tools bound,
-            # what it established — a degraded but honest answer beats a crash
-            # that leaves the owner (and the next turn) inventing a reason.
-            logger.error(
-                "Turn %s hit the %d-super-step budget; degrading to a tool-free summary.",
-                turn_id, RECURSION_LIMIT,
-            )
-            _record_turn_error(f"GraphRecursionError: step budget {RECURSION_LIMIT} reached")
-            outcome = turn_budget.TurnOutcome(
-                turn_budget.BUDGET_EXHAUSTED,
-                _summarize_exhausted_turn(config, scope),
-                cause="it ran out of steps",
-                committed_calls=_committed_calls(),
-            )
+        for event in events:
+            input_checkpointed = True
+            last_message = event["messages"][-1]
+            if last_message.type == "ai":
+                last_ai = last_message
+                if last_message.content:
+                    final_response = _ai_text(last_message)
+        if tracker.exhausted_by:
+            outcome = _exhausted_outcome(tracker, turn_id, _ai_text(last_ai))
         else:
             reason = _finish_reason(last_ai)
             if not final_response.strip() and reason not in _NORMAL_FINISH_REASONS:
@@ -923,22 +883,28 @@ def ask_jarvis(
                 )
                 _record_turn_error(f"finish_reason: {reason}")
                 outcome = _failed_outcome(
-                    config,
+                    config, tracker,
                     f"the model stopped mid-response without an answer (it reported `{reason}`)",
                     suffix=" Rephrasing or splitting the request usually gets past it.",
                 )
             else:
                 outcome = turn_budget.TurnOutcome(
-                    turn_budget.COMPLETED, final_response,
-                    committed_calls=_committed_calls(),
+                    turn_budget.WRAPPED_UP if tracker.wrapped_up else turn_budget.COMPLETED,
+                    final_response,
+                    committed_calls=tracker.committed_calls(),
                 )
     except Exception as e:
         logger.exception("Turn %s failed", turn_id)
         _record_turn_error(f"{type(e).__name__}: {e}")
-        outcome = _failed_outcome(
-            config, turn_budget.describe_error(e),
-            unsaved_input=None if input_checkpointed else user_input,
-        )
+        if tracker.exhausted_by:
+            # The tool-free last call itself failed; the turn still ended on
+            # its budget, so it keeps that outcome and its "Stopped early" line.
+            outcome = _exhausted_outcome(tracker, turn_id, "")
+        else:
+            outcome = _failed_outcome(
+                config, tracker, turn_budget.describe_error(e),
+                unsaved_input=None if input_checkpointed else user_input,
+            )
     finally:
         if mirror_cursor and input_checkpointed:
             pending_mirrors.advance_cursor(mirror_cursor)
@@ -966,16 +932,30 @@ def ask_jarvis(
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
         turn_context.CURRENT_CHANNEL.reset(_channel_token)
-        turn_budget.COMMITTED.reset(_committed_token)
+        turn_budget.TRACKER.reset(_tracker_token)
     return outcome
 
 
-def _committed_calls() -> tuple[tuple[str, int], ...]:
-    return tuple(turn_budget.COMMITTED.get().most_common())
+def _exhausted_outcome(tracker, turn_id: str, answer: str) -> turn_budget.TurnOutcome:
+    """A ceiling, not an error to hand back raw: the turn did real work on the
+    way up, and its last call answered without tools (or failed trying)."""
+    cause = turn_budget.EXHAUSTED_CAUSE[tracker.exhausted_by]
+    logger.error("Turn %s exhausted its %s budget.", turn_id, tracker.exhausted_by)
+    _record_turn_error(f"budget exhausted: {tracker.exhausted_by}")
+    calls = tracker.committed_calls()
+    text = answer.strip() or (
+        f"I stopped before finishing: {cause}. {turn_budget.committed_sentence(calls)}"
+    )
+    return turn_budget.TurnOutcome(
+        turn_budget.BUDGET_EXHAUSTED,
+        f"{text}\n\n{turn_budget.stopped_early_line(cause)}",
+        cause=cause,
+        committed_calls=calls,
+    )
 
 
 def _failed_outcome(
-    config: dict, cause: str, suffix: str = "", unsaved_input: str | None = None
+    config: dict, tracker, cause: str, suffix: str = "", unsaved_input: str | None = None
 ) -> turn_budget.TurnOutcome:
     """A ``failed`` outcome, with its note written into the thread.
 
@@ -989,7 +969,7 @@ def _failed_outcome(
     otherwise the thread's last HumanMessage is the previous turn's, and a
     heartbeat would read that turn's ack as this one's.
     """
-    calls = _committed_calls()
+    calls = tracker.committed_calls()
     text = turn_budget.failure_text(cause, calls) + suffix
     written = [HumanMessage(content=unsaved_input)] if unsaved_input is not None else []
     written.append(AIMessage(content=turn_budget.failure_note(cause, calls)))
@@ -1043,12 +1023,4 @@ def ask_jarvis_once(user_input: str) -> str:
     Model content may be a plain string or a list of content blocks
     (Gemini). Flatten to a string so callers always get the documented type.
     """
-    response = llm.invoke(user_input)
-    content = getattr(response, "content", response)
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return content if isinstance(content, str) else str(content)
+    return _ai_text(llm.invoke(user_input))

@@ -186,6 +186,33 @@ The user experience: "Queue Severance season 2" → Jarvis silently activates `m
 
 ---
 
+## Turn Budget and Outcomes
+
+Every turn runs under its scope's `ScopePolicy` (`turn_budget.POLICIES`: limits plus the
+scope's wrap-up and exhaustion wording — scope differences are data) and ends as exactly one
+`TurnOutcome`. The runtime enforces and classifies; callers only decide delivery: a user turn
+replies with `outcome.text` (`main.run_owner_turn`), a heartbeat tick that ends unfinished
+without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
+
+- **Enforced in `_llm_node`.** A `TurnTracker` (ContextVar, set by `ask_jarvis`) is checked
+  before every model call against elapsed time, calls made, and input tokens — counted by the
+  tracker itself, never read from telemetry. From `WRAP_UP_AT` (80%) of any limit the scope's
+  notice is appended to the **request only**, as a trailing user turn, never the checkpoint, so
+  later turns cannot imitate it. The call that reaches a limit is the last: no tools bound, the
+  exhaustion ask appended, so the graph ends through `tools_condition` as normal.
+- **Per-call timeout** is `min(LLM_CALL_TIMEOUT_S, remaining)`, floored at `MIN_CALL_TIMEOUT_S`.
+  A tool blocking inside the tool node is bounded only by its own client timeouts.
+- **Never `asyncio.wait_for` around the turn thread.** It stops waiting, not the thread: on the
+  user path it would release `_owner_turn_lock` mid-write, and on the heartbeat let the next tick
+  start a second turn on the same thread.
+- **`recursion_limit`** is a backstop just above the call budget; reaching it means a bug in the
+  budget and surfaces as a `failed` outcome.
+- **Outcomes.** `completed`; `wrapped_up` (finished after the notice); `budget_exhausted` (the
+  tool-free answer plus a code-appended "Stopped early" line); `failed` (exception or abnormal
+  finish reason — `ask_jarvis` does not raise). A failed turn writes a note into its thread
+  naming the tool calls that completed, so the next turn checks state before repeating a write.
+  The kind is recorded as `outcome` in `turns.jsonl` ([OBSERVABILITY.md](OBSERVABILITY.md)).
+
 ## Contracts
 
 ### `activate_skill` / `deactivate_skill` (`tools/core/activate_skill.py`)

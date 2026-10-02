@@ -8,6 +8,8 @@ the loop.
 """
 
 import contextvars
+import math
+import time
 from collections import Counter
 from dataclasses import dataclass
 
@@ -32,10 +34,110 @@ class TurnOutcome:
         return self.kind in (COMPLETED, WRAPPED_UP)
 
 
-# Successful tool calls this turn, by name. Set per turn by ask_jarvis; the
-# tool node records into it. Its effects are already saved when a later step
-# fails, which is exactly what the owner and the next turn must be told.
-COMMITTED: contextvars.ContextVar[Counter] = contextvars.ContextVar("turn_committed_calls")
+@dataclass(frozen=True)
+class TurnBudget:
+    # Wall-clock seconds for the whole turn.
+    deadline_s: float
+    # LLM calls per turn, the exhaustion call included.
+    max_llm_calls: int
+    # Cumulative input tokens across the turn's calls.
+    max_input_tokens: float
+
+
+@dataclass(frozen=True)
+class ScopePolicy:
+    budget: TurnBudget
+    # Shown to the model, tools still bound, from WRAP_UP_AT of any limit.
+    wrap_up_notice: str
+    # Shown to the model, no tools bound, for the turn's last call.
+    exhaustion_ask: str
+
+
+POLICIES: dict[str, ScopePolicy] = {
+    "user": ScopePolicy(
+        budget=TurnBudget(deadline_s=math.inf, max_llm_calls=13, max_input_tokens=math.inf),
+        wrap_up_notice=(
+            "[Turn budget nearly used] Stop starting new lookups or checks. Finish "
+            "from what you already have: make only the writes the request still "
+            "needs, then answer, saying plainly anything that is not done."
+        ),
+        exhaustion_ask=(
+            "This turn's budget is used up. Do not call any tools. Tell the owner "
+            "plainly what you established, what you did not, and what would finish "
+            "it. Be brief and do not invent a result."
+        ),
+    ),
+    "heartbeat": ScopePolicy(
+        budget=TurnBudget(deadline_s=90, max_llm_calls=13, max_input_tokens=math.inf),
+        wrap_up_notice=(
+            "[Tick budget nearly used] Stop working new tasks. Call heartbeat_respond "
+            "now, listing in acted_tasks only the tasks you fully completed."
+        ),
+        exhaustion_ask=(
+            "This tick's budget is used up. Do not call any tools. In one or two "
+            "lines, state which due tasks you completed and which you did not."
+        ),
+    ),
+}
+
+# Fraction of any limit at which the wrap-up notice starts.
+WRAP_UP_AT = 0.8
+
+EXHAUSTED_CAUSE = {
+    "time": "it ran out of time",
+    "steps": "it ran out of steps",
+    "tokens": "it reached its token budget",
+}
+
+
+class TurnTracker:
+    """One turn's spend against its scope's budget, consulted before every LLM
+    call, plus the tool calls it committed. Mutated in place, so the copy
+    LangGraph's node context sees is the same object ask_jarvis reads after."""
+
+    def __init__(self, policy: ScopePolicy):
+        self.policy = policy
+        self.started = time.monotonic()
+        self.llm_calls = 0
+        # Counted here from each response, not read from telemetry: telemetry
+        # observes the loop and must never be what bounds it.
+        self.input_tokens = 0
+        self.wrapped_up = False
+        self.exhausted_by: str | None = None
+        # Successful tool calls by name. Their effects are already saved when
+        # a later step fails — what the owner and the next turn must be told.
+        self.committed: Counter = Counter()
+
+    def remaining_s(self) -> float:
+        return self.policy.budget.deadline_s - (time.monotonic() - self.started)
+
+    def record_call(self, response) -> None:
+        self.llm_calls += 1
+        usage = getattr(response, "usage_metadata", None) or {}
+        self.input_tokens += int(usage.get("input_tokens") or 0)
+
+    def check(self) -> None:
+        """Set the flags for the call about to be made. Every limit only grows,
+        so a flag once set stays set. The call that reaches a limit is itself
+        the last one — made with no tools — so a turn never exceeds its call
+        budget."""
+        b = self.policy.budget
+        by, worst = max({
+            "steps": (self.llm_calls + 1) / b.max_llm_calls,
+            "time": (time.monotonic() - self.started) / b.deadline_s,
+            "tokens": self.input_tokens / b.max_input_tokens,
+        }.items(), key=lambda kv: kv[1])
+        if worst >= 1:
+            self.exhausted_by = by
+        elif worst >= WRAP_UP_AT:
+            self.wrapped_up = True
+
+    def committed_calls(self) -> tuple[tuple[str, int], ...]:
+        return tuple(self.committed.most_common())
+
+
+# The running turn's tracker. Set by ask_jarvis; read by the graph's nodes.
+TRACKER: contextvars.ContextVar[TurnTracker] = contextvars.ContextVar("turn_tracker")
 
 
 _SUMMARY_MAX_NAMES = 6
@@ -106,3 +208,9 @@ def failure_note(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
         if calls else " No tool call completed."
     )
     return f"[This turn did not finish: {cause}.{ran}]"
+
+
+def stopped_early_line(cause: str) -> str:
+    """Appended to a budget-exhausted reply so a partial answer never reads as
+    a finished one."""
+    return f"(Stopped early: {cause}. Reply \"continue\" to pick up where I left off.)"

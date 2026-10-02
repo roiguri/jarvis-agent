@@ -343,6 +343,146 @@ check("reducer: a mirror block and its message stay together",
           [HumanMessage("[mirror]"), HumanMessage("reply")],
       )][-2:], ["[mirror]", "reply"])
 
+# --- 7. Turn budget enforced in the graph --------------------------------
+import dataclasses  # noqa: E402
+import time  # noqa: E402
+
+DEFAULT_POLICIES = dict(turn_budget.POLICIES)
+
+
+def set_budget(scope, **budget):
+    """Override one scope's limits; every other policy back to its default."""
+    turn_budget.POLICIES.update(DEFAULT_POLICIES)
+    pol = DEFAULT_POLICIES[scope]
+    turn_budget.POLICIES[scope] = dataclasses.replace(
+        pol, budget=dataclasses.replace(pol.budget, **budget))
+
+
+class LoopingLLM:
+    """Always wants another tool call; records whether tools were bound, the
+    request it was sent, and the per-call kwargs."""
+
+    model = "fake-model"
+
+    def __init__(self, answer_at=None, sleep=0.0, input_tokens=0):
+        self.answer_at, self.sleep, self.input_tokens = answer_at, sleep, input_tokens
+        self.log = []  # (tools_bound, messages, kwargs)
+
+    def bind_tools(self, tools):
+        outer = self
+
+        class Bound:
+            def invoke(self, messages, **kwargs):
+                return outer._call(True, messages, kwargs)
+        return Bound()
+
+    def invoke(self, messages, **kwargs):
+        return self._call(False, messages, kwargs)
+
+    def _call(self, bound, messages, kwargs):
+        self.log.append((bound, list(messages), kwargs))
+        time.sleep(self.sleep)
+        usage = {"input_tokens": self.input_tokens, "output_tokens": 1, "total_tokens": self.input_tokens + 1}
+        n = len(self.log)
+        if not bound or n == self.answer_at:
+            return AIMessage(content=f"answer after {n} calls", usage_metadata=usage)
+        return AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 5000 + n)],
+                         usage_metadata=usage)
+
+
+def has_notice(messages, policy_scope="user"):
+    notice = DEFAULT_POLICIES[policy_scope].wrap_up_notice
+    return any(notice in str(m.content) for m in messages)
+
+
+# Steps: the call that reaches the limit is the last, made without tools.
+set_budget("user", max_llm_calls=10)
+loop = LoopingLLM()
+agent.llm = loop
+out = agent.ask_jarvis("plan everything", "t_steps")
+check("steps: kind", out.kind, turn_budget.BUDGET_EXHAUSTED)
+check("steps: never exceeds the call budget", len(loop.log), 10)
+check("steps: only the last call is tool-free", [b for b, _, _ in loop.log], [True] * 9 + [False])
+check("steps: no wrap-up before 80%", has_notice(loop.log[6][1]), False)
+check("steps: wrap-up notice from 80%", has_notice(loop.log[7][1]), True)
+check("steps: reply flags it stopped early", "Stopped early: it ran out of steps" in out.text, True)
+check("steps: cause", out.cause, "it ran out of steps")
+check("steps: turns.jsonl outcome", last_turn_row().get("outcome"), "budget_exhausted")
+msgs = thread_messages("t_steps")
+check("steps: notice never persisted", has_notice(msgs), False)
+check("steps: thread ends on the tool-free answer",
+      isinstance(msgs[-1], AIMessage) and not msgs[-1].tool_calls, True)
+
+# Wrapped up: the model finishes after the notice.
+set_budget("user", max_llm_calls=5)
+loop = LoopingLLM(answer_at=4)
+agent.llm = loop
+out = agent.ask_jarvis("finish up", "t_wrap")
+check("wrap-up: notice reached the model", has_notice(loop.log[3][1]), True)
+check("wrap-up: answering after the notice is wrapped_up", out.kind, turn_budget.WRAPPED_UP)
+check("wrap-up: counts as finished", out.finished, True)
+
+# Time: the deadline ends the turn and caps each call's timeout.
+set_budget("user", max_llm_calls=50, deadline_s=1.0)
+loop = LoopingLLM(sleep=0.25)
+agent.llm = loop
+t0 = time.monotonic()
+out = agent.ask_jarvis("slow work", "t_time")
+check("time: kind", out.kind, turn_budget.BUDGET_EXHAUSTED)
+check("time: cause", out.cause, "it ran out of time")
+check("time: ended near the deadline", time.monotonic() - t0 < 2.5, True)
+timeouts = [kw.get("timeout") for _, _, kw in loop.log]
+check("time: every call got a capped timeout",
+      all(t is not None and agent.MIN_CALL_TIMEOUT_S <= t <= agent.LLM_CALL_TIMEOUT_S for t in timeouts), True)
+
+# Tokens: cumulative input past the ceiling ends the turn.
+set_budget("user", max_llm_calls=50, max_input_tokens=100_000)
+loop = LoopingLLM(input_tokens=30_000)
+agent.llm = loop
+out = agent.ask_jarvis("token heavy", "t_tokens")
+check("tokens: kind", out.kind, turn_budget.BUDGET_EXHAUSTED)
+check("tokens: cause", out.cause, "it reached its token budget")
+check("tokens: stopped after the ceiling", len(loop.log), 5)
+
+# Heartbeat: a tick that runs out of budget without acking notifies the owner.
+set_budget("heartbeat", max_llm_calls=4)
+sent.clear()
+agent.llm = LoopingLLM()
+run_tick()
+check("heartbeat exhausted: failure notice sent",
+      [e for e, _ in sent], ["heartbeat+tick_failed"])
+check("heartbeat exhausted: cause in notice", "ran out of steps" in sent[0][1] if sent else False, True)
+
+# The tool-free last call itself failing keeps the budget outcome.
+set_budget("user", max_llm_calls=3)
+agent.llm = FakeLLM([
+    AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 7001)]),
+    AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 7002)]),
+    upstream_503(),
+])
+out = agent.ask_jarvis("long job", "t_exhaust_fail")
+check("exhaustion call fails: still budget_exhausted", out.kind, turn_budget.BUDGET_EXHAUSTED)
+check("exhaustion call fails: keeps the Stopped early line", "Stopped early" in out.text, True)
+
+# Heartbeat wrap-up: the tick acks only what it finished; only that stamps.
+set_budget("heartbeat", max_llm_calls=5)
+heartbeat_state.any_due = lambda now: (True, ["inbox-check", "weekly-review"])
+sent.clear()
+stamped.clear()
+agent.llm = FakeLLM([
+    AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 7100 + n)])
+    for n in range(3)
+] + [
+    AIMessage(content="", tool_calls=[tool_call("heartbeat_respond", {
+        "acted_tasks": ["inbox-check"], "notify": False, "summary": "partial",
+    }, 7200)]),
+    AIMessage(content="did inbox-check; weekly-review not done"),
+])
+run_tick()
+check("heartbeat wrap-up: only the finished task stamps", stamped, ["inbox-check"])
+check("heartbeat wrap-up: acked tick sends no failure notice",
+      [e for e, _ in sent if e == "heartbeat+tick_failed"], [])
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {FAILS}")

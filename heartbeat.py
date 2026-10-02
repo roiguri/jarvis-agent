@@ -67,7 +67,6 @@ async def run_heartbeat() -> None:
     from agent import ask_jarvis, get_heartbeat_ack
     from gateway.factory import default_outbox
     from gateway.outbox import EVENT_HEARTBEAT
-    from turn_budget import FAILED, TurnOutcome
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
     today = now_israel.strftime("%Y-%m-%d")
@@ -80,21 +79,13 @@ async def run_heartbeat() -> None:
     )
 
     logger.info("Heartbeat: running agent turn")
-    try:
-        outcome = await asyncio.wait_for(
-            asyncio.to_thread(
-                ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
-                scope="heartbeat", heartbeat_due_tasks=due_names,
-            ),
-            timeout=90,
-        )
-    except asyncio.TimeoutError:
-        logger.error("Heartbeat: agent turn timed out after 90s — skipping")
-        await _notify_tick_failed(
-            TurnOutcome(FAILED, "", cause="it timed out after 90s"),
-            due_names, now_israel,
-        )
-        return
+    # Bounded by the heartbeat's turn budget inside the turn itself. Not
+    # wrapped in asyncio.wait_for: that only stops waiting — the thread keeps
+    # running, and the next tick could then start a second turn on this thread.
+    outcome = await asyncio.to_thread(
+        ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
+        scope="heartbeat", heartbeat_due_tasks=due_names,
+    )
     if not outcome.finished:
         logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.cause)
 
