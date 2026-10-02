@@ -40,7 +40,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 **Slice 2 — budget enforced in the graph** — numbers kept at today's behaviour (13 calls; heartbeat 90s) until slice 3
 - [x] `ScopePolicy` (budget + wrap-up notice + exhaustion ask) and `POLICIES` per scope in `turn_budget.py`
 - [x] Budget tracker created by `ask_jarvis`, carried in a ContextVar; it counts calls and input tokens itself (never reads telemetry)
-- [x] `_llm_node` checks the tracker before every call: `ok` / `wrap_up` / `exhausted`
+- [x] `_llm_node` checks the tracker before every call; it sets `wrapped_up` / `exhausted_by`
 - [x] `wrap_up`: scope's notice appended to the request only — never persisted to the checkpoint
 - [x] `exhausted`: model called with no tools + scope's exhaustion ask → graph ends normally → `outcome = budget_exhausted`
 - [x] Remove the `GraphRecursionError` catch + out-of-graph `_summarize_exhausted_turn`; `recursion_limit` becomes a backstop above the step guard
