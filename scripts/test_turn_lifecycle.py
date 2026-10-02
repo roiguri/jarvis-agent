@@ -282,15 +282,21 @@ out = agent.ask_jarvis("disk is full", "t_disk")
 telemetry._append_line = real_append
 check("telemetry failure: turn still completes", (out.kind, out.text), (turn_budget.COMPLETED, "still fine"))
 
-# --- 6. Trim at turn boundaries (JRV-01) ----------------------------------
+# --- 6. Trim at turn boundaries -------------------------------------------
+
+
+def alternating(n):
+    return [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(n)]
+
+
 check("reducer: non-turn write never trims",
       len(agent._add_and_trim(
-          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(50)],
+          alternating(50),
           [ToolMessage(content="r", tool_call_id="x")],
       )), 51)
 check("reducer: turn start trims to the cap",
       len(agent._add_and_trim(
-          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(80)],
+          alternating(80),
           [HumanMessage("next")],
       )) <= agent.MAX_MESSAGES, True)
 
@@ -333,7 +339,7 @@ check("long turn: dropped once it is two turns back", len(msgs) <= agent.MAX_MES
 check("long turn: trimmed window starts on a HumanMessage", isinstance(msgs[0], HumanMessage), True)
 check("reducer: a mirror block and its message stay together",
       [m.content for m in agent._add_and_trim(
-          [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(80)],
+          alternating(80),
           [HumanMessage("[mirror]"), HumanMessage("reply")],
       )][-2:], ["[mirror]", "reply"])
 

@@ -41,12 +41,9 @@ from observability import telemetry
 # ---------------------------------------------------------------------------
 # State schema — sliding message window + media blob stripping
 # ---------------------------------------------------------------------------
-# The default AgentState accumulates messages forever. We override the reducer
-# so that when a turn starts the list is trimmed to whole turns fitting in
-# MAX_MESSAGES — always keeping the previous turn, however long. Within a turn
-# the window only grows: trimming on every write let a turn with ~40 tool calls
-# slice off its own HumanMessage mid-flight, leaving a history the model
-# rejects. Storage stays bounded by the cap plus up to two turns' traffic.
+# The default AgentState accumulates messages forever. Our reducer
+# (_add_and_trim) trims to whole turns fitting in MAX_MESSAGES when a turn
+# starts; storage stays bounded by the cap plus up to two turns' traffic.
 MAX_MESSAGES = 50
 
 # Gemini's documented ceiling for inline media. The API also recommends the
@@ -139,18 +136,16 @@ def _strip_media_blobs(msg):
     return HumanMessage(content=new_content, id=msg.id)
 
 
-def _starts_turn(new) -> bool:
-    """Whether a state write carries user input — the only point a turn begins."""
-    items = new if isinstance(new, list) else [new]
-    return any(isinstance(m, HumanMessage) for m in convert_to_messages(items))
-
-
 def _add_and_trim(existing: list, new: list) -> list:
     # Strip blobs from existing messages — they have already been seen by the
     # LLM. New messages keep their blobs so the LLM can process them this turn.
     stripped_existing = [_strip_media_blobs(msg) for msg in existing]
     combined = add_messages(stripped_existing, new)
-    if not _starts_turn(new):
+    # Only a write carrying user input starts a turn. Within a turn the window
+    # only grows: trimming on every write let a turn with ~40 tool calls slice
+    # off its own HumanMessage mid-flight, leaving a history the model rejects.
+    items = new if isinstance(new, list) else [new]
+    if not any(isinstance(m, HumanMessage) for m in convert_to_messages(items)):
         return combined
     # Cut only where a turn starts — a raw index slice can land mid-tool-call
     # sequence, leaving orphaned calls or responses the LLM rejects. A turn
