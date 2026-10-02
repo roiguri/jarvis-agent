@@ -8,7 +8,6 @@ the loop.
 """
 
 import contextvars
-import math
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -53,9 +52,15 @@ class ScopePolicy:
     exhaustion_ask: str
 
 
+# Sized against prod turns from Sep 2026, where every user turn needing more
+# than 13 calls was cut off at that old ceiling, so real demand above it is
+# unknown. User: 300s covers the p99 turn (118s) and the longest turn that ever
+# completed (284s); 30 calls at the observed 3.6-9.2s per call land at the
+# same 2-4.5 min; 1.5M input tokens is ~45 calls at ~32k each, above the
+# largest turn seen (1.2M). Heartbeat: no tick exceeded 9 calls or 228k input.
 POLICIES: dict[str, ScopePolicy] = {
     "user": ScopePolicy(
-        budget=TurnBudget(deadline_s=math.inf, max_llm_calls=13, max_input_tokens=math.inf),
+        budget=TurnBudget(deadline_s=300, max_llm_calls=30, max_input_tokens=1_500_000),
         wrap_up_notice=(
             "[System notice, not from the owner: this turn is close to its limits.] "
             "Stop starting new lookups or checks. Finish from what you already have: "
@@ -69,7 +74,7 @@ POLICIES: dict[str, ScopePolicy] = {
         ),
     ),
     "heartbeat": ScopePolicy(
-        budget=TurnBudget(deadline_s=90, max_llm_calls=13, max_input_tokens=math.inf),
+        budget=TurnBudget(deadline_s=90, max_llm_calls=13, max_input_tokens=300_000),
         wrap_up_notice=(
             "[System notice: this tick is close to its limits.] Stop working new tasks. "
             "Call heartbeat_respond now, listing in acted_tasks only the tasks you "

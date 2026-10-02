@@ -51,8 +51,8 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
 
 **Slice 3 — budget numbers** (requires slice 1 shipped)
-- [ ] Decide provisional numbers (see slice 3 — OPEN)
-- [ ] Apply them; fix the incorrect "LangGraph's own default" comment
+- [x] Provisional numbers applied (user 300s / 30 calls / 1.5M input; heartbeat 90s / 13 calls / 300k) — **still OPEN for review**
+- [x] Incorrect "LangGraph's own default" comment removed (slice 2 replaced the constant with a backstop)
 
 **Slice 4 — prod verification & re-tune**
 - [ ] Deploy; record the deploy date here
@@ -272,8 +272,12 @@ from the 14-day reading. Starting proposal:
 | | user | heartbeat |
 |---|---|---|
 | Deadline | 300s (wrap-up at 240s) | 90s (wrap-up at 72s) — unchanged bound |
-| Step guard | 61 super-steps (30 LLM calls) | 25 (unchanged; trip max was 9 calls) |
+| Call budget | 30 LLM calls | 13 (today's 25 super-steps; trip max was 9 calls) |
 | Token ceiling | **OPEN** — ~1.5M input (~45 calls at the measured ~32k/call) | 300k |
+
+Token reading behind the ceilings (trip window, input tokens per turn): user p50 80k / p99 437k /
+max 1.21M; heartbeat p50 76k / p99 = max 228k. Both ceilings sit above every observed turn, with
+the heartbeat's wrap-up point (240k) still above its largest tick.
 
 Reasoning: 300s covers the trip p99 (118s) and the longest successful pre-#116 turn (284s); at
 the measured 3.6–9.2s per call, 30 calls fit in 2–4.5 min, so the deadline and the step guard
