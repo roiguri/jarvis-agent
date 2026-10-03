@@ -1,7 +1,11 @@
 # Time Grounding — Plan
 
-**Date:** 2026-10-03 · **Status:** implemented on `feat/time-grounding`; offline checks pass, staging checks pending.
-**Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) B1 (primary), B2 (side effect).
+**Status:** COMPLETE and ARCHIVED (2026-10-03), with the merge of PR #132. Offline checks and
+staging (time question, relative reminder) passed 2026-10-03. Still open after the prod deploy:
+the cache before/after reading (§4), tracked on PROBLEMS.md B2; and the B4 follow-up (§5),
+tracked on PROBLEMS.md B4.
+**Date:** 2026-10-03.
+**Problems addressed:** [context/PROBLEMS.md](../context/PROBLEMS.md) B1 (primary), B2 (side effect).
 Readings are in PROBLEMS.md §0 and are not repeated here.
 **Supersedes:** PR #70 (`docs/ws2-time-grounding`). Its core idea (stamp the turn's input once)
 carries forward. Three of its parts do not:

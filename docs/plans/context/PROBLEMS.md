@@ -118,11 +118,13 @@ named risk — blander or wronger briefing text — has never been tested.
 
 ## B. Prompt and cache stability
 
-**B1 — The model's "now" moves underneath it mid-turn.** `MEASURED`
+**B1 — The model's "now" moves underneath it mid-turn.** `RESOLVED`
 `build_system_prompt` is called inside `_llm_node`, so the `[Current time: … HH:MM]` line is rebuilt
 on every LLM call. Within one turn, call 1 can read `06:14` and call 4 `06:15` — including on turns
 computing a reminder's `fire_at`. Nothing logs it and nothing tests it. Re-confirmed 2026-10-03:
 `_llm_node` still builds the system prompt per call.
+Resolved by [../archive/TIME_GROUNDING_PLAN.md](../archive/TIME_GROUNDING_PLAN.md) (PR #132): the
+time is read once per turn and stamped on the turn's input; the envelope keeps only the date.
 
 **B2 — A per-minute clock in the system prompt invalidates the whole request prefix, not just its
 own line.** `ASSERTED`
@@ -130,6 +132,9 @@ The cache prefix spans system instruction + tools + history, so the clock sits u
 in A4. 64% of heartbeat turns cross a minute boundary mid-turn. **This finding comes from a design
 pass whose draft was never committed and no longer exists**; it has not been re-verified against
 current Gemini documentation. Treat as unconfirmed until it is.
+Since PR #132 the envelope changes only at Israel midnight, so the clock no longer moves the prefix
+mid-turn. Whether that shows up in the cache rate is the after-deploy reading in
+[../archive/TIME_GROUNDING_PLAN.md](../archive/TIME_GROUNDING_PLAN.md) §4, not yet taken.
 
 **B3 — The 50-message cap breaks the history prefix independently of the clock.** `RESOLVED`
 Both threads sit at `MAX_MESSAGES`, and the reducer hard-slices to exactly that on every state
@@ -148,7 +153,9 @@ longer evict its own input (staging, 2026-10-03: a 101-tool-call turn completed)
 so the model converts by hand on each one — and reminders originate mostly in user turns. *(Raised
 only on PR #70; not in either committed plan.)* Still true as of 2026-10-03. In `/tz` away mode, reminder
 create/list also echo the owner's local time, which makes a wrong conversion visible; at home
-nothing changed, and in neither case is the conversion removed.
+nothing changed, and in neither case is the conversion removed. A fix is sketched in
+[../archive/TIME_GROUNDING_PLAN.md](../archive/TIME_GROUNDING_PLAN.md) §5: `manage_reminder`
+already accepts any explicit offset, so the model could write Israel-local time with its offset.
 
 ---
 
