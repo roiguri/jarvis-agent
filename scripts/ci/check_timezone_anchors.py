@@ -38,7 +38,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 # path -> (anchoring, reason). "home" = ISRAEL_TZ only; "owner" = owner_tz()
 # only; "both" = deliberately renders/uses both clocks.
 ANCHORS: dict[str, tuple[str, str]] = {
-    "agent.py": ("both", "Israel prompt envelope + away-only owner-local line"),
+    "agent.py": ("both", "Israel turn stamp + envelope date + away-only owner clock"),
     "gateway/apps/fitness.py": ("home", "Arbox gym is physically in Israel"),
     "gateway/commands/handlers.py": ("both", "/tz shows both clocks; /logs and /usage cut Israel days"),
     "heartbeat.py": ("home", "daily-log naming and late-fire annotation are Israel by design"),

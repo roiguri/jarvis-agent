@@ -1,6 +1,6 @@
 # Time Grounding — Plan
 
-**Date:** 2026-10-03 · **Status:** draft, not started.
+**Date:** 2026-10-03 · **Status:** implemented on `feat/time-grounding`; offline checks pass, staging checks pending.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) B1 (primary), B2 (side effect).
 Readings are in PROBLEMS.md §0 and are not repeated here.
 **Supersedes:** PR #70 (`docs/ws2-time-grounding`). Its core idea (stamp the turn's input once)
@@ -70,6 +70,10 @@ human:   [Saturday, 2026-10-03 14:05 Israel time] remind me in 20 minutes
 (heartbeat), and the median is ~10s. `manage_reminder` echoes the real time on create, which covers
 the one case where that would matter.
 
+**Accepted edge:** without an offset, the stamp is ambiguous for the repeated hour at the autumn DST
+change (01:00–02:00 reads the same twice). Today's envelope line has the same property. B4 (§5) is
+where an offset would earn its place.
+
 ## 3. One slice
 
 Stamp and envelope change ship in **one commit**. Split, the middle state shows the model two
@@ -77,22 +81,24 @@ Stamp and envelope change ship in **one commit**. Split, the middle state shows 
 not yet fixed. Together, the switch is atomic, and reverting is one commit.
 
 **Changes:**
-- [ ] `agent.py`: a stamp helper that formats from an explicit `now` (never reads the clock
-      itself); `ask_jarvis` takes `now` once and prefixes the input, covering both input shapes
-      (plain text and media content). It skips input that already starts with a stamp, because the
-      confirmation path feeds synthesized text back in.
-- [ ] `agent.py` `build_system_prompt`: `[Current time: …]` → `[Current date: …]`;
+- [x] `agent.py`: a stamp helper that formats from an explicit `now` (never reads the clock
+      itself); `ask_jarvis` takes `now` once and prefixes the input, before the media branch, so
+      both input shapes (plain text and media content) carry it. No already-stamped guard: every
+      caller (channel messages, confirmation outcomes, heartbeat ticks) passes raw text.
+- [x] `agent.py` `build_system_prompt`: `[Current time: …]` → `[Current date: …]`;
       `[Owner local time: …]` → `[Owner timezone: …]`.
-- [ ] Docs: the envelope shape in `docs/architecture/MEMORY.md` and `CLAUDE.md`. Check
+- [x] Docs: the envelope shape in `docs/architecture/MEMORY.md` and `CLAUDE.md`. Check
       `prompts/*.md` for prose that points at the envelope for the time.
 
 **Verify (offline):**
-- [ ] The stamp renders the right local time and weekday on both sides of both 2026 DST
+- [x] The stamp renders the right local time and weekday on both sides of both 2026 DST
       transitions, at home and in away mode.
-- [ ] Exactly one stamp per human message in the checkpoint, including a confirmation-outcome
+- [x] Exactly one stamp per human message in the checkpoint, including a confirmation-outcome
       turn and a turn with media.
-- [ ] `chat_history.jsonl` stays unstamped.
-- [ ] Assembled prompt read through in both scopes and in away mode: the date only, no clock.
+- [x] `chat_history.jsonl` stays unstamped (structural: it is written in `main.py` from the raw
+      inbound text; the stamped string never leaves `ask_jarvis`).
+- [x] Assembled prompt read through in both scopes and in away mode: the date only, no clock,
+      byte-identical across every call of a multi-call turn.
 
 **Verify (staging):**
 - [ ] "What time is it?" answered correctly to the minute.

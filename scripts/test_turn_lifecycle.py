@@ -289,6 +289,11 @@ def alternating(n):
     return [HumanMessage(f"h{i}") if i % 2 == 0 else AIMessage(f"a{i}") for i in range(n)]
 
 
+def _said(m, text):
+    """A HumanMessage carrying ``text`` as a turn's input, behind its time stamp."""
+    return isinstance(m, HumanMessage) and m.content.endswith(f"] {text}")
+
+
 check("reducer: non-turn write never trims",
       len(agent._add_and_trim(
           alternating(50),
@@ -318,11 +323,11 @@ out = agent.ask_jarvis("FANOUT REQUEST", "t_fanout")
 check("fan-out: turn completes", out.kind, turn_budget.COMPLETED)
 last = rec.sent[-1][1:]  # drop the system prompt
 check("fan-out: last call still carries the turn's input",
-      any(isinstance(m, HumanMessage) and m.content == "FANOUT REQUEST" for m in last), True)
+      any(_said(m, "FANOUT REQUEST") for m in last), True)
 check("fan-out: last call starts on a valid boundary", isinstance(last[0], HumanMessage), True)
 msgs = thread_messages("t_fanout")
 check("fan-out: checkpoint keeps prior history",
-      any(isinstance(m, HumanMessage) and m.content == "chat 23" for m in msgs), True)
+      any(_said(m, "chat 23") for m in msgs), True)
 check("fan-out: window grew past the cap within the turn", len(msgs) > agent.MAX_MESSAGES, True)
 rec = FakeLLM([AIMessage(content="ok")])
 agent.llm = rec
@@ -331,7 +336,7 @@ sent_next = rec.sent[0][1:]
 check("long turn: next turn still sees its answer",
       any(isinstance(m, AIMessage) and m.content == "done fanning out" for m in sent_next), True)
 check("long turn: next turn starts on the long turn's input",
-      isinstance(sent_next[0], HumanMessage) and sent_next[0].content == "FANOUT REQUEST", True)
+      _said(sent_next[0], "FANOUT REQUEST"), True)
 agent.llm = FakeLLM([AIMessage(content="ok again")])
 agent.ask_jarvis("one more", "t_fanout")
 msgs = thread_messages("t_fanout")
