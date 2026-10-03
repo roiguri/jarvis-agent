@@ -56,7 +56,8 @@ ANCHORS: dict[str, tuple[str, str]] = {
 
 _VALID = {"home", "owner", "both"}
 SEAM = "timeutils.py"
-_SKIP_DIRS = {"venv", "__pycache__", ".git", "node_modules", "media_cache"}
+# .claude/ holds local agent state, including git worktrees of other branches.
+_SKIP_DIRS = {"venv", "__pycache__", ".git", "node_modules", "media_cache", ".claude"}
 _SKIP_TOP = {"scripts"}
 
 _IMPORT_RE = re.compile(r"^\s*(?:from\s+timeutils\s+import|import\s+timeutils)\b", re.M)
