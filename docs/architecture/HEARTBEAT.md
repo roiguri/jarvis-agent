@@ -116,6 +116,7 @@ first store read and keeps it as `state.json.migrated`.
 | Surface | On bad input | Rationale |
 |---|---|---|
 | Read side (`parse_tasks`, gate) | **Fail open** — unparseable cadence/window/file → task (or whole tick) treated as due; run the model | A malformed hand edit may cost a model call; it must never silently kill a task |
+| Gated task (`gate:`) | **Retry, then tell** — a failing check commits and stamps nothing, so the task is due again next tick; one owner notice after 3 failures in a row. On the fail-open path (`due_names=None`) gated tasks are skipped for that tick | A gated task never runs in the model, so there is nothing to fail open *to*; staying unstamped keeps it retrying and the notice keeps a persistent failure from going silent |
 | Write side (`manage_heartbeat_task`) | **Fail loud** — invalid name/cadence/window/duplicate → clear error, file untouched | The agent authors tasks; a silent malformed write would create a task that never fires with nobody knowing |
 
 ---
