@@ -36,7 +36,6 @@ EVENT_HEARTBEAT = "heartbeat"
 EVENT_REMINDER = "reminder"
 EVENT_MEDIA = "notification"
 EVENT_LLM_MEDIA = "llm_notification"
-EVENT_HEARTBEAT_FAILED = "heartbeat_failed"
 
 # Records a sent notification: (event_type, text, metadata). Injected by the
 # host so the gateway depends on neither the agent nor the tools layer.

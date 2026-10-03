@@ -171,10 +171,11 @@ async def _notify_tick_failed(
     outcome, due_names: list[str] | None, now_israel: datetime.datetime
 ) -> None:
     """Tell the owner a tick broke. Built in code, not by the model — the model
-    may be what failed. Sent with an event so it is logged and mirrored into
-    the owner thread, where the chat side learns of the failure as history."""
+    may be what failed. Sent as a heartbeat event so it is logged and mirrored
+    into the owner thread, where the chat side learns of the failure as
+    history; `tick_failed` marks the row apart from ordinary briefings."""
     from gateway.factory import default_outbox
-    from gateway.outbox import EVENT_HEARTBEAT_FAILED
+    from gateway.outbox import EVENT_HEARTBEAT
     from turn_budget import committed_summary
 
     tasks = ", ".join(due_names) if due_names else "all tasks"
@@ -185,7 +186,9 @@ async def _notify_tick_failed(
     if outcome.committed_calls:
         text += f" Already done before it stopped: {committed_summary(outcome.committed_calls)}."
     text += " They run again on the next tick while still due."
-    result = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT_FAILED)
+    result = await default_outbox().notify_owner(
+        text, event=EVENT_HEARTBEAT, metadata={"tick_failed": True}
+    )
     if not result.ok:
         logger.error("Heartbeat: failed to send the tick-failure notice: %s", result.error)
 

@@ -24,8 +24,8 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] `outcome` field (`completed` / `wrapped_up` / `budget_exhausted` / `failed`) in `turns.jsonl`
 - [x] User callers: one `main.py` helper used by `process_inbound_message` **and** `on_confirmation_outcome`; sends `outcome.text`, chat-logs it
 - [x] Heartbeat: logs `outcome.reason` (the real cause) instead of a generic error
-- [x] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT_FAILED)`
-- [x] New frozen event `heartbeat_failed` in `gateway/outbox.py` + `[Heartbeat failed]` prefix in `pending_mirrors.PREFIX`
+- [x] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT, metadata={"tick_failed": True})`
+- [x] No new event: the notice is an ordinary heartbeat send, its log row marked `"tick_failed": true`
 - [ ] Staging: forced user-turn exception after a write → reply names committed calls; thread note present next turn; no duplicate mirror block
 - [ ] Staging: forced heartbeat failure → owner notice on the default channel; mirrored into the owner thread on the next user turn
 
@@ -61,7 +61,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [ ] 14-day reading: uncensored LLM-calls distribution above 13
 - [ ] 14-day reading: input tokens per user turn p50/p99 vs trip baseline
 - [ ] 14-day reading: errored turns with no owner-facing message, either scope (expect 0)
-- [ ] 14-day reading: `heartbeat_failed` notices sent — decide whether they are noise
+- [ ] 14-day reading: `tick_failed` notices sent — decide whether they are noise
 - [ ] Re-tune slice 3 numbers from the readings; record final values and why
 - [ ] Close out #36 directions 1–4 and archive this plan
 
@@ -186,7 +186,7 @@ caller ──► │ ask_jarvis(scope) → policy = POLICIES[scope]; tracker →
            │   returns TurnOutcome(kind, text, reason, committed_calls)         │
            └────────────────────────────────────────────────────────────────────┘
 user callers (inbound, confirmation outcome) → one main.py helper: send outcome.text
-heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (heartbeat_failed)
+heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (tick_failed)
 ```
 
 | | user | heartbeat |
@@ -194,7 +194,7 @@ heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (h
 | Budget | deadline / step guard / tokens (slice 3) | 90s / 25 steps / tokens |
 | Wrap-up notice | finish the deliverable from what you have; only mandatory writes | call `heartbeat_respond` now, listing only tasks you completed |
 | Exhaustion ask | what is done, what is not, what would finish it | list what was completed (no ack → no stamp → re-run, as today) |
-| Failure delivery | `outcome.text` as the reply | code-built `heartbeat_failed` notice to the default channel |
+| Failure delivery | `outcome.text` as the reply | code-built `tick_failed` heartbeat notice to the default channel |
 
 Why these choices:
 
@@ -298,7 +298,7 @@ Prod after-readings, defined now so they are taken from the instrument, not reca
 - LLM-calls distribution above 13 — the uncensored demand curve this plan currently lacks.
 - Input tokens per user turn p50/p99 vs. the trip reading above (cost of Decisions 2 and 3).
 - Turns with `error` and no owner-facing message, either scope — expected 0.
-- `heartbeat_failed` notices sent — the input to keeping or reversing Decision 6.
+- `tick_failed` notices sent — the input to keeping or reversing Decision 6.
 
 ---
 

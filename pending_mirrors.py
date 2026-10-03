@@ -25,7 +25,6 @@ _NOTIF_LOG = os.path.join(config.DATA_DIR, "logs", "notifications.jsonl")
 
 PREFIX = {
     "heartbeat": "[Heartbeat]",
-    "heartbeat_failed": "[Heartbeat failed]",
     "reminder": "[Reminder]",
     "notification": "[Notification]",
     "llm_notification": "[Notification]",

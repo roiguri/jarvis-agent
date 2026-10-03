@@ -36,7 +36,8 @@ ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         ▼
 run_heartbeat() reads the ack (agent.get_heartbeat_ack)
         ├─ no ack AND the turn did not finish (failed / budget_exhausted /
-        │  timeout) → code-built notice, event="heartbeat_failed"
+        │  timeout) → code-built notice, event="heartbeat",
+        │  metadata tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
         │                event="heartbeat")         send + log-on-success
         └─ stamp(acted_tasks) → state.json          only acted tasks advance,
@@ -50,11 +51,12 @@ terse tick log only; a tick with no ack delivers nothing and its tasks
 re-run next tick (unstamped).
 
 **A broken tick is not silent.** A tick that ends unfinished (`TurnOutcome`,
-`turn_budget.py`) *and* left no ack sends the owner a code-built
-`heartbeat_failed` notice — never model-written, since the model may be what
-failed — naming the due tasks, the cause and any tool calls that ran. Logged
-like any proactive send, it is mirrored into the owner thread as
-`[Heartbeat failed] …`. A finished tick that merely omitted its ack sends nothing.
+`turn_budget.py`) *and* left no ack sends the owner a code-built notice —
+never model-written, since the model may be what failed — naming the due tasks,
+the cause and any tool calls that ran. It is an ordinary heartbeat send
+(`event="heartbeat"`, row marked `"tick_failed": true`), so it is logged and
+mirrored into the owner thread like any briefing. A finished tick that merely
+omitted its ack sends nothing.
 
 **Delivery before stamping.** The send goes through the gateway Outbox, which
 returns an outcome instead of raising. Stamps advance only when the tick had

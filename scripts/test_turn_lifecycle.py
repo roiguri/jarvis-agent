@@ -159,7 +159,8 @@ sent: list[tuple[str, str]] = []
 
 class FakeOutbox:
     async def notify_owner(self, text, *, event=None, metadata=None):
-        sent.append((event, text))
+        # A tick-failure notice shows as "<event>+tick_failed".
+        sent.append((f"{event}+tick_failed" if (metadata or {}).get("tick_failed") else event, text))
         return SendOutcome(ok=True)
 
 
@@ -173,12 +174,10 @@ run_tick()
 check("heartbeat failed: one notice sent", len(sent), 1)
 if sent:
     event, text = sent[0]
-    check("heartbeat failed: event", event, "heartbeat_failed")
+    check("heartbeat failed: heartbeat event marked tick_failed", event, "heartbeat+tick_failed")
     check("heartbeat failed: names task", "inbox-check" in text, True)
     check("heartbeat failed: names committed calls", "list_memory" in text, True)
     check("heartbeat failed: plain cause", "unavailable" in text, True)
-check("heartbeat failed: mirror prefix registered",
-      pending_mirrors.PREFIX.get("heartbeat_failed"), "[Heartbeat failed]")
 
 # A tick that finishes with an ack sends nothing extra.
 sent.clear()
@@ -189,7 +188,7 @@ agent.llm = FakeLLM([
     AIMessage(content="tick done"),
 ])
 run_tick()
-check("heartbeat ok: no failure notice", [e for e, _ in sent if e == "heartbeat_failed"], [])
+check("heartbeat ok: no failure notice", [e for e, _ in sent if e == "heartbeat+tick_failed"], [])
 
 # A tick that fails before its input is checkpointed must not pick up the
 # previous tick's ack: no stale briefing, no stale stamp, a failure notice.
@@ -218,7 +217,7 @@ run_tick()
 agent.agent_executor.stream = real_stream
 check("unsaved input: no stale briefing re-sent", "OLD BRIEFING" not in [t for _, t in sent], True)
 check("unsaved input: no stale stamp", stamped, [])
-check("unsaved input: failure notice sent", [e for e, _ in sent], ["heartbeat_failed"])
+check("unsaved input: failure notice sent", [e for e, _ in sent], ["heartbeat+tick_failed"])
 check("unsaved input: thread has this tick's input before the note",
       isinstance(thread_messages("heartbeat")[-2], HumanMessage), True)
 
