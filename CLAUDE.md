@@ -105,7 +105,7 @@ Assembled per LLM call by `build_system_prompt(scope, active_skills)` in `agent.
 Assembly order:
 
 ```
-[Current time] / [Active scope] envelope
+[Current date] / [Active scope] envelope   (the clock is a per-turn stamp on the input — `_turn_stamp`)
 SOUL.md            (memory dir — user-curated identity; agent-writable w/ confirmation)
 prompts/AGENTS.md  (code — operating rules; outside the memory sandbox, deploy-only)
 USER.md            (memory dir — durable user profile; agent-writable, no confirm)

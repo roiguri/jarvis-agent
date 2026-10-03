@@ -293,6 +293,18 @@ def _today_israel() -> str:
     return _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ).strftime("%Y-%m-%d")
 
 
+def _turn_stamp(now: _dt.datetime) -> str:
+    """The turn's time, prefixed to its input once at turn start. Formatted
+    from ``now`` and never from the clock, so every call in the turn sees the
+    same moment. Away mode (/tz) adds the owner's own clock."""
+    stamp = now.astimezone(_ISRAEL_TZ).strftime("%A, %Y-%m-%d %H:%M Israel time")
+    away = owner_tz_name()
+    if away:
+        local = now.astimezone(owner_tz()).strftime("%A, %Y-%m-%d %H:%M")
+        stamp += f" | owner local: {local} {away}"
+    return f"[{stamp}]"
+
+
 def _load_yesterday_daily_log() -> str:
     """Yesterday's daily log (heartbeat scope). The live chat slice already
     covers today, so yesterday is the cheapest 'context not otherwise in this
@@ -378,7 +390,7 @@ def build_system_prompt(
 ) -> str:
     """Assemble the system prompt for one model call, read fresh each call.
 
-    Always: a [Current time]/[Active scope] envelope + SOUL.md (identity,
+    Always: a [Current date]/[Active scope] envelope + SOUL.md (identity,
     memory dir) + AGENTS.md (operating rules, committed under prompts/) +
     USER.md (Roi's profile/preferences, memory dir) + a scope framing line
     + the registry skill block. Scope-specific:
@@ -392,20 +404,17 @@ def build_system_prompt(
       one-line note); None injects the full file.
     All files are read per turn (edits take effect next turn, no restart).
     """
-    now = _dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
+    # Date only: the clock lives in the turn's input stamp (_turn_stamp), so
+    # this prompt — rebuilt on every call — stays byte-stable through the day.
     lines = [
-        f"[Current time: {now.strftime('%A, %Y-%m-%d %H:%M Israel time')}]",
+        f"[Current date: {_today_israel()}]",
         f"[Active scope: {scope}]",
     ]
-    # Away mode (/tz): a second clock so the model converts times the owner
-    # speaks. Home has no file and no line — the prompt is byte-identical.
+    # Away mode (/tz): the stamp carries the owner's clock; this line carries
+    # what to do with it. Home has no file and no line.
     away = owner_tz_name()
     if away:
-        local = now.astimezone(owner_tz())
-        lines.insert(1, (
-            f"[Owner local time: {local.strftime('%A, %Y-%m-%d %H:%M')} ({away}) "
-            "— times the owner speaks are local to them]"
-        ))
+        lines.insert(1, f"[Owner timezone: {away} — times the owner speaks are local to them]")
     # Origin channel — a runtime value (no channel-name literal in this module),
     # inform-only. None on origin-less turns (heartbeat), where the line is skipped.
     channel = turn_context.current_channel()
@@ -681,6 +690,7 @@ def ask_jarvis(
         channel: origin channel name (router-stamped), or None for
             origin-less turns. Published via CURRENT_CHANNEL.
     """
+    user_input = f"{_turn_stamp(_dt.datetime.now(_dt.timezone.utc))} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
         "configurable": {"thread_id": thread_id},

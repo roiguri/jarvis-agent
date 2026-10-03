@@ -112,7 +112,7 @@ The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is 
 `build_system_prompt(scope, active_skills, due_tasks=None)` in `agent.py` assembles the prompt **fresh on every model call**. There is no prompt constant in code.
 
 ```
-[Current time: <Israel local>] / [Active scope: user|heartbeat]   # envelope
+[Current date: <Israel date>] / [Active scope: user|heartbeat]   # envelope
 SOUL.md            (jarvis_memory — identity/voice)
 prompts/AGENTS.md  (code — operating rules; outside the sandbox)
 USER.md            (jarvis_memory — durable user profile)
@@ -127,6 +127,12 @@ USER.md            (jarvis_memory — durable user profile)
    + yesterday's daily log
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
 ```
+
+**The clock is not in the prompt.** `ask_jarvis` reads the time once at turn start and prefixes it
+to the turn's input (`_turn_stamp`: `[Saturday, 2026-10-03 14:05 Israel time]`, plus the owner's
+clock in `/tz` away mode). Every call in the turn therefore sees the same "now", and the prompt —
+rebuilt per call — changes only when the date does. The stamp lives in the checkpoint, so history
+messages keep the time they arrived; `chat_history.jsonl` stays unstamped (it has its own `ts`).
 
 ### Hot reload, crash-safety
 
