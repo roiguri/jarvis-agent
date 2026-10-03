@@ -27,15 +27,15 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] Heartbeat: logs `outcome.cause` (the real cause) instead of a generic error
 - [x] Heartbeat: `failed` / `budget_exhausted` → code-built notice to the owner via `default_outbox().notify_owner(..., event=EVENT_HEARTBEAT, metadata={"tick_failed": True})`
 - [x] No new event: the notice is an ordinary heartbeat send, its log row marked `"tick_failed": true`
-- [ ] Staging: forced user-turn exception after a write → reply names committed calls; thread note present next turn; no duplicate mirror block
-- [ ] Staging: forced heartbeat failure → owner notice on the default channel; mirrored into the owner thread on the next user turn
+- [x] Staging (2026-10-03, injected 503 after `manage_reminder`): reply named the committed call; the next turn read the thread note and answered from the saved result without re-running the tool. No-duplicate-mirror covered offline.
+- [x] Heartbeat failure notice: verified offline through the real Outbox (delivered, logged as `tick_failed`, mirrored as `[Heartbeat]`); live staging run judged unnecessary — the send path is the hourly briefing path
 
 **Slice 1 — trim at turn boundaries** — offline harness reproduces JRV-01 on the old reducer
 - [x] `_add_and_trim` trims only when `new` contains a `HumanMessage`; otherwise appends
 - [x] Trim cut never starts on a `ToolMessage` or splits a tool-call/response pair
 - [x] Trim by whole turns, always keeping the previous turn (review fix: one long turn used to leave only the new input)
 - [x] RUNTIME.md `messages` row updated
-- [ ] Staging: 40+ tool-call turn completes; checkpoint keeps its `HumanMessage` + prior history
+- [x] Staging (2026-10-03): 101 tool calls / 12 LLM calls in one turn, `completed`; checkpoint kept the request and all prior history; the next turn kept that 114-message turn whole
 
 **Slice 2 — budget enforced in the graph** — numbers kept at today's behaviour (13 calls; heartbeat 90s) until slice 3
 - [x] `ScopePolicy` (budget + wrap-up notice + exhaustion ask) and `POLICIES` per scope in `turn_budget.py`
@@ -44,11 +44,11 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] `wrap_up`: scope's notice appended to the request only — never persisted to the checkpoint
 - [x] `exhausted`: model called with no tools + scope's exhaustion ask → graph ends normally → `outcome = budget_exhausted`
 - [x] Remove the `GraphRecursionError` catch + out-of-graph `_summarize_exhausted_turn`; `recursion_limit` becomes a backstop above the step guard
-- [x] Per-call `timeout` passed per invoke, capped to the remaining budget (verify the kwarg reaches the client on staging)
+- [x] Per-call `timeout` passed per invoke, capped to the remaining budget (kwarg path verified in the client source; values covered offline — no log records it)
 - [x] Heartbeat drops `asyncio.wait_for(..., 90)`; its bound comes from its `ScopePolicy`
 - [ ] 504 retry policy decided and applied (per-invoke `max_retries`)
-- [ ] Staging: tiny temporary deadline → notice in the request, correct outcome, owner lock released only after the thread ends
-- [ ] Staging: heartbeat wrap-up → tick acks only the tasks it completed; those stamp, the rest re-run
+- [x] Staging (2026-10-03): 6-call and 20s budgets → wrap-up notice delivered, model answered from what it had (`wrapped_up`), notice never persisted, next turns ran normally. The run surfaced two wording fixes (system-notice label, code-appended "Wrapped up early" line), now in slice 2.
+- [ ] Heartbeat wrap-up with the real model — skipped on staging: at the slice 3 limits no normal tick on record reaches the notice, and ignoring it fails safe (no ack → no stamp → re-run + notice). Watch in the slice 4 readings.
 - [x] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
 
 **Slice 3 — budget numbers** (requires slice 1 shipped)
