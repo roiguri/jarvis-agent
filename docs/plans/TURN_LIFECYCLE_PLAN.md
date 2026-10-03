@@ -46,7 +46,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] Remove the `GraphRecursionError` catch + out-of-graph `_summarize_exhausted_turn`; `recursion_limit` becomes a backstop above the step guard
 - [x] Per-call `timeout` passed per invoke, capped to the remaining budget (kwarg path verified in the client source; values covered offline — no log records it)
 - [x] Heartbeat drops `asyncio.wait_for(..., 90)`; its bound comes from its `ScopePolicy`
-- [ ] 504 retry policy decided and applied (per-invoke `max_retries`)
+- [x] 504 retry policy decided: keep the client default (two retries) for now (2026-10-03); revisit with the slice 4 readings
 - [x] Staging (2026-10-03): 6-call and 20s budgets → wrap-up notice delivered, model answered from what it had (`wrapped_up`), notice never persisted, next turns ran normally. The run surfaced two wording fixes (system-notice label, code-appended "Wrapped up early" line), now in slice 2.
 - [ ] Heartbeat wrap-up with the real model — skipped on staging: at the slice 3 limits no normal tick on record reaches the notice, and ignoring it fails safe (no ack → no stamp → re-run + notice). Watch in the slice 4 readings.
 - [x] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
@@ -269,7 +269,8 @@ Mechanism only; the numbers are slice 3. See Architecture for the design.
   without an ack and stamps nothing even for tasks it finished; with the notice it acks what it
   completed.
 - Retry policy for `504 DEADLINE_EXCEEDED`: a generation that already ran 60s is retried twice
-  today (11 occurrences in the window). **OPEN:** one retry for 504 only.
+  today (11 occurrences in the window). **Decided 2026-10-03:** keep two retries for now; revisit
+  if the slice 4 readings show 504s costing long turns (per-invoke `max_retries` is the lever).
 
 ## Slice 3 — budget numbers
 
