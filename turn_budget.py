@@ -57,7 +57,9 @@ class ScopePolicy:
 # unknown. User: 300s covers the p99 turn (118s) and the longest turn that ever
 # completed (284s); 30 calls at the observed 3.6-9.2s per call land at the
 # same 2-4.5 min; 1.5M input tokens is ~45 calls at ~32k each, above the
-# largest turn seen (1.2M). Heartbeat: no tick exceeded 9 calls or 228k input.
+# largest turn seen (1.2M). Heartbeat: set so the wrap-up point sits above every
+# normal tick on record (1,805 since Jun 2026, max 86s / 10 calls / 245k input),
+# leaving the notice to runaways; the one runaway seen (412s, 472k) still stops.
 POLICIES: dict[str, ScopePolicy] = {
     "user": ScopePolicy(
         budget=TurnBudget(deadline_s=300, max_llm_calls=30, max_input_tokens=1_500_000),
@@ -74,7 +76,7 @@ POLICIES: dict[str, ScopePolicy] = {
         ),
     ),
     "heartbeat": ScopePolicy(
-        budget=TurnBudget(deadline_s=90, max_llm_calls=13, max_input_tokens=300_000),
+        budget=TurnBudget(deadline_s=120, max_llm_calls=15, max_input_tokens=400_000),
         wrap_up_notice=(
             "[System notice: this tick is close to its limits.] Stop working new tasks. "
             "Call heartbeat_respond now, listing in acted_tasks only the tasks you "

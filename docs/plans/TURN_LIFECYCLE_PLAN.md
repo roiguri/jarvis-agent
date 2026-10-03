@@ -52,7 +52,7 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] RUNTIME.md: turn-budget section (policy table, outcome vocabulary)
 
 **Slice 3 — budget numbers** (requires slice 1 shipped)
-- [x] Provisional numbers applied (user 300s / 30 calls / 1.5M input; heartbeat 90s / 13 calls / 300k) — **still OPEN for review**
+- [x] Provisional numbers applied (user 300s / 30 calls / 1.5M input; heartbeat 120s / 15 calls / 400k) — **still OPEN for review**
 - [x] Incorrect "LangGraph's own default" comment removed (slice 2 replaced the constant with a backstop)
 
 **Slice 4 — prod verification & re-tune**
@@ -193,7 +193,7 @@ heartbeat.py → ack/stamp as today; failed/budget_exhausted → owner notice (t
 
 | | user | heartbeat |
 |---|---|---|
-| Budget | deadline / LLM calls / input tokens (slice 3) | 90s / 13 calls / input tokens |
+| Budget | deadline / LLM calls / input tokens (slice 3) | 120s / 15 calls / 400k input tokens |
 | Wrap-up notice | finish the deliverable from what you have; only mandatory writes | call `heartbeat_respond` now, listing only tasks you completed |
 | Exhaustion ask | what is done, what is not, what would finish it | list what was completed (no ack → no stamp → re-run, as today) |
 | Failure delivery | `outcome.text` as the reply | code-built `tick_failed` heartbeat notice to the default channel |
@@ -274,13 +274,14 @@ from the 14-day reading. Starting proposal:
 
 | | user | heartbeat |
 |---|---|---|
-| Deadline | 300s (wrap-up at 240s) | 90s (wrap-up at 72s) — unchanged bound |
-| Call budget | 30 LLM calls | 13 (today's 25 super-steps; trip max was 9 calls) |
-| Token ceiling | **OPEN** — ~1.5M input (~45 calls at the measured ~32k/call) | 300k |
+| Deadline | 300s (wrap-up at 240s) | 120s (wrap-up at 96s) |
+| Call budget | 30 LLM calls | 15 (wrap-up at call 12) |
+| Token ceiling | **OPEN** — ~1.5M input (~45 calls at the measured ~32k/call) | 400k (wrap-up at 320k) |
 
 Token reading behind the ceilings (trip window, input tokens per turn): user p50 80k / p99 437k /
-max 1.21M; heartbeat p50 76k / p99 = max 228k. Both ceilings sit above every observed turn, with
-the heartbeat's wrap-up point (240k) still above its largest tick.
+max 1.21M; heartbeat, all 1,805 ticks since Jun 2026 excluding the one runaway, max 86s / 10 calls / 245k.
+The heartbeat limits put its wrap-up point above every normal tick on record, so the notice only
+reaches a runaway; the runaway seen (412s, 13 calls, 472k) still stops, at 120s.
 
 Reasoning: 300s covers the trip p99 (118s) and the longest successful pre-#116 turn (284s); at
 the measured 3.6–9.2s per call, 30 calls fit in 2–4.5 min, so the deadline and the step guard
