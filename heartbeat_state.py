@@ -6,10 +6,10 @@ Two concerns the agent never touches directly:
   (name + cadence). A task whose cadence can't be parsed surfaces with
   ``cadence=None`` so callers treat it as always due — a malformed line
   degrades to "let the model look at it", never to a silently dropped task.
-- ``load_state()`` / ``stamp()`` — per-task last-run timestamps in
-  ``/app/jarvis_data/heartbeat/state.json``, stamped only for the tasks the
-  agent reported acting on (its ``heartbeat_respond`` ack). Writes are
-  atomic; unknown task names are logged and skipped, never fatal.
+- ``load_state()`` / ``stamp()`` — per-task last-run timestamps, kept in the
+  trigger store (``triggers/store.py``, ``last_run``), stamped only for the
+  tasks the agent reported acting on (its ``heartbeat_respond`` ack) or whose
+  gate completed. Unknown task names are logged and skipped, never fatal.
 
 The agent's own narrative notes (``heartbeat/<task>.md`` in the memory dir)
 are unrelated to this module and stay agent-owned.
@@ -17,11 +17,9 @@ are unrelated to this module and stay agent-owned.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ
@@ -31,8 +29,6 @@ import config
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_PATH = os.path.join(config.MEMORY_DIR, "HEARTBEAT.md")
-STATE_DIR = os.path.join(config.DATA_DIR, "heartbeat")
-STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
 
 # The tick lattice: minute 0 of every Nth hour. The gate rounds to it and the
@@ -60,6 +56,9 @@ _DUE_FIELD_RE = re.compile(r"due:\s*(?P<spec>[^|`]+)", re.IGNORECASE)
 # the field boundaries so it cannot be matched out of a word in the notes path
 # or an instruction fragment that shares the line.
 _PAUSED_RE = re.compile(r"(?:^|\|)\s*paused\s*(?=\||$)", re.IGNORECASE)
+# Optional "gate: <name>" field: the task's check runs in code (triggers/gates.py)
+# instead of in the tick's model turn. Same field-boundary anchoring as paused.
+_GATE_RE = re.compile(r"(?:^|\|)\s*gate:\s*(?P<name>[A-Za-z0-9_-]+)\s*(?=\||$)", re.IGNORECASE)
 # Window spec: "[Day[,Day...] ]HH:MM-HH:MM" or "[Day[,Day...] ]HH:MM±Nh"
 # (± also accepted as "+-" or "+/-" for ASCII-only editing).
 _WINDOW_RE = re.compile(
@@ -141,6 +140,7 @@ class HeartbeatTask:
     due: str | None = None  # raw due: spec, if present
     window: DueWindow | None = None  # None = no (or unparseable) window → open
     paused: bool = False  # owner-declared; skipped by the gate without running
+    gate: str | None = None  # checked in code, never in the tick's model turn
 
 
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
@@ -244,22 +244,29 @@ def parse_tasks_text(text: str) -> list[HeartbeatTask]:
                 due=due_raw,
                 window=window,
                 paused=bool(_PAUSED_RE.search(rest)),
+                gate=(gm.group("name") if (gm := _GATE_RE.search(rest)) else None),
             )
         )
     return tasks
 
 
-def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
+def filter_heartbeat_md(text: str, due_names: list[str] | None) -> str:
     """HEARTBEAT.md content with only the named task blocks kept.
 
     The preamble (everything before the first task header) is preserved.
     Task blocks not in ``due_names`` are collapsed into one terse note naming
     them, so the model knows they exist and are simply not due — without
-    paying for their full bodies. Unknown names in ``due_names`` are ignored.
+    paying for their full bodies. Gated tasks are left out of the notes
+    entirely: code runs them, so they are never the model's to act on.
+    Unknown names in ``due_names`` are ignored. ``None`` (the due-gate
+    failed) keeps every task except the gated ones, with no notes.
     """
     preamble, blocks = split_blocks(text)
-    keep = set(due_names)
-    paused = {t.name for t in parse_tasks_text(text) if t.paused}
+    tasks = parse_tasks_text(text)
+    paused = {t.name for t in tasks if t.paused}
+    gated = {t.name for t in tasks if t.gate}
+    keep = set(due_names) if due_names is not None else {n for n, _ in blocks} - gated
+    blocks = [(n, b) for n, b in blocks if n in keep or n not in gated]
     kept = [b for name, b in blocks if name in keep]
     omitted = [n for n, _ in blocks if n not in keep and n not in paused]
     omitted_paused = [n for n, _ in blocks if n not in keep and n in paused]
@@ -285,24 +292,15 @@ def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
     return "\n\n".join(p for p in out if p)
 
 
-def load_state(path: str = STATE_PATH) -> dict:
+def load_state() -> dict:
     """The last-run map: ``{"last_run": {"<task>": "<iso8601>", ...}}``.
 
-    Missing or corrupt file → a fresh empty map (every task then looks
-    never-run, i.e. due — the safe direction).
+    An unreadable store reads as empty (every task then looks never-run,
+    i.e. due — the safe direction).
     """
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return {"last_run": {}}
-    except (OSError, json.JSONDecodeError):
-        logger.warning("heartbeat_state: unreadable %s — starting fresh", path)
-        return {"last_run": {}}
-    if not isinstance(data, dict) or not isinstance(data.get("last_run"), dict):
-        logger.warning("heartbeat_state: malformed %s — starting fresh", path)
-        return {"last_run": {}}
-    return data
+    from triggers import store
+
+    return {"last_run": store.task_stamps()}
 
 
 def _floor_to_tick(when: datetime) -> datetime:
@@ -315,7 +313,6 @@ def any_due(
     now: datetime | None = None,
     *,
     heartbeat_path: str = HEARTBEAT_PATH,
-    state_path: str = STATE_PATH,
 ) -> tuple[bool, list[str] | None]:
     """Which tasks are cadence-due at ``now`` (default: now, UTC).
 
@@ -338,7 +335,7 @@ def any_due(
             heartbeat_path,
         )
         return True, None
-    last_run = load_state(state_path)["last_run"]
+    last_run = load_state()["last_run"]
 
     due: list[str] = []
     for t in tasks:
@@ -390,13 +387,11 @@ def stamp(
     when: datetime | None = None,
     *,
     heartbeat_path: str = HEARTBEAT_PATH,
-    state_path: str = STATE_PATH,
 ) -> list[str]:
     """Record ``when`` (default: now, UTC) as last_run for the named tasks.
 
     Only names present in HEARTBEAT.md are stamped; unknown names are logged
-    and skipped. Nothing valid → no write. The file is replaced atomically
-    (tmp + os.replace). Returns the names actually stamped.
+    and skipped. Nothing valid → no write. Returns the names actually stamped.
     """
     when = when or datetime.now(timezone.utc)
     known = {t.name for t in parse_tasks(heartbeat_path)}
@@ -409,23 +404,11 @@ def stamp(
     if not stamped:
         return []
 
-    state = load_state(state_path)
-    for name in stamped:
-        state["last_run"][name] = when.isoformat()
+    from triggers import store
 
-    state_dir = os.path.dirname(state_path)
-    os.makedirs(state_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, sort_keys=True)
-            f.write("\n")
-        os.replace(tmp, state_path)
+        store.stamp_tasks(stamped, when.isoformat())
     except OSError:
-        logger.exception("heartbeat_state: failed to write %s", state_path)
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        logger.exception("heartbeat_state: failed to write stamps")
         return []
     return stamped

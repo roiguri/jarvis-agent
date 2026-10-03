@@ -13,7 +13,7 @@ The runtime is **not** responsible for:
 
 - Channel translation, owner addressing, or confirmation UI (that's the gateway — [GATEWAY.md](GATEWAY.md)).
 - Memory persistence or the path sandbox (that's `tools/core/memory.py` and the `MEMORY_DIR` sandbox).
-- Scheduling cadence (that's `heartbeat.py` + APScheduler — it *calls* this layer once per tick).
+- Scheduling cadence (that's `triggers/` + `heartbeat.py` — the tick *calls* this layer once per hour).
 
 The runtime is the LangGraph loop plus the tool registry that feeds it. Anything richer than "decide the prompt + tool set for this turn, run the loop, persist state" belongs elsewhere.
 
@@ -39,7 +39,7 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 |---|---|---|
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
 | `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
-| `scheduling.py` | `manage_reminder` | create / list / delete reminders. |
+| `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
 | `activate_skill.py` | `activate_skill`, `deactivate_skill` | The meta-tools that expose Tier 2. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)

@@ -3,8 +3,6 @@ import datetime
 import logging
 from timeutils import ISRAEL_TZ
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 import heartbeat_state
 
 
@@ -12,29 +10,10 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_THREAD_ID = "heartbeat"
 
-_scheduler: AsyncIOScheduler | None = None
-
-# Start time of the last tick that reached the model — guards against
-# back-to-back turns if ticks ever fire in quick succession.
-_MIN_TICK_SPACING = datetime.timedelta(seconds=30)
-_last_tick_start: datetime.datetime | None = None
-
-# A reminder whose send fails is kept and retried; past the cap it is dropped
-# so a permanently failing send can't reschedule itself forever.
-_REMINDER_RETRY_DELAY = datetime.timedelta(minutes=5)
-_REMINDER_MAX_RETRIES = 3
-
-
-def init_scheduler() -> AsyncIOScheduler:
-    global _scheduler
-    _scheduler = AsyncIOScheduler()
-    return _scheduler
-
-
-def get_scheduler() -> AsyncIOScheduler:
-    if _scheduler is None:
-        raise RuntimeError("Scheduler not initialized — call init_scheduler() first")
-    return _scheduler
+# Every turn on the heartbeat thread — hourly ticks and scheduled wakes — runs
+# under this lock, one at a time. A turn that arrives while another runs waits
+# for it instead of being dropped.
+TURN_LOCK = asyncio.Lock()
 
 
 async def run_heartbeat() -> None:
@@ -45,8 +24,6 @@ async def run_heartbeat() -> None:
     A model turn only happens when at least one task is cadence-due per the
     code-owned last_run state. The gate fails open: any error in it runs the
     model rather than silently killing the heartbeat."""
-    global _last_tick_start
-
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     try:
         due, due_names = await asyncio.to_thread(heartbeat_state.any_due, now_utc)
@@ -56,17 +33,49 @@ async def run_heartbeat() -> None:
     if not due:
         logger.info("Heartbeat: nothing due — skipping model turn")
         return
-    if _last_tick_start is not None and (now_utc - _last_tick_start) < _MIN_TICK_SPACING:
-        logger.info("Heartbeat: last tick started <%ss ago — deferring",
-                    int(_MIN_TICK_SPACING.total_seconds()))
-        return
-    _last_tick_start = now_utc
     logger.info("Heartbeat: due tasks: %s",
                 "unknown (running all)" if due_names is None else due_names)
 
-    from agent import ask_jarvis, get_heartbeat_ack
-    from gateway.factory import default_outbox
-    from gateway.outbox import EVENT_HEARTBEAT
+    if due_names is not None:
+        due_names = await _run_gated(due_names, now_utc)
+        if not due_names:
+            return
+    async with TURN_LOCK:
+        await _run_tick(now_utc, due_names)
+
+
+async def _run_gated(due_names: list[str], now_utc: datetime.datetime) -> list[str]:
+    """Run the due tasks that have a gate in code (triggers/gates.py) and
+    stamp each one that completed. Returns the due tasks left for the model."""
+    from triggers import gates
+
+    try:
+        gate_of = {t.name: t.gate for t in await asyncio.to_thread(heartbeat_state.parse_tasks)}
+    except Exception:
+        logger.exception("Heartbeat: couldn't read task gates — running every due task in the model")
+        return due_names
+    rest = []
+    for name in due_names:
+        gate_name = gate_of.get(name)
+        if not gate_name:
+            rest.append(name)
+            continue
+        if not gates.is_registered(gate_name):
+            # A typo in a hand-edited header must not silently stop the task.
+            logger.error("Heartbeat: task %s names unknown gate %r — running it in the model",
+                         name, gate_name)
+            rest.append(name)
+            continue
+        if await gates.evaluate(name, gate_name):
+            try:
+                await asyncio.to_thread(heartbeat_state.stamp, [name], now_utc)
+            except Exception:
+                logger.exception("Heartbeat: failed to stamp gated task %s", name)
+    return rest
+
+
+async def _run_tick(now_utc: datetime.datetime, due_names: list[str] | None) -> None:
+    from agent import ask_jarvis
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
     today = now_israel.strftime("%Y-%m-%d")
@@ -90,18 +99,20 @@ async def run_heartbeat() -> None:
         logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.cause)
 
     # Structured tick-ack: delivery and stamping key off it.
-    try:
-        ack = await asyncio.to_thread(get_heartbeat_ack, HEARTBEAT_THREAD_ID)
-    except Exception:
-        logger.exception("Heartbeat: failed to read heartbeat_respond ack")
-        ack = None
+    ack = await _read_ack()
     acted: list[str] = []
     if ack is None:
         logger.warning("Heartbeat: no heartbeat_respond call this tick — not stamping")
         # A tick that broke before acking is the one silence the owner must
         # hear about; a finished tick that merely forgot the ack is not.
         if not outcome.finished:
-            await _notify_tick_failed(outcome, due_names, now_israel)
+            tasks = ", ".join(due_names) if due_names else "all tasks"
+            await _notify_failed(
+                f"Heartbeat check at {now_israel.strftime('%H:%M')} Israel time didn't finish: "
+                f"{outcome.cause}. Tasks: {tasks}.",
+                outcome,
+                "They run again on the next tick while still due.",
+            )
     else:
         logger.info(
             "Heartbeat: ack acted_tasks=%s notify=%s summary=%r",
@@ -123,17 +134,7 @@ async def run_heartbeat() -> None:
 
     # Delivery: the ack decides what Roi sees — a tick without one (already
     # warned above) delivers nothing and its tasks re-run next tick.
-    text = ack.get("notification_text", "") if ack else ""
-    deliver = bool(ack and ack.get("notify") and text)
-    delivered_ok = True
-    if deliver:
-        logger.info("Heartbeat: sending message to user")
-        sent = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT)
-        delivered_ok = sent.ok
-        if not sent.ok:
-            logger.error("Heartbeat: failed to send message: %s", sent.error)
-    else:
-        logger.info("Heartbeat: nothing to send")
+    delivered_ok = await _deliver(ack) is None
 
     # Stamping happens only after delivery is settled: a failed send leaves
     # the acted tasks unstamped so they come due again next tick and the
@@ -158,82 +159,109 @@ async def run_heartbeat() -> None:
                 logger.exception("Heartbeat: failed to stamp last_run state")
 
 
-async def _notify_tick_failed(
-    outcome, due_names: list[str] | None, now_israel: datetime.datetime
-) -> None:
-    """Tell the owner a tick broke. Built in code, not by the model — the model
-    may be what failed. Sent as a heartbeat event so it is logged and mirrored
-    into the owner thread, where the chat side learns of the failure as
-    history; `tick_failed` marks the row apart from ordinary briefings."""
+async def _read_ack() -> dict | None:
+    from agent import get_heartbeat_ack
+
+    try:
+        return await asyncio.to_thread(get_heartbeat_ack, HEARTBEAT_THREAD_ID)
+    except Exception:
+        logger.exception("Heartbeat: failed to read heartbeat_respond ack")
+        return None
+
+
+async def _deliver(ack: dict | None, metadata: dict | None = None) -> str | None:
+    """Send the ack's notification, if it asks for one. Returns the text when
+    the send failed (so the caller can keep it), else None."""
+    from gateway.factory import default_outbox
+    from gateway.outbox import EVENT_HEARTBEAT
+
+    text = ack.get("notification_text", "") if ack else ""
+    if not (ack and ack.get("notify") and text):
+        logger.info("Heartbeat: nothing to send")
+        return None
+    logger.info("Heartbeat: sending message to user")
+    sent = await default_outbox().notify_owner(text, event=EVENT_HEARTBEAT, metadata=metadata)
+    if sent.ok:
+        return None
+    logger.error("Heartbeat: failed to send message: %s", sent.error)
+    return text
+
+
+async def run_wake(trigger) -> None:
+    """Run a scheduled wake: a heartbeat-scope turn on the heartbeat thread
+    with the trigger's instruction, delivered per its heartbeat_respond ack.
+
+    A wake runs at most once — it may already have acted, so a broken one is
+    reported, not retried, and it leaves the store before its turn starts (a
+    crash mid-turn loses it rather than re-running it on restart). Only a
+    failed delivery is retried, as a plain send of the text the turn wrote."""
+    from agent import ask_jarvis
+    from triggers import runner, store
+    from triggers.model import ORIGIN_CODE, ORIGIN_OWNER, Send, Trigger
+
+    async with TURN_LOCK:
+        now_israel = datetime.datetime.now(ISRAEL_TZ)
+        task = trigger.action.task
+        source = {
+            ORIGIN_OWNER: "set by the owner in chat",
+            ORIGIN_CODE: f"set automatically by task {task}'s check" if task else "set automatically",
+        }.get(trigger.origin, "set by you in an earlier background turn")
+        prompt = (
+            f"Scheduled wake [{trigger.id}], {source}. Work only this instruction, "
+            "following the scheduled-wake rules above"
+            + (f" and task {task}'s block in HEARTBEAT.md" if task else "")
+            + f":\n\n{trigger.action.instruction}"
+        )
+        # Cancelled or replaced while waiting for the lock (or before a
+        # restart's past-due run): it is gone from the store, so it doesn't run.
+        if not await asyncio.to_thread(store.remove, trigger.id):
+            logger.info("Heartbeat: wake %s was cancelled before it ran — skipping", trigger.id)
+            return
+        logger.info("Heartbeat: running wake %s", trigger.id)
+        outcome = await asyncio.to_thread(
+            ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
+            scope="heartbeat", heartbeat_due_tasks=[task] if task else [], trigger=trigger,
+        )
+        if not outcome.finished:
+            logger.error("Heartbeat: wake %s ended %s: %s", trigger.id, outcome.kind, outcome.cause)
+        ack = await _read_ack()
+        if ack is None:
+            logger.warning("Heartbeat: wake %s left no heartbeat_respond call", trigger.id)
+            if not outcome.finished:
+                await _notify_failed(
+                    f"Scheduled wake at {now_israel.strftime('%H:%M')} Israel time didn't finish: "
+                    f"{outcome.cause}. It was: {trigger.action.instruction[:200]}",
+                    outcome,
+                    "It won't run again on its own.",
+                )
+            return
+        logger.info("Heartbeat: wake %s ack notify=%s summary=%r",
+                    trigger.id, ack.get("notify"), str(ack.get("summary", ""))[:200])
+        undelivered = await _deliver(ack, metadata={"trigger": trigger.id})
+        if undelivered is not None:
+            retry = Trigger(trigger.id, trigger.when, Send(undelivered), trigger.origin,
+                            trigger.parent, trigger.key)
+            await asyncio.to_thread(store.add, retry)
+            logger.warning("Heartbeat: wake %s delivery failed — retrying as a send", trigger.id)
+            runner.retry(retry, 0, "delivery failed")
+
+
+async def _notify_failed(head: str, outcome, tail: str) -> None:
+    """Tell the owner a heartbeat-thread turn broke. Built in code, not by the
+    model — the model may be what failed. Sent as a heartbeat event so it is
+    logged and mirrored into the owner thread, where the chat side learns of
+    the failure as history; `tick_failed` marks the row apart from ordinary
+    briefings."""
     from gateway.factory import default_outbox
     from gateway.outbox import EVENT_HEARTBEAT
     from turn_budget import committed_summary
 
-    tasks = ", ".join(due_names) if due_names else "all tasks"
-    text = (
-        f"Heartbeat check at {now_israel.strftime('%H:%M')} Israel time didn't finish: "
-        f"{outcome.cause}. Tasks: {tasks}."
-    )
+    text = head
     if outcome.committed_calls:
         text += f" Already done before it stopped: {committed_summary(outcome.committed_calls)}."
-    text += " They run again on the next tick while still due."
+    text += f" {tail}"
     result = await default_outbox().notify_owner(
         text, event=EVENT_HEARTBEAT, metadata={"tick_failed": True}
     )
     if not result.ok:
-        logger.error("Heartbeat: failed to send the tick-failure notice: %s", result.error)
-
-
-async def fire_reminder(event: dict) -> None:
-    """Send the reminder text directly. No LLM. The event is removed from the
-    events file only after a successful send; a failed send is retried a few
-    times, and the persisted event survives a restart either way."""
-    from apscheduler.triggers.date import DateTrigger
-    from gateway.factory import default_outbox
-    from gateway.outbox import EVENT_REMINDER
-    from tools.core import _remove_event
-
-    text = event.get("text", "(reminder)")
-    fire_at_str = event.get("fire_at", "")
-    if fire_at_str:
-        try:
-            scheduled = datetime.datetime.fromisoformat(fire_at_str)
-            delay = datetime.datetime.now(datetime.timezone.utc) - scheduled
-            if delay.total_seconds() > 60:
-                scheduled_local = scheduled.astimezone(ISRAEL_TZ).strftime("%H:%M Israel time")
-                text = f"[Originally scheduled for {scheduled_local}]\n{text}"
-        except Exception:
-            pass
-
-    logger.info("Heartbeat: firing reminder id=%s fire_at=%s text=%r",
-                event.get("id"), event.get("fire_at"), text[:80])
-    outcome = await default_outbox().notify_owner(text, event=EVENT_REMINDER)
-    if outcome.ok:
-        await asyncio.to_thread(_remove_event, event["id"])
-        logger.info("Heartbeat: reminder id=%s removed from events file", event.get("id"))
-        return
-
-    retries = int(event.get("retries", 0))
-    if retries >= _REMINDER_MAX_RETRIES:
-        logger.error(
-            "Heartbeat: reminder id=%s undeliverable after %d retries (%s) — dropping",
-            event.get("id"), retries, outcome.error,
-        )
-        await asyncio.to_thread(_remove_event, event["id"])
-        return
-
-    retry_at = datetime.datetime.now(datetime.timezone.utc) + _REMINDER_RETRY_DELAY
-    get_scheduler().add_job(
-        fire_reminder,
-        DateTrigger(run_date=retry_at),
-        id=f"event_{event['id']}",
-        args=[{**event, "retries": retries + 1}],
-        replace_existing=True,
-    )
-    logger.warning(
-        "Heartbeat: reminder id=%s send failed (%s) — retry %d/%d at %s",
-        event.get("id"), outcome.error, retries + 1, _REMINDER_MAX_RETRIES,
-        retry_at.isoformat(timespec="seconds"),
-    )
-
-
+        logger.error("Heartbeat: failed to send the failure notice: %s", result.error)

@@ -1,7 +1,7 @@
 # Heartbeat — Gated Background Ticks
 
-APScheduler fires `run_heartbeat()` at the top of every hour (`main.py`,
-`CronTrigger(hour="*/1", minute=0)` in UTC). The phase is fixed and survives
+The shared APScheduler (`triggers/scheduler.py`) fires `run_heartbeat()` at the
+top of every hour (`main.py`, `CronTrigger(hour="*/1", minute=0)` in UTC). The phase is fixed and survives
 restarts by design — see [The gate](#the-gate-heartbeat_stateany_due).
 **Code decides *when* the model runs; the model decides *what* to do.** A tick
 only becomes an LLM turn when at least one task is due per code-owned state,
@@ -23,7 +23,10 @@ run_heartbeat()                                  heartbeat.py
         │    per task: cadence elapsed AND due-window open
         │    ├─ nothing due ──► log "nothing due", RETURN (no model, no agent import)
         │    └─ gate error  ──► FAIL OPEN: run with the full task list
-        ├─ last tick started <30s ago? ──► defer
+        ├─ gated due tasks ──► triggers.gates.evaluate in code; stamped on
+        │    success, never shown to the model (see TRIGGERS.md "Gates")
+        │    └─ none left ──► RETURN (no model)
+        ├─ wait for TURN_LOCK (a wake may be running on this thread)
         ▼
 ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
@@ -39,7 +42,7 @@ run_heartbeat() reads the ack (agent.get_heartbeat_ack)
         │  → code-built notice, event="heartbeat", tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
         │                event="heartbeat")         send + log-on-success
-        └─ stamp(acted_tasks) → state.json          only acted tasks advance,
+        └─ stamp(acted_tasks) → last_run (store)    only acted tasks advance,
                                                     and only after delivery
                                                     settled (see below)
 ```
@@ -70,21 +73,20 @@ stamps normally.
 
 | File | Owner | Holds | Read by |
 |---|---|---|---|
-| `/app/jarvis_memory/HEARTBEAT.md` | Roi (hand-edit) + agent (via `manage_heartbeat_task` only) | Task **definitions**: name, cadence, optional `due:` window, prose instruction | gate parser AND prompt injection |
+| `/app/jarvis_memory/HEARTBEAT.md` | the owner (hand-edit) + agent (via `manage_heartbeat_task` only) | Task **definitions**: name, cadence, optional `due:` window, optional `gate:`, prose instruction | gate parser AND prompt injection |
 | `/app/jarvis_memory/heartbeat/<task>.md` | agent (free-form via memory tools) | **Notes**: narrative state for reasoning (`target_date`, `last_known_schedule`, …) | agent only — code never parses it |
-| `/app/jarvis_data/heartbeat/state.json` | code (`heartbeat_state.py`) | **Machine state**: `{"last_run": {"<task>": "<iso8601>"}}`, stamped only from the tick ack | code only — outside the memory sandbox, the agent cannot touch it |
+| `/app/jarvis_data/triggers/triggers.json` | code (`triggers/store.py`, via `heartbeat_state.load_state`/`stamp`) | **Machine state**: `last_run: {"<task>": "<iso8601>"}`, stamped only from the tick ack or a completed gate; also the gates' state and pending triggers ([TRIGGERS.md](TRIGGERS.md)) | code only — outside the memory sandbox, the agent cannot touch it |
 
-Transitional note: the agent currently still writes a `last_run:` line into its
-notes files in parallel with `state.json`; the markdown copy is retired once
-the two have demonstrably agreed in production (`state.json` is already the
-only input to the gate).
+The stamps lived in `/app/jarvis_data/heartbeat/state.json` until they moved
+into the trigger store; an instance that still has that file migrates it on the
+first store read and keeps it as `state.json.migrated`.
 
 ---
 
 ## Task grammar
 
 ```
-- **<task-name>** | every <N><unit> [| due: <window>] [| paused] | notes: `heartbeat/<file>.md`
+- **<task-name>** | every <N><unit> [| due: <window>] [| paused] [| gate: <name>] | notes: `heartbeat/<file>.md`
   <free-form prose instruction — the model's brief, never parsed by code>
 ```
 
@@ -99,6 +101,13 @@ only input to the gate).
   a whole field between pipes, so a notes path or window containing the word is
   not the flag. Owner-declared and manual — nothing in the system sets or clears
   it on its own.
+- **`gate:`** (optional): the name of a registered code check
+  (`triggers/gates.py`). The task then never runs in a tick's model turn: its
+  check runs in code when due, and any model work happens in the wakes its
+  handler creates, whose turns are shown this task's block — so the prose
+  describes those wakes. Set by hand-editing (a gate is code);
+  `manage_heartbeat_task` preserves it on every edit. See
+  [TRIGGERS.md](TRIGGERS.md), "Gates".
 - **`notes:`/`state:` pointer**: both words accepted; names the task's notes
   file.
 
@@ -107,6 +116,7 @@ only input to the gate).
 | Surface | On bad input | Rationale |
 |---|---|---|
 | Read side (`parse_tasks`, gate) | **Fail open** — unparseable cadence/window/file → task (or whole tick) treated as due; run the model | A malformed hand edit may cost a model call; it must never silently kill a task |
+| Gated task (`gate:`) | **Retry, then tell** — a failing check commits and stamps nothing, so the task is due again next tick; one owner notice after 3 failures in a row. On the fail-open path (`due_names=None`) gated tasks are skipped for that tick | A gated task never runs in the model, so there is nothing to fail open *to*; staying unstamped keeps it retrying and the notice keeps a persistent failure from going silent |
 | Write side (`manage_heartbeat_task`) | **Fail loud** — invalid name/cadence/window/duplicate → clear error, file untouched | The agent authors tasks; a silent malformed write would create a task that never fires with nobody knowing |
 
 ---
@@ -116,7 +126,7 @@ only input to the gate).
 A task is due when **not paused AND cadence elapsed AND window open**. `paused`
 short-circuits first: no cadence maths, no window check, and the task never
 enters `due_names` — so a tick whose only candidates are paused makes no model
-call at all. Pausing does not touch `state.json`, so a task resumed after a long
+call at all. Pausing does not touch the stamps, so a task resumed after a long
 pause is immediately cadence-due and runs on the next tick inside its window.
 That is intended: resuming is when you want the check to happen.
 
@@ -124,9 +134,10 @@ Otherwise, cadence elapsed
 means: never stamped, stamp unreadable, cadence unparseable, or
 `now − last_run ≥ cadence` (less `CADENCE_GRACE`). Empty/unreadable
 `HEARTBEAT.md` → `(True, None)`: run the model with the *full* file rather than
-skip. Any exception in the gate itself → run the model. A 30s min-spacing guard
-protects against back-to-back ticks. Stamps advance **only** for tasks the agent
-listed in `acted_tasks` — a task the model checked but skipped stays due and
+skip. Any exception in the gate itself → run the model. Every heartbeat-thread
+turn (tick or scheduled wake) runs under one `TURN_LOCK`, so a tick that arrives
+while a wake runs waits for it rather than being dropped. Stamps advance
+**only** for tasks the agent listed in `acted_tasks` — a task the model checked but skipped stays due and
 re-fires next tick.
 
 **The tick lattice.** Elapsed time is measured raw first. If that comes up
@@ -167,12 +178,15 @@ computes that start internally.
 
 Only due task blocks are injected; the preamble is kept and omitted tasks are
 named in a single line so the model knows they exist and are not due
-(`prompts/heartbeat.md` forbids acting on omitted tasks). Paused tasks are named
+(`prompts/heartbeat.md` forbids acting on omitted tasks). Gated tasks are left
+out of those notes entirely: code runs them, so naming them is only noise. Paused tasks are named
 in a *separate* line: "not due yet" invites the model to reason about a next
 run, which is wrong for a task the owner switched off. Cold start / gate failure
-(`due_names=None`) injects the full file, paused tasks included and carrying no
-note — an accepted, bounded cost of the deliberate fail-open: a gate that cannot
-say what is due cannot vouch for what is paused either.
+(`due_names=None`) injects every task except gated ones, paused tasks included
+and carrying no note — an accepted, bounded cost of the deliberate fail-open: a
+gate that cannot say what is due cannot vouch for what is paused either. Gated
+tasks are left out even here, since code (not the model) runs them; they are
+simply not evaluated that tick.
 
 ## The ack (`heartbeat_respond`)
 
@@ -219,6 +233,33 @@ Guards:
   `./HEARTBEAT.md` cannot bypass it. `manage_heartbeat_task` is the agent's
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
+
+## The daily log
+
+`daily/daily_YYYY-MM-DD.md` is written by an ordinary task, `daily-log` in
+HEARTBEAT.md (every 3h, 05:00–23:30 Israel time), whose prose folds in today's
+chat, today's proactive sends (`get_notification_history`) and the day's
+heartbeat activity. It used to be a rule in `prompts/heartbeat.md` that every
+tick reaching the model followed, which only kept it fresh while an hourly task
+kept waking the model; once crossfit moved behind a gate, that stopped. Chat
+after the last run of the day (23:00) is not captured.
+
+## Scheduled wakes (`run_wake`)
+
+A wake is a one-shot trigger whose action is a turn ([TRIGGERS.md](TRIGGERS.md)).
+When it fires, `run_wake` runs it on the heartbeat thread, under the same
+`TURN_LOCK` as ticks: `ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[],
+trigger=...)`, so every task collapses to the not-due note and the
+"Scheduled wakes" rules in `prompts/heartbeat.md` apply (work only the
+instruction; no task list, no daily log; ack with `acted_tasks=[]`). The ack is
+delivered by the same `_deliver` helper as a tick, as a `heartbeat` event whose
+metadata names the trigger. Nothing is stamped.
+
+A wake runs at most once. It leaves the store before its turn starts, so a crash
+mid-turn loses it instead of re-running it. A turn that breaks without an ack
+sends the code-built failure notice (shared with ticks via `_notify_failed`).
+Only a failed delivery is retried: the text the turn wrote is stored as a plain
+send under the wake's id and goes through the reminder retry path.
 
 ---
 

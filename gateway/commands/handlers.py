@@ -418,3 +418,42 @@ async def _tz(inbound: InboundMessage, args: list[str]) -> str:
         f"Away mode on — {name}. Owner local time {local.strftime('%Y-%m-%d %H:%M')}, "
         f"Israel {israel.strftime('%H:%M')}."
     )
+
+
+_TRIGGERS_USAGE = "Usage: `/triggers` to list, `/triggers cancel <id>` to cancel one."
+
+
+@command("triggers", "List scheduled reminders and wakes, or cancel one")
+async def _triggers(inbound: InboundMessage, args: list[str]) -> str:
+    """Pending triggers, read straight from the store — no model.
+    `cancel <id>` removes one and disarms its job."""
+    import timeutils
+    from triggers import scheduler, store
+    from triggers.model import ORIGIN_CODE, ORIGIN_OWNER, Turn
+
+    if args and args[0].lower() == "cancel":
+        if len(args) < 2:
+            return _TRIGGERS_USAGE
+        trigger_id = args[1]
+        match = await asyncio.to_thread(store.get, trigger_id)
+        if match is None:
+            return f"Nothing scheduled with id `{trigger_id}`."
+        await asyncio.to_thread(store.remove, trigger_id)
+        scheduler.disarm(trigger_id)
+        kind = "wake" if isinstance(match.action, Turn) else "reminder"
+        return f"Cancelled {kind} `{trigger_id}`."
+    if args:
+        return _TRIGGERS_USAGE
+
+    items = []
+    for t in sorted(await asyncio.to_thread(store.all_triggers), key=lambda x: x.when.instant):
+        when = t.when.instant.astimezone(timeutils.ISRAEL_TZ).strftime("%a %d.%m %H:%M")
+        if isinstance(t.action, Turn):
+            kind, body = "wake", t.action.instruction
+        else:
+            kind, body = "reminder", t.action.text
+        source = {ORIGIN_OWNER: "from chat", ORIGIN_CODE: f"automatic, {t.parent}"}.get(
+            t.origin, "set by Jarvis")
+        excerpt = body if len(body) <= 80 else body[:79] + "…"
+        items.append(f"`{t.id}` {when} — {kind}, {source}: {excerpt}")
+    return section("Scheduled", items, empty="_Nothing scheduled._")

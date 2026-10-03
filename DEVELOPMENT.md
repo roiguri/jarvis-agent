@@ -89,11 +89,10 @@ message instead of failing silently.
 | `MEMORY_DIR` | `tools/core/memory.py` | `/app/jarvis_memory` | Long-term memory sandbox root |
 | `JELLYFIN_INTERNAL_URL` | `gateway/webhook/notifier.py` | `http://jellyfin.local:8096` | Poster fetch endpoint (env-overridable) |
 | `SILENCE_SERIES` / `SILENCE_MOVIE` | `gateway/webhook/notifier.py` | `600` / `120` (s) | Notification fallback timers |
-| `HEARTBEAT_INTERVAL_HOURS` | `main.py` | `1` | Heartbeat agent-turn cadence |
+| `TICK_INTERVAL_HOURS` | `heartbeat_state.py` | `1` | Heartbeat tick lattice (`triggers.scheduler.add_heartbeat` builds the cron from it) |
 | `HEARTBEAT_THREAD_ID` | `heartbeat.py` | `"heartbeat"` | Shared thread for all scheduled turns |
-| `STATE_PATH` | `heartbeat_state.py` | `/app/jarvis_data/heartbeat/state.json` | Code-owned per-task last_run stamps (due-gate input) |
-| `_MIN_TICK_SPACING` | `heartbeat.py` | `30` (s) | Minimum spacing between model-reaching ticks |
-| `EVENTS_PATH` | `tools/core/scheduling.py` | `/app/jarvis_data/scheduling/scheduled_events.json` | Pending reminders across restarts |
+| `TURN_LOCK` | `heartbeat.py` | — | Serializes every heartbeat-thread turn (ticks and wakes); waits, never drops |
+| `STORE_PATH` | `triggers/store.py` | `/app/jarvis_data/triggers/triggers.json` | Pending triggers, gate state, and heartbeat tasks' last_run stamps (due-gate input) |
 | `DB_PATH` (fitness) | `tools/fitness/_db.py` | `/app/jarvis_data/fitness/fitness.sqlite` | Fitness-skill DB |
 | `_HEARTBEAT_MD_PATH` | `agent.py` | `/app/jarvis_memory/HEARTBEAT.md` | Injected into heartbeat-scope prompt |
 | `_AGENTS_PATH` / `_HEARTBEAT_PROMPT_PATH` | `agent.py` | `/app/jarvis_code/prompts/AGENTS.md` / `heartbeat.md` | Dev-controlled prompt content |
@@ -203,11 +202,13 @@ Non-obvious runtime behavior that isn't derivable from the architecture docs.
 
 ### Reminder persistence
 
-`manage_reminder(action='create')` writes `scheduled_events.json` atomically and
-creates an APScheduler `DateTrigger` job immediately. On service restart `main.py`
-re-reads the file and re-creates every pending job; **past-due reminders fire
-immediately** via `asyncio.create_task` with a staleness annotation. A fired
-reminder is removed from the file.
+`manage_trigger(action='create')` adds a trigger to `triggers.json` atomically and
+arms an APScheduler `DateTrigger` job immediately (`triggers/scheduler.py`). On service
+restart `restore_pending()` re-arms every stored trigger; **past-due reminders fire
+immediately** with a staleness annotation (a past-due *wake* runs its turn once, on startup). A trigger is removed from the store only
+after its send succeeds. An instance that still has the pre-triggers
+`scheduling/scheduled_events.json` migrates it on first read and keeps the old file as
+`scheduled_events.json.migrated`.
 
 ### Notification batch aggregation (`gateway/webhook/notifier.py`)
 

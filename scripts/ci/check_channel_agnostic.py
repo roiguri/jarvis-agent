@@ -71,7 +71,9 @@ _REVERSE_EXEMPT = (
 _FORBIDDEN_TOOL_TOKENS = ("telegram", "inlinekeyboard")
 _FORBIDDEN_AGENT_TOKENS = ("telegram", "jarvis-app")
 
-_SKIP_DIRS = {"__pycache__", ".git", "venv", ".venv", "node_modules"}
+# .claude/ holds local agent state, including git worktrees of other branches
+# whose code is not this tree's code.
+_SKIP_DIRS = {"__pycache__", ".git", "venv", ".venv", "node_modules", ".claude"}
 
 
 def _py_files(*rels):

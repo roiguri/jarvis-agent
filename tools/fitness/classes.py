@@ -23,7 +23,12 @@ def _fetch_schedule(from_dt: datetime, to_dt: datetime) -> list[dict]:
         "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
         "boxes_id": int(os.environ.get("ARBOX_BOX_ID", "0")),
     }
-    return _arbox_post("/api/v2/schedule/betweenDates", body).get("data", [])
+    resp = _arbox_post("/api/v2/schedule/betweenDates", body)
+    # A reply without its data field is an error, never an empty schedule:
+    # read as empty it would look like every booking was dropped.
+    if not isinstance(resp, dict) or "data" not in resp:
+        raise RuntimeError("Arbox schedule reply had no 'data' field")
+    return resp["data"] or []
 
 
 def _purge_dropped_arbox_classes(conn, registered_ids, now_str, horizon_str):
@@ -70,11 +75,23 @@ def _sync_registered_classes() -> str:
 
     Raises on Arbox failure; callers own the error wording.
     """
+    return _apply_registered(_fetch_registered())
+
+
+def _fetch_registered() -> list[dict]:
+    """The classes the user is registered for across the registration
+    horizon. Only reads Arbox — never touches the database — so a gate can
+    call it every tick without consuming the change it looks for."""
     now = datetime.now(timezone.utc)
     to_dt = now + timedelta(hours=ARBOX_REGISTRATION_HORIZON_HOURS)
     classes = _fetch_schedule(now, to_dt)
-    registered = [c for c in classes if c.get("user_booked") is not None]
+    return [c for c in classes if c.get("user_booked") is not None]
 
+
+def _apply_registered(registered: list[dict]) -> str:
+    """Reconcile `workouts` with a complete registered set from
+    `_fetch_registered`: insert new classes, purge dropped ones. Returns the
+    user-facing summary."""
     now_il = datetime.now(ISRAEL_TZ)
     now_str = now_il.strftime("%Y-%m-%d %H:%M:%S")
     horizon_str = (

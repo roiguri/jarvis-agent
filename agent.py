@@ -401,7 +401,7 @@ def build_system_prompt(
       addressed) + yesterday's daily log (older days are reachable via
       read_memory on demand). When ``due_tasks`` is a list, only those task
       blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
-      one-line note); None injects the full file.
+      one-line note); None injects every task except gated ones.
     All files are read per turn (edits take effect next turn, no restart).
     """
     # Date only: the clock lives in the turn's input stamp (_turn_stamp), so
@@ -432,7 +432,7 @@ def build_system_prompt(
         parts.append(_HEARTBEAT_FRAMING)
         parts.append(load_or_blank(_HEARTBEAT_PROMPT_PATH))
         hb = load_or_blank(_HEARTBEAT_MD_PATH)
-        if hb and due_tasks is not None:
+        if hb:
             hb = heartbeat_state.filter_heartbeat_md(hb, due_tasks)
         if hb:
             parts.append(f"--- HEARTBEAT.md ---\n{hb}")
@@ -665,6 +665,7 @@ def ask_jarvis(
     turn_id: str | None = None,
     heartbeat_due_tasks: list[str] | None = None,
     channel: str | None = None,
+    trigger=None,
 ) -> turn_budget.TurnOutcome:
     """
     Run one agent turn and classify how it ended.
@@ -686,9 +687,11 @@ def ask_jarvis(
             nodes and tool calls can stamp it on telemetry records.
         heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
             blocks injected into the system prompt to these task names.
-            None injects the full file. Overwritten in state every turn.
+            None injects every task except gated ones. Overwritten in state every turn.
         channel: origin channel name (router-stamped), or None for
             origin-less turns. Published via CURRENT_CHANNEL.
+        trigger: the trigger whose firing started this turn (a scheduled
+            wake), or None. Published via CURRENT_TRIGGER.
     """
     user_input = f"{_turn_stamp(_dt.datetime.now(_dt.timezone.utc))} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
@@ -712,6 +715,7 @@ def ask_jarvis(
     _scope_token = turn_context.CURRENT_SCOPE.set(scope)
     _thread_token = turn_context.CURRENT_THREAD_ID.set(thread_id)
     _channel_token = turn_context.CURRENT_CHANNEL.set(channel)
+    _trigger_token = turn_context.CURRENT_TRIGGER.set(trigger)
     _tracker_token = turn_budget.TRACKER.set(tracker)
     telemetry.record_turn_start(
         thread_id=thread_id,
@@ -948,6 +952,7 @@ def ask_jarvis(
         turn_context.CURRENT_SCOPE.reset(_scope_token)
         turn_context.CURRENT_THREAD_ID.reset(_thread_token)
         turn_context.CURRENT_CHANNEL.reset(_channel_token)
+        turn_context.CURRENT_TRIGGER.reset(_trigger_token)
         turn_budget.TRACKER.reset(_tracker_token)
     return outcome
 

@@ -44,7 +44,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── MEMORY.md              # agent-maintained master index of memory files
 ├── HEARTBEAT.md           # recurring task list (edited via manage_heartbeat_task)
 ├── heartbeat/*.md         # per-task NOTES files (narrative state; machine last_run lives in jarvis_data)
-├── daily/daily_YYYY-MM-DD.md   # episodic daily logs (written by heartbeat)
+├── daily/daily_YYYY-MM-DD.md   # episodic daily logs (written by the daily-log heartbeat task, every 3h)
 ├── *.txt / *.md           # long-term memory the agent writes freely
 └── threads.sqlite(+-wal,-shm)  # deny-listed exception (LangGraph owns the path)
 
@@ -54,8 +54,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
-├── scheduling/scheduled_events.json
-├── heartbeat/state.json   # code-owned per-task last_run stamps (gate input — see HEARTBEAT.md doc)
+├── triggers/triggers.json # code-owned: pending triggers, gate state, task last_run stamps (gate input — see HEARTBEAT.md doc)
 └── logs/{chat_history,notifications}.jsonl
 
 /app/jarvis_code/gateway/*/media_cache/   # channel-owned (see GATEWAY.md)
@@ -122,7 +121,7 @@ USER.md            (jarvis_memory — durable user profile)
 ─ scope == "heartbeat" ────────────────────────────────────────
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
-     (non-due tasks collapse to a one-line note; None = full file)
+     (non-due tasks collapse to a one-line note; None = every task but gated ones)
    + today's user chat (live slice of chat_history.jsonl)
    + yesterday's daily log
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
@@ -142,7 +141,7 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
-- **`user`** — conversational framing + **today's daily log**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent. The daily log carries the richer narrative (still useful, but lagging because it is rewritten only at end-of-tick).
+- **`user`** — conversational framing + **today's daily log**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent. The daily log carries the richer narrative (still useful, but lagging: its own `daily-log` heartbeat task rewrites it every 3h).
 - **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl` filtered to `thread_id` starting with `telegram_`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks Roi has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
 Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. They sit alongside the daily log rather than replacing it: live for freshness, daily log for narrative.
@@ -157,7 +156,7 @@ The final `compact_skill_list(...)` section — every skill's `SKILL.md` descrip
 
 Decisions that intentionally diverge from earlier plan sketches; recorded so they are not "fixed" back later.
 
-- **No env-var overrides for relocated paths.** `fitness.sqlite`, `scheduled_events.json`, and the logs use hardcoded constants — no `FITNESS_DB_PATH` etc. A single Roi-operated LXC has no second deployment to parameterize for; an env knob would be dead configuration (YAGNI).
+- **No env-var overrides for relocated paths.** `fitness.sqlite`, `triggers.json`, and the logs use hardcoded constants — no `FITNESS_DB_PATH` etc. A single Roi-operated LXC has no second deployment to parameterize for; an env knob would be dead configuration (YAGNI).
 - **AGENTS.md lives in code, not `jarvis_memory/`.** Operating rules change by deploy and must not be agent-mutable; putting them in the version-controlled, sandbox-external `prompts/` dir enforces that structurally rather than via a runtime guard.
 - **`MEMORY.md` is tool-read, not prompt-injected** (see Access Model) — a deliberate token trade, not an omission.
 - **`threads.sqlite*` stays in `jarvis_memory/`** as the one deny-listed exception, because LangGraph owns the path. Its disk-footprint hygiene (WAL high-water mark, un-VACUUMed free pages) is self-bounded and tracked separately, not fixed here.
@@ -172,7 +171,7 @@ Decisions that intentionally diverge from earlier plan sketches; recorded so the
 2. writes to a `tempfile.NamedTemporaryFile` in the **same directory**;
 3. `os.replace()` — atomic rename on one filesystem — to publish.
 
-A reader therefore sees either the old or the new file, never a truncated one; concurrent writers serialize. This mirrors the atomic temp+replace pattern `scheduling.py` already uses for `scheduled_events.json`, plus the lock.
+A reader therefore sees either the old or the new file, never a truncated one; concurrent writers serialize. This mirrors the atomic temp+replace pattern `triggers/store.py` uses for `triggers.json`, plus the lock.
 
 ---
 

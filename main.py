@@ -4,18 +4,15 @@ import os
 import signal
 import subprocess
 import uvicorn
-from datetime import datetime, timezone
 from dotenv import load_dotenv
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 
 # Instance paths — first project import (validates JARVIS_ROOT, derives every path).
 import config
 
 from agent import ask_jarvis, ask_jarvis_once
 import heartbeat_state
-from heartbeat import init_scheduler, run_heartbeat, fire_reminder
-from tools.core import _load_events
+from heartbeat import run_heartbeat
+from triggers.scheduler import add_heartbeat, init_scheduler, restore_pending
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
@@ -256,25 +253,9 @@ async def main() -> None:
     # Init APScheduler and register the heartbeat job before the channel comes
     # up, so an inbound turn can never observe a missing scheduler. Jobs don't
     # run until scheduler.start() below.
-    #
-    # Cron, not interval: an interval trigger anchors its first run at scheduler
-    # start, so every restart re-phased the schedule to whatever minute the
-    # process booted at. UTC keeps it 24 ticks a day across DST.
     scheduler = init_scheduler()
     if config.HEARTBEAT_ENABLED:
-        scheduler.add_job(
-            run_heartbeat,
-            CronTrigger(
-                hour=f"*/{heartbeat_state.TICK_INTERVAL_HOURS}",
-                minute=0,
-                timezone=timezone.utc,
-            ),
-            id="heartbeat",
-            replace_existing=True,
-            # Held to the gate's grace: a tick delayed past this is dropped
-            # rather than fired off-lattice, and comes due again next hour.
-            misfire_grace_time=int(heartbeat_state.CADENCE_GRACE.total_seconds()),
-        )
+        add_heartbeat(run_heartbeat)
 
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
@@ -287,28 +268,10 @@ async def main() -> None:
         logger.info("jarvis-app channel active (hub polling).")
 
     try:
-        # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md).
-        # Skipped when reminders are disabled — staging must not re-fire the owner's
-        # real events. Hold references to past-due fire tasks so they can't be GC'd.
-        past_due_tasks: list[asyncio.Task] = []
-        events = _load_events().get("events", []) if config.REMINDERS_ENABLED else []
-        for event in events:
-            if event.get("type") != "reminder":
-                continue
-            fire_at_dt = datetime.fromisoformat(event["fire_at"])
-            if fire_at_dt > datetime.now(timezone.utc):
-                scheduler.add_job(
-                    fire_reminder,
-                    DateTrigger(run_date=fire_at_dt),
-                    id=f"event_{event['id']}",
-                    args=[event],
-                    replace_existing=True,
-                )
-                logger.info("Restored reminder %s for %s", event["id"], fire_at_dt)
-            else:
-                # Past-due: fire_reminder annotates the message with the original time
-                past_due_tasks.append(asyncio.create_task(fire_reminder(event)))
-                logger.info("Past-due reminder %s — firing with original time annotation", event["id"])
+        # Re-arm stored triggers. Skipped when reminders are disabled — staging
+        # must not re-fire the owner's real events. Hold references to past-due
+        # runs so they can't be GC'd.
+        past_due_tasks = restore_pending() if config.REMINDERS_ENABLED else []
 
         scheduler.start()
         if config.HEARTBEAT_ENABLED:

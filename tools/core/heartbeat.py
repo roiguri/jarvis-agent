@@ -58,7 +58,7 @@ def _notes_of(header: str) -> str | None:
 
 def _build_block(
     name: str, cadence: str, due: str, instruction: str, notes: str,
-    paused: bool = False,
+    paused: bool = False, gate: str | None = None,
 ) -> list[str]:
     """A canonical task block: header line + two-space-indented body.
 
@@ -72,6 +72,8 @@ def _build_block(
         fields.append(f"due: {due}")
     if paused:
         fields.append("paused")
+    if gate:
+        fields.append(f"gate: {gate}")
     fields.append(f"notes: `{notes}`")
     block = [" | ".join(fields)]
     block += [f"  {line}".rstrip() for line in instruction.strip().splitlines()]
@@ -97,8 +99,8 @@ def heartbeat_respond(
     summary: str,
     notification_text: str = "",
 ) -> dict:
-    """Report the outcome of this heartbeat tick. Call exactly once, as your
-    last tool call of the tick, after all task work is done.
+    """Report the outcome of this heartbeat tick or scheduled wake. Call
+    exactly once, as your last tool call, after all the work is done.
 
     Args:
         acted_tasks: Exact names (from HEARTBEAT.md) of every task you
@@ -106,7 +108,7 @@ def heartbeat_respond(
             file, or confirmed Roi already handled it in today's chat.
             Empty list if none. Never list a task you left for a later tick
             (its body's conditions weren't met yet), and never a task that
-            was omitted from this tick's list.
+            was omitted from this tick's list. Always [] for a scheduled wake.
         notify: True only if Roi should receive a message from this tick.
         summary: One line for the internal log — what this tick did (or why
             nothing was done). Always required.
@@ -138,7 +140,7 @@ def manage_heartbeat_task(
 
     Use for RECURRING or CONDITIONAL proactive wishes ("check in after my
     workouts", "every Sunday summarize my week"). For a one-shot ping at a
-    fixed moment ("remind me at 15:00 to call") use manage_reminder instead.
+    fixed moment ("remind me at 15:00 to call") use manage_trigger instead.
 
     Prefer pause over delete when the owner wants a task to stop only for now
     ("stop the gym reminders while I'm away"): a paused task keeps its
@@ -295,8 +297,10 @@ def manage_heartbeat_task(
                 "'06:00-22:00', 'Tue,Sat 20:30±3h', '09:00±2h' (or 'none' to clear)."
             )
 
+        # A gate is code, set by hand-editing the file; every edit keeps it.
+        new_gate = None if action == "create" else prior.gate
         new_block = _build_block(
-            name, norm_cadence, new_due, instruction, notes, paused=new_paused
+            name, norm_cadence, new_due, instruction, notes, paused=new_paused, gate=new_gate
         )
         if action == "create":
             new_blocks = blocks + [(name, new_block)]
@@ -327,6 +331,7 @@ def manage_heartbeat_task(
             or t.cadence is None
             or (new_due and t.window is None)
             or t.paused != new_paused
+            or t.gate != new_gate
         ):
             return (
                 "Error: internal validation failed — the resulting task would not "

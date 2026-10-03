@@ -21,11 +21,7 @@ from tools.core.history import (
     get_notification_history,
     get_chat_history,
 )
-from tools.core.scheduling import (
-    manage_reminder,
-    _load_events,
-    _remove_event,
-)
+from tools.core.scheduling import manage_trigger
 from tools.core.activate_skill import activate_skill, deactivate_skill
 from tools.core.forms import send_form
 from tools.core.heartbeat import heartbeat_respond, manage_heartbeat_task
@@ -44,9 +40,7 @@ __all__ = [
     "append_chat_log",
     "get_notification_history",
     "get_chat_history",
-    "manage_reminder",
-    "_load_events",
-    "_remove_event",
+    "manage_trigger",
     "activate_skill",
     "deactivate_skill",
     "heartbeat_respond",

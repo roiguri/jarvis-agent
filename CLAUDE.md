@@ -19,8 +19,10 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ```
 /app/jarvis_code/          # Application code (this repo)
 ├── agent.py               # LangGraph agent + system prompt construction
-├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
-├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
+├── heartbeat.py           # heartbeat tick runner (pre-LLM due-gate + tick ack handling)
+├── triggers/              # the one scheduler for timed work: trigger store, APScheduler wiring, runner
+│                          #   (reminders and wakes; see docs/architecture/TRIGGERS.md)
+├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), last_run stamps (kept in the trigger store)
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
@@ -59,8 +61,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/jarvis_data/          # Tool-opaque state — NEVER in the memory tool surface, never read_memory'd
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
-├── scheduling/scheduled_events.json# pending reminders (scheduler-owned)
-├── heartbeat/state.json            # code-owned per-task last_run stamps (heartbeat_state.py; gate input)
+├── triggers/triggers.json          # code-owned (triggers/store.py): pending triggers, gate state, task last_run stamps
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 └── logs/
     ├── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
@@ -138,14 +139,14 @@ Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation
 
 ## Heartbeat System
 
-Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs via APScheduler at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
+Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs on the shared scheduler (`triggers/scheduler.py`) at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
 
-1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
+1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per its code-owned `last_run` stamp (in `/app/jarvis_data/triggers/triggers.json`) — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with every task except gated ones). Due tasks with a `| gate:` run in code instead (docs/architecture/TRIGGERS.md "Gates"); if only those are due, no model call either.
 2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
-3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
-4. Writes a unified daily log: `daily/daily_YYYY-MM-DD.md` covering both heartbeat activity and today's user conversations (via `get_chat_history(since=...)`)
+3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance their stamp, and a failed send skips stamping so the tasks re-run next tick
+4. The daily log (`daily/daily_YYYY-MM-DD.md`, heartbeat activity + today's conversations + proactive sends) is its own `daily-log` task in HEARTBEAT.md (every 3h), not a side effect of every tick
 
-Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). The agent's notes files still carry a transitional `last_run:` line in parallel with `state.json` until the two have agreed in production.
+Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). Run timestamps are code-owned; the agent never writes a `last_run:` line.
 
 The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
 
@@ -156,7 +157,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 | Thread ID | Purpose |
 |-----------|---------|
 | `owner` | The one owner conversation — all channels stamp it (50-message window) |
-| `heartbeat` | Scheduled background checks (separate window) |
+| `heartbeat` | Scheduled background checks and scheduled wakes (separate window) |
 
 Both threads write to the same `chat_history.jsonl` (tagged by `thread_id`). Cross-thread awareness flows through two paths: today's chat/notification slices are injected directly into each scope's system prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
 
@@ -207,8 +208,9 @@ message. Never infer or fake service state.
 | Add an app surface | New module under `gateway/apps/` holding its `AppSpec` beside its handlers, plus one import line in `gateway/apps/specs.py`. `register_app(AppSpec(ns, name, entries=(AppEntry(id, method, params, handler), ...)))` — validated at import, so a typo fails at startup rather than as a silently empty Apps screen. A handler is `async (params: dict[str, str]) -> Any`; it may import `agent`/`tools` but **not** any concrete channel, and every blocking call goes through `asyncio.to_thread` (one event loop serves the poll, the turn, and the query). Failures a caller could have caused raise `AppNotFound`/`AppInvalidRequest` — that closed code vocabulary is what a channel maps to a status; anything else propagates and is reported as an internal fault. A channel with somewhere to show apps publishes `list_apps()` in its own wire shape. See docs/architecture/GATEWAY.md (App Surfaces). |
 | Change Jarvis's personality | Edit `/app/jarvis_memory/SOUL.md` directly |
 | Change behavioral rules | `/app/jarvis_code/prompts/AGENTS.md` (always-on) or `prompts/heartbeat.md` (heartbeat-scope only); a skill's own rules go in `tools/<ns>/SKILL.md`. Tool usage is driven by tool docstrings, not prompt prose. |
+| Add a gate (code check for a heartbeat task) | `@gate(name)` + `@gate_handler(name)` from `triggers/gates.py`, in the owning skill (e.g. `tools/fitness/gates.py`, imported by its package `__init__`); then add `\| gate: <name>` to the task's header in `HEARTBEAT.md`. See docs/architecture/TRIGGERS.md "Gates" |
 | Add a heartbeat task | Ask Jarvis (it uses `manage_heartbeat_task`, validated before write), or hand-edit `/app/jarvis_memory/HEARTBEAT.md` following the grammar in docs/architecture/HEARTBEAT.md (a malformed hand edit degrades to always-due, never a silent drop) |
 | Understand the memory layout | `/app/jarvis_memory/MEMORY.md` |
-| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,HEARTBEAT,OBSERVABILITY}.md` |
+| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,HEARTBEAT,TRIGGERS,OBSERVABILITY}.md` |
 | Add per-turn telemetry / read usage | `observability/{telemetry,usage}.py` + `scripts/trace.py` (see [docs/architecture/OBSERVABILITY.md](docs/architecture/OBSERVABILITY.md)) |
 | Deploy / ops / local testing | `DEVELOPMENT.md` |
