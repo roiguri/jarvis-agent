@@ -221,6 +221,33 @@ check("unsaved input: failure notice sent", [e for e, _ in sent], ["heartbeat+ti
 check("unsaved input: thread has this tick's input before the note",
       isinstance(thread_messages("heartbeat")[-2], HumanMessage), True)
 
+# The real Outbox: a broken tick's notice is logged as a heartbeat row marked
+# tick_failed, and the pending-mirror drain carries it into the owner thread.
+from gateway.outbox import Outbox  # noqa: E402
+from tools.core.history import async_append_notification_log  # noqa: E402
+
+
+class FakeChannel:
+    def __init__(self):
+        self.texts = []
+
+    async def send_to_owner(self, text):
+        self.texts.append(text)
+
+
+channel = FakeChannel()
+factory.default_outbox = lambda: Outbox(channel, log_sink=async_append_notification_log)
+agent.llm = FakeLLM([upstream_503()])
+run_tick()
+row = json.loads(open(os.path.join(LOG_DIR, "notifications.jsonl")).readlines()[-1])
+check("real outbox: notice delivered", len(channel.texts), 1)
+check("real outbox: logged as a heartbeat row marked tick_failed",
+      (row.get("event"), row.get("tick_failed")), ("heartbeat", True))
+block, _ = pending_mirrors.drain_pending()
+check("real outbox: mirrored into the owner thread as [Heartbeat]",
+      "[Heartbeat] Heartbeat check at" in (block or ""), True)
+factory.default_outbox = lambda: FakeOutbox()
+
 # --- 5b. Error classification and telemetry that cannot fail a turn --------
 
 
