@@ -1,6 +1,6 @@
 # Context Handling — Problem Inventory
 
-**Date:** 2026-08-06.
+**Date:** 2026-08-06. **Re-read:** 2026-10-03 (second reading in §0, tags re-checked).
 **Companion:** [RESEARCH.md](RESEARCH.md) — reference-system comparison, measurement method, and the
 code-level findings retained alongside this inventory.
 **Sources:** `CONTEXT_HANDLING_PLAN.md` and `TEST_HARNESS_PLAN.md`, both **deleted 2026-08-06** and
@@ -31,34 +31,44 @@ cost claim was believed for three days without anyone reading the instrument.
 
 ---
 
-## 0. Fresh reading (2026-08-06)
+## 0. Readings
 
-Taken from `turns.jsonl` over the seven days to 2026-08-06, against the same window shape as the
-plan's 2026-07-10..07-16 baseline. Recorded here because several entries below are ranked on the
-older numbers.
+Taken from prod `turns.jsonl`. The 08-06 reading covers the seven days to 2026-08-06, against the
+same window shape as the plan's 2026-07-10..07-16 baseline. The 10-03 reading covers the three full
+Israel days 09-30..10-02 only: the week before it was skewed by heartbeat tasks paused for a trip
+(1–3 ticks/day), which a 7-day window silently averages in (E10).
 
-| | Baseline (07-10..16) | Now (07-31..08-06) |
-|---|---|---|
-| heartbeat input / turn | 82.9k | **70.0k** |
-| heartbeat LLM calls / turn | 4.50 | **4.36** |
-| heartbeat tool calls / turn | ~7.3 | **~6.5** |
-| heartbeat rows / day | 17.9 | **16.1** |
-| heartbeat input / day | 1.60M | **~1.2M** |
-| user input / turn | 46.7k | **78.6k** |
-| heartbeat share of all input | 83% | **63%** |
+| | Baseline (07-10..16) | 07-31..08-06 | 09-30..10-02 |
+|---|---|---|---|
+| heartbeat input / turn | 82.9k | 70.0k | **62.1k** |
+| heartbeat LLM calls / turn | 4.50 | 4.36 | **3.29** |
+| heartbeat tool calls / turn | ~7.3 | ~6.5 | **6.2** |
+| heartbeat rows / day | 17.9 | 16.1 | **15.0** |
+| heartbeat rows ending `NO_ACTION` | — | — | **43 of 45** |
+| heartbeat input / day | 1.60M | ~1.2M | **~0.93M** |
+| user input / turn | 46.7k | 78.6k | **110.3k** |
+| heartbeat share of all input | 83% | 63% | **72%** |
+| cache-read share of input | — | — | **49%** (both scopes) |
+| spend / day | — | — | **~$0.42** |
 
-Two shifts worth carrying into any re-analysis: per-tick input fell ~16% while **round-trips per
-tick did not move at all**, and the user scope is growing fast enough that the heartbeat's share of
-spend is no longer the ~83% the roadmap's ranking assumes.
+Three shifts worth carrying into any re-analysis:
+
+- Round-trips per tick finally moved (4.4 → 3.3), after not moving at all between the first two
+  readings.
+- User input per turn keeps climbing (47k → 79k → 110k).
+- The heartbeat's share of input is not a stable quantity. It is 72% here on light chat days (3.3
+  user turns/day) and was 38% over the trip-skewed week, so it tracks how much the owner chats
+  rather than anything about the heartbeat. Rank on per-turn and per-day figures, not on the share.
 
 ---
 
 ## A. Structural spend
 
 **A1 — The heartbeat dominates token spend.** `STALE`
-83% of all input tokens at the 07-16 measurement (88.0M heartbeat vs 17.9M user). Now 63% (§0) —
-not because the heartbeat got cheap, but because user-scope spend nearly doubled as skills were
-added. The imbalance is real; the ratio the roadmap ranks on is not current.
+83% of all input tokens at the 07-16 measurement (88.0M heartbeat vs 17.9M user), 63% at 08-06.
+As of 2026-10-03 the share swings between 38% and 72% with how much the owner chats (§0), so the
+ratio the roadmap ranks on was never a stable target. In absolute terms the heartbeat is ~0.93M
+input/day at ~15 ticks.
 
 **A2 — Per-tick cost rose after gating shipped, rather than falling.** `MEASURED`
 ~68k/tick in early July → 90–114k by 07-16, with a no-op tick at 214,008.
@@ -66,7 +76,8 @@ added. The imbalance is real; the ratio the roadmap ranks on is not current.
 **A3 — A tick spends ~5 sequential LLM round-trips and ~9 tool calls to perform one 785ms unit of
 real work.** `MEASURED`
 Everything else in the trace is bookkeeping the harness asks for and then discards. Round-trips per
-tick are essentially unchanged since (§0), so this is the least-moved item on the list.
+tick were unchanged through 08-06; as of 2026-10-03 they are 3.29/tick with ~6.2 tool calls (§0),
+the first movement since July.
 
 **A4 — The full message history is re-sent on every call within a turn.** `MEASURED`
 The `heartbeat` checkpoint row is 108,785 bytes ≈ ~27k tokens ≈ 63% of each call's input, paid
@@ -93,6 +104,10 @@ mechanism is correct.
 **A9 — One task wakes a full LLM turn to confirm that an empty list is still empty.** `MEASURED`
 Its stored schedule is `[]`. It was the only due task on 7 of 12 sampled ticks; at ~114k input/tick
 that is ~800k input tokens/day.
+That task is gone as of 2026-10-03, and the pattern now comes from the hourly
+`crossfit-sync-and-remind` (due 05:00–22:00): 43 of 45 ticks over 09-30..10-02 ended `NO_ACTION` at
+~62k input each. A typical ack is *"Checked Arbox (no new classes). Updated daily log with today's
+conversations."*, which is A7 on every one of those ticks too.
 
 **A10 — The heartbeat prompt carries conversational identity a tick does not need.** `ASSERTED`
 Full SOUL.md, USER.md and yesterday's daily log are injected to decide whether a class ended. The
@@ -106,7 +121,8 @@ named risk — blander or wronger briefing text — has never been tested.
 **B1 — The model's "now" moves underneath it mid-turn.** `MEASURED`
 `build_system_prompt` is called inside `_llm_node`, so the `[Current time: … HH:MM]` line is rebuilt
 on every LLM call. Within one turn, call 1 can read `06:14` and call 4 `06:15` — including on turns
-computing a reminder's `fire_at`. Nothing logs it and nothing tests it.
+computing a reminder's `fire_at`. Nothing logs it and nothing tests it. Re-confirmed 2026-10-03:
+`_llm_node` still builds the system prompt per call.
 
 **B2 — A per-minute clock in the system prompt invalidates the whole request prefix, not just its
 own line.** `ASSERTED`
@@ -130,7 +146,9 @@ longer evict its own input (staging, 2026-10-03: a 101-tool-call turn completed)
 **B4 — Every reminder requires a hand timezone conversion.** `ASSERTED`
 `prompts/AGENTS.md` requires `fire_at` in ISO 8601 UTC while every user-facing time is Israel-local,
 so the model converts by hand on each one — and reminders originate mostly in user turns. *(Raised
-only on PR #70; not in either committed plan.)*
+only on PR #70; not in either committed plan.)* Still true as of 2026-10-03. In `/tz` away mode, reminder
+create/list also echo the owner's local time, which makes a wrong conversion visible; at home
+nothing changed, and in neither case is the conversion removed.
 
 ---
 
@@ -151,6 +169,9 @@ range.** `ASSERTED`
 **C4 — Nothing pushes back on memory-file growth.** `ASSERTED`
 USER.md and MEMORY.md are injected into every prompt in both scopes, so every line added is a
 permanent per-turn tax, with no pressure to curate between weekly audit passes.
+User input per turn grew 47k → 79k → 110k across the three readings (§0). That is consistent with
+C1/C4 but not attributed to them: skills, mirrored history and longer turns all moved in the same
+window.
 
 **C5 — A message the heartbeat sent is not part of the conversation the user scope sees, so replies
 to it land without an antecedent.** `RESOLVED`
@@ -230,6 +251,12 @@ see that caching is poor, not enough to see what broke it. *(Raised only on PR #
 The original per-tick baseline was ~2x off, and every dollar figure in the roadmap was 6.5x low until
 `MODEL_PRICES` was corrected. Token and turn counts were always right; the derived figures were not.
 
+**E10 — A reading cannot tell a paused task from steady state.** `MEASURED`
+`turns.jsonl` records what ran, not what was paused, so a window that spans a pause reads as a cost
+drop. The first pass at the 2026-10-03 reading took the seven days to 10-03, which included a trip
+pause (1–3 ticks/day), and concluded the heartbeat had halved. Ticks were back at ~15/day from 09-30;
+the per-day log was the only thing that showed it.
+
 **E9 — A target was set without checking the composition it targeted.** `MEASURED`
 "Tick input 66k → ≤15k" was arithmetically unreachable by its own method: the system prompt is ~4.5k
 of a ~42.8k call, so deleting all of it still leaves ~38k. The idea was sound; nobody checked the
@@ -276,7 +303,8 @@ analysis and the event-driven-heartbeat constraints — per G1 they are untracke
 **G3 — The test-harness work carried "issue: TBD" from 2026-07-16 until deletion.** `MEASURED`
 Noted in the document itself, for three weeks, without being filed.
 
-**G4 — #18's own description no longer matches what was measured.** `MEASURED`
+**G4 — #18's own description no longer matches what was measured.** `RESOLVED`
+#18's body was rewritten on 2026-08-06 to point at this file instead of restating it.
 The umbrella still frames the problem as "most of ~720 turns/month render a full prompt only to
 return `[NO_ACTION]`" and "no prompt/context caching". The gate shipped; the skip rate is 22%; and
 the dominant cost turned out to be re-sent history rather than prompt reassembly (A4). Anyone
@@ -302,18 +330,16 @@ without anyone testing them:
 | Entry | Issue | Relationship |
 |---|---|---|
 | E4 | #1 | stated there — no automated verification exists |
-| E5 | #5 | stated there — nothing gates a change on its way to production |
 | E1, E5 | #55 | instance of — the instrument is unread, and misreports when read |
 | E1, E6 | #36 | instance of, and wider — covers both scopes, and containment as well as legibility |
 | C1 | #81 | complement — C1 is unbounded injection, #81 is unrecoverable truncation |
-| C3 | #61, #60 | complement — content Jarvis saw once and cannot reach again |
+| C3 | #81 | complement — content Jarvis saw once and cannot reach again |
 | C5 | #50 | stated here — resolved; #50 closed on phases 1a–1c |
-| B1, B4 | #24 | dependency — the Israel-time duplication any clock work must cross |
+| B1, B4 | #24 | dependency — closed; the shared time module (`timeutils`) exists |
 | — | #18 | the umbrella; points at this file rather than restating it |
 
 Each mapped issue carries a one-line pointer back to its entry, so the link survives from either
-end. #24 is mapped but not reframed: its title still names a fix rather than the duplication it
-addresses, and tidying that is general backlog hygiene rather than context work.
+end. #5, #60 and #61 were unmapped on 2026-10-03 once closed; E5 has no open issue of its own.
 
 Deliberately unmapped: **#12** (`threads.sqlite` disk footprint) is adjacent to A4 by subject and
 unrelated by axis — disk bytes, not re-sent tokens. Listing it would be pattern-matching on
