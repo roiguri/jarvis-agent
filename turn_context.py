@@ -31,6 +31,13 @@ CURRENT_THREAD_ID: ContextVar[str | None] = ContextVar("current_thread_id", defa
 CURRENT_CHANNEL: ContextVar[str | None] = ContextVar("current_channel", default=None)
 
 
+# The trigger whose firing started the running turn (a triggers.model.Trigger,
+# typed loosely to keep this module import-free); None for chat turns and
+# hourly ticks. Set by ask_jarvis. Lets manage_trigger enforce the
+# self-scheduling limits from the turn itself, never from model arguments.
+CURRENT_TRIGGER: ContextVar[object | None] = ContextVar("current_trigger", default=None)
+
+
 def current_scope() -> str:
     """The running turn's scope, defaulting to 'user' outside a turn."""
     return CURRENT_SCOPE.get() or "user"
@@ -44,3 +51,8 @@ def current_thread_id() -> str | None:
 def current_channel() -> str | None:
     """The running turn's origin channel name, or None for origin-less turns."""
     return CURRENT_CHANNEL.get()
+
+
+def current_trigger():
+    """The trigger that started the running turn, or None."""
+    return CURRENT_TRIGGER.get()

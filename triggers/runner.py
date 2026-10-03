@@ -3,6 +3,9 @@
 ``send`` delivers fixed text through the Outbox, with no model. A trigger is
 removed from the store only after a successful send; a failed send is retried
 a few times, and the stored trigger survives a restart either way.
+
+``turn`` wakes Jarvis: a heartbeat-scope turn with the trigger's instruction,
+run by heartbeat.run_wake (which owns the heartbeat thread and its delivery).
 """
 
 import asyncio
@@ -11,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from timeutils import ISRAEL_TZ
 from triggers import store
-from triggers.model import Trigger
+from triggers.model import Trigger, Turn
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +27,16 @@ _LATE_AFTER = timedelta(seconds=60)
 
 
 async def run(trigger: Trigger, attempt: int = 0) -> None:
+    if isinstance(trigger.action, Turn):
+        from heartbeat import run_wake
+        await run_wake(trigger)
+        return
+    await _send(trigger, attempt)
+
+
+async def _send(trigger: Trigger, attempt: int) -> None:
     from gateway.factory import default_outbox
     from gateway.outbox import EVENT_REMINDER
-    from triggers import scheduler
 
     text = trigger.action.text
     if datetime.now(timezone.utc) - trigger.when.instant > _LATE_AFTER:
@@ -46,9 +56,15 @@ async def run(trigger: Trigger, attempt: int = 0) -> None:
                      trigger.id, attempt, outcome.error)
         await asyncio.to_thread(store.remove, trigger.id)
         return
+    retry(trigger, attempt, outcome.error)
+
+
+def retry(trigger: Trigger, attempt: int, error: str | None) -> None:
+    """Re-arm a stored send after a failed delivery, ``_RETRY_DELAY`` from now."""
+    from triggers import scheduler
 
     retry_at = datetime.now(timezone.utc) + _RETRY_DELAY
     scheduler.arm(trigger, run_date=retry_at, attempt=attempt + 1)
     logger.warning("Trigger: id=%s send failed (%s) — retry %d/%d at %s",
-                   trigger.id, outcome.error, attempt + 1, _MAX_RETRIES,
+                   trigger.id, error, attempt + 1, _MAX_RETRIES,
                    retry_at.isoformat(timespec="seconds"))

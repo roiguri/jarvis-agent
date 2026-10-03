@@ -97,8 +97,8 @@ def heartbeat_respond(
     summary: str,
     notification_text: str = "",
 ) -> dict:
-    """Report the outcome of this heartbeat tick. Call exactly once, as your
-    last tool call of the tick, after all task work is done.
+    """Report the outcome of this heartbeat tick or scheduled wake. Call
+    exactly once, as your last tool call, after all the work is done.
 
     Args:
         acted_tasks: Exact names (from HEARTBEAT.md) of every task you
@@ -106,7 +106,7 @@ def heartbeat_respond(
             file, or confirmed Roi already handled it in today's chat.
             Empty list if none. Never list a task you left for a later tick
             (its body's conditions weren't met yet), and never a task that
-            was omitted from this tick's list.
+            was omitted from this tick's list. Always [] for a scheduled wake.
         notify: True only if Roi should receive a message from this tick.
         summary: One line for the internal log — what this tick did (or why
             nothing was done). Always required.
@@ -138,7 +138,7 @@ def manage_heartbeat_task(
 
     Use for RECURRING or CONDITIONAL proactive wishes ("check in after my
     workouts", "every Sunday summarize my week"). For a one-shot ping at a
-    fixed moment ("remind me at 15:00 to call") use manage_reminder instead.
+    fixed moment ("remind me at 15:00 to call") use manage_trigger instead.
 
     Prefer pause over delete when the owner wants a task to stop only for now
     ("stop the gym reminders while I'm away"): a paused task keeps its

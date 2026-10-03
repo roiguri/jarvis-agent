@@ -21,7 +21,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── agent.py               # LangGraph agent + system prompt construction
 ├── heartbeat.py           # heartbeat tick runner (pre-LLM due-gate + tick ack handling)
 ├── triggers/              # the one scheduler for timed work: trigger store, APScheduler wiring, runner
-│                          #   (reminders today; see docs/architecture/TRIGGERS.md)
+│                          #   (reminders and wakes; see docs/architecture/TRIGGERS.md)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
@@ -158,7 +158,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 | Thread ID | Purpose |
 |-----------|---------|
 | `owner` | The one owner conversation — all channels stamp it (50-message window) |
-| `heartbeat` | Scheduled background checks (separate window) |
+| `heartbeat` | Scheduled background checks and scheduled wakes (separate window) |
 
 Both threads write to the same `chat_history.jsonl` (tagged by `thread_id`). Cross-thread awareness flows through two paths: today's chat/notification slices are injected directly into each scope's system prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
 

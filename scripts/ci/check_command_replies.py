@@ -53,6 +53,9 @@ CASES: list[tuple[str, str]] = [
     ("/tz", "strict"),
     ("/tz home", "strict"),
     ("/tz Nowhere/Nope", "strict"),  # invalid zone → usage help
+    ("/triggers", "strict"),
+    ("/triggers cancel nope", "strict"),  # unknown id
+    ("/triggers cancel", "strict"),       # missing id → usage help
     ("/nope", "strict"),           # router's unknown-command reply
 ]
 
@@ -106,6 +109,13 @@ def _seed(scratch: str) -> None:
 
     # Mid-day UTC so the record lands on the same Israel day the rollup asks for
     # regardless of when CI runs.
+    # One of each kind so /triggers renders both shapes.
+    from triggers import store
+    from triggers.model import ORIGIN_JARVIS, At, Send, Trigger, Turn
+    soon = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)
+    store.add(Trigger("rem00001", At(soon), Send("Call the dentist")))
+    store.add(Trigger("wake0001", At(soon), Turn("Check whether the download finished"), ORIGIN_JARVIS, "heartbeat"))
+
     ts = dt.datetime.combine(israel_today, dt.time(9, 0), tzinfo=dt.timezone.utc)
     os.makedirs(os.path.dirname(TURNS_LOG), exist_ok=True)
     with open(TURNS_LOG, "w", encoding="utf-8") as f:

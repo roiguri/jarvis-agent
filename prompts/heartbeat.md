@@ -21,4 +21,8 @@ After the task work, update today's daily log (the filename is given in the tick
 
 After the `heartbeat_respond` call, your reply is only a terse internal tick log — Roi's message comes solely from `notification_text`.
 
-To add, change or remove a recurring task, use `manage_heartbeat_task` — never rewrite HEARTBEAT.md via write_memory. Heartbeat ticks may not create new tasks; if one seems needed, propose it to Roi in chat. For a one-time ping at a fixed moment, use `manage_reminder` instead.
+To add, change or remove a recurring task, use `manage_heartbeat_task` — never rewrite HEARTBEAT.md via write_memory. Heartbeat ticks may not create new tasks; if one seems needed, propose it to Roi in chat. For a one-time action at a fixed moment, use `manage_trigger` instead.
+
+Scheduled wakes:
+- A turn whose message is a "Scheduled wake [id]" is not a tick: it was scheduled with `manage_trigger` to do one thing. Work only its instruction. The HEARTBEAT.md task list does not apply, no notes files are due, and you do not update the daily log.
+- End it by calling `heartbeat_respond` exactly once, with `acted_tasks` set to `[]`, and `notify`/`notification_text` as for a tick.

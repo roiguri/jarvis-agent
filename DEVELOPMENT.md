@@ -92,7 +92,7 @@ message instead of failing silently.
 | `HEARTBEAT_INTERVAL_HOURS` | `main.py` | `1` | Heartbeat agent-turn cadence |
 | `HEARTBEAT_THREAD_ID` | `heartbeat.py` | `"heartbeat"` | Shared thread for all scheduled turns |
 | `STATE_PATH` | `heartbeat_state.py` | `/app/jarvis_data/heartbeat/state.json` | Code-owned per-task last_run stamps (due-gate input) |
-| `_MIN_TICK_SPACING` | `heartbeat.py` | `30` (s) | Minimum spacing between model-reaching ticks |
+| `TURN_LOCK` | `heartbeat.py` | — | Serializes every heartbeat-thread turn (ticks and wakes); waits, never drops |
 | `STORE_PATH` | `triggers/store.py` | `/app/jarvis_data/triggers/triggers.json` | Pending triggers (reminders) across restarts |
 | `DB_PATH` (fitness) | `tools/fitness/_db.py` | `/app/jarvis_data/fitness/fitness.sqlite` | Fitness-skill DB |
 | `_HEARTBEAT_MD_PATH` | `agent.py` | `/app/jarvis_memory/HEARTBEAT.md` | Injected into heartbeat-scope prompt |
@@ -203,10 +203,10 @@ Non-obvious runtime behavior that isn't derivable from the architecture docs.
 
 ### Reminder persistence
 
-`manage_reminder(action='create')` adds a trigger to `triggers.json` atomically and
+`manage_trigger(action='create')` adds a trigger to `triggers.json` atomically and
 arms an APScheduler `DateTrigger` job immediately (`triggers/scheduler.py`). On service
 restart `restore_pending()` re-arms every stored trigger; **past-due reminders fire
-immediately** with a staleness annotation. A trigger is removed from the store only
+immediately** with a staleness annotation (a past-due *wake* runs its turn once, on startup). A trigger is removed from the store only
 after its send succeeds. An instance that still has the pre-triggers
 `scheduling/scheduled_events.json` migrates it on first read and keeps the old file as
 `scheduled_events.json.migrated`.

@@ -23,7 +23,7 @@ run_heartbeat()                                  heartbeat.py
         │    per task: cadence elapsed AND due-window open
         │    ├─ nothing due ──► log "nothing due", RETURN (no model, no agent import)
         │    └─ gate error  ──► FAIL OPEN: run with the full task list
-        ├─ last tick started <30s ago? ──► defer
+        ├─ wait for TURN_LOCK (a wake may be running on this thread)
         ▼
 ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
@@ -124,9 +124,10 @@ Otherwise, cadence elapsed
 means: never stamped, stamp unreadable, cadence unparseable, or
 `now − last_run ≥ cadence` (less `CADENCE_GRACE`). Empty/unreadable
 `HEARTBEAT.md` → `(True, None)`: run the model with the *full* file rather than
-skip. Any exception in the gate itself → run the model. A 30s min-spacing guard
-protects against back-to-back ticks. Stamps advance **only** for tasks the agent
-listed in `acted_tasks` — a task the model checked but skipped stays due and
+skip. Any exception in the gate itself → run the model. Every heartbeat-thread
+turn (tick or scheduled wake) runs under one `TURN_LOCK`, so a tick that arrives
+while a wake runs waits for it rather than being dropped. Stamps advance
+**only** for tasks the agent listed in `acted_tasks` — a task the model checked but skipped stays due and
 re-fires next tick.
 
 **The tick lattice.** Elapsed time is measured raw first. If that comes up
@@ -219,6 +220,23 @@ Guards:
   `./HEARTBEAT.md` cannot bypass it. `manage_heartbeat_task` is the agent's
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
+
+## Scheduled wakes (`run_wake`)
+
+A wake is a one-shot trigger whose action is a turn ([TRIGGERS.md](TRIGGERS.md)).
+When it fires, `run_wake` runs it on the heartbeat thread, under the same
+`TURN_LOCK` as ticks: `ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[],
+trigger=...)`, so every task collapses to the not-due note and the
+"Scheduled wakes" rules in `prompts/heartbeat.md` apply (work only the
+instruction; no task list, no daily log; ack with `acted_tasks=[]`). The ack is
+delivered by the same `_deliver` helper as a tick, as a `heartbeat` event whose
+metadata names the trigger. Nothing is stamped.
+
+A wake runs at most once. It leaves the store before its turn starts, so a crash
+mid-turn loses it instead of re-running it. A turn that breaks without an ack
+sends the code-built failure notice (shared with ticks via `_notify_failed`).
+Only a failed delivery is retried: the text the turn wrote is stored as a plain
+send under the wake's id and goes through the reminder retry path.
 
 ---
 

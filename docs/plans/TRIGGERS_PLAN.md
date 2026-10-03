@@ -1,7 +1,7 @@
 # Triggers — Plan
 
-**Date:** 2026-10-03 · **Status:** design settled (D1 and D2 decided 2026-10-03, §7); S1 done
-(2026-10-03), S2–S4 not started.
+**Date:** 2026-10-03 · **Status:** design settled (D1 and D2 decided 2026-10-03, §7); S1 and S2 done
+(2026-10-03), S3–S4 not started.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A7, A8, A9 (no-op heartbeat
 ticks), plus two capability gaps PROBLEMS.md doesn't list: Jarvis can't wake itself at an exact
 time, and reminders and heartbeat tasks are two separate scheduling systems.
@@ -28,14 +28,24 @@ ticked.
       migrated on first read; a 2-minute reminder fired on time and was removed.
 
 **S2 — The `turn` action and self-wake.**
-- [ ] `runner.py`: `turn` action through one serialized turn queue. It replaces the 30s guard
-      that drops a colliding turn.
-- [ ] `manage_trigger(create | list | cancel)` replaces `manage_reminder`. Origin and parent come
+- [x] `runner.py`: `turn` action, run by `heartbeat.run_wake` under one `TURN_LOCK` shared with
+      ticks. It replaces the 30s guard that dropped a colliding turn.
+- [x] `manage_trigger(create | list | cancel)` replaces `manage_reminder`. Origin and parent come
       from `turn_context`, never from model arguments; D2's limits enforced in code.
-- [ ] `/triggers` slash command (list and cancel), with a `check_command_replies.py` case.
-- [ ] Verify: "check X in 10 minutes" from chat wakes a turn at that time. A triggered turn can
+- [x] `/triggers` slash command (list and cancel), with `check_command_replies.py` cases.
+- [x] Prompts (`AGENTS.md`, `heartbeat.md` with a "Scheduled wakes" section) and tool docstrings
+      name `manage_trigger`; staging's `HEARTBEAT.md` task bodies updated.
+- [ ] **Deploy step:** prod's `HEARTBEAT.md` names `manage_reminder` in the crossfit and
+      fitness-scouting task bodies (3 lines). Update them with the deploy.
+- [x] Offline: `scripts/test_triggers.py` extended (wake turn and delivery, quiet wake, broken
+      wake, delivery retry, every D2 rule, waiting on the lock, the running wake seen in-turn).
+- [x] Verify: "check X in 10 minutes" from chat wakes a turn at that time. A triggered turn can
       create one follow-up; that follow-up can't create another. A one-shot landing on the
       hourly tick waits instead of being dropped.
+      Staging 2026-10-03: `/triggers` listed reminders; a chat-created wake ran on time and
+      delivered a model-written message; a wake scheduled a follow-up from inside its own turn
+      (origin `jarvis`, parent = that wake), which ran. Wake turns made no tool calls besides
+      the ack.
 
 **S3 — Gates, the `code` action, crossfit.**
 - [ ] Prerequisite: the fitness read/sync split (constraint 1), sequenced with
@@ -264,7 +274,7 @@ triggers/
   runner.py     Executes actions. Send → outbox.notify_owner (today's fire_reminder, with retries).
                 Code → handler → follow-ups. Turn → ONE serialized queue → ask_jarvis(
                 scope="heartbeat") → ack → deliver → commit. Waits, never drops.
-tools/core/triggers.py
+tools/core/scheduling.py
                 manage_trigger(create | list | cancel). Replaces manage_reminder rather than
                 adding a tool (same per-turn schema cost). Enforces D2 from turn_context
                 (scope, and whether this turn was itself triggered), never from model arguments.
@@ -334,7 +344,6 @@ code handlers create triggers; a triggered turn can't.
 
 **(ii) A narrow allowance.** A triggered turn may create **one-shot `turn` triggers only**, with
 these limits:
-- within 48h;
 - one level deep: a trigger created by a triggered turn can't create another;
 - a cap on pending Jarvis-created triggers (e.g. 10).
 
@@ -353,9 +362,10 @@ these limits:
 
 **Decided (2026-10-03): (ii), with the predictable cases in code.** The crossfit briefing and
 check-in come from `apply_arbox_change`, deterministic and keyed, so they never depend on the model
-remembering. The allowance is for genuine follow-ups only. Chat turns (owner present) can create any
-one-shot or recurring trigger. A recurring trigger created from chat should restate itself in plain
-words before it's created (OpenClaw's confirmation pattern).
+remembering. The allowance is for genuine follow-ups only. Chat turns (owner present) create
+one-shots without limits; recurring work stays with `manage_heartbeat_task` (D1). Only wakes are
+limited: a reminder runs no model, so it can't schedule anything. A 48h horizon was drafted and
+dropped at implementation (2026-10-03): depth and the pending cap already bound it.
 
 ---
 

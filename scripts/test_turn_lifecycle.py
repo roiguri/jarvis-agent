@@ -90,7 +90,8 @@ def upstream_503():
 
 
 def run_tick():
-    heartbeat._last_tick_start = None
+    # A fresh lock per run: each asyncio.run is its own event loop.
+    heartbeat.TURN_LOCK = asyncio.Lock()
     asyncio.run(heartbeat.run_heartbeat())
 
 # --- 1. Upstream failure after a committed tool call -----------------------

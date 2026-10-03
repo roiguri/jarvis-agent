@@ -39,7 +39,7 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 |---|---|---|
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
 | `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
-| `scheduling.py` | `manage_reminder` | create / list / delete reminders (stored as triggers — see [TRIGGERS.md](TRIGGERS.md)). |
+| `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
 | `activate_skill.py` | `activate_skill`, `deactivate_skill` | The meta-tools that expose Tier 2. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)

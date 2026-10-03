@@ -1,12 +1,20 @@
 """The trigger record and its on-disk shape.
 
 ``when`` and ``action`` are stored as single-key tagged objects
-(``{"at": ...}``, ``{"send": {...}}``) so a new kind is a new tag, never a
-migration of the existing rows.
+(``{"at": ...}``, ``{"send": {...}}``, ``{"turn": {...}}``) so a new kind is a
+new tag, never a migration of the existing rows.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
+
+# Who created a trigger. "owner": a chat turn, the owner present. "jarvis": a
+# background turn (a heartbeat tick or a wake) — the only origin whose
+# self-scheduling is limited (tools/core/scheduling.py).
+ORIGIN_OWNER = "owner"
+ORIGIN_JARVIS = "jarvis"
+# ``parent`` of a trigger created by an hourly tick rather than by a wake.
+PARENT_TICK = "heartbeat"
 
 
 @dataclass(frozen=True)
@@ -22,26 +30,47 @@ class Send:
 
 
 @dataclass(frozen=True)
+class Turn:
+    """Wake Jarvis: run a background turn with this instruction."""
+    instruction: str
+
+
+@dataclass(frozen=True)
 class Trigger:
     id: str
     when: At
-    action: Send
+    action: Send | Turn
+    origin: str = ORIGIN_OWNER
+    # The trigger whose run created this one (or PARENT_TICK); None from chat.
+    parent: str | None = None
 
     def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "when": {"at": self.when.instant.isoformat()},
-            "action": {"send": {"text": self.action.text}},
-        }
+        if isinstance(self.action, Turn):
+            action = {"turn": {"instruction": self.action.instruction}}
+        else:
+            action = {"send": {"text": self.action.text}}
+        d = {"id": self.id, "when": {"at": self.when.instant.isoformat()}, "action": action,
+             "origin": self.origin}
+        if self.parent is not None:
+            d["parent"] = self.parent
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Trigger":
-        """Raises KeyError/ValueError on a row it can't read."""
+        """Raises KeyError/ValueError on a row it can't read. Rows written
+        before ``origin`` existed read as the owner's."""
         instant = datetime.fromisoformat(d["when"]["at"])
         if instant.tzinfo is None:
             raise ValueError(f"trigger {d.get('id')!r}: 'at' has no timezone offset")
+        raw = d["action"]
+        if "turn" in raw:
+            action: Send | Turn = Turn(raw["turn"]["instruction"])
+        else:
+            action = Send(raw["send"]["text"])
         return cls(
             id=d["id"],
             when=At(instant),
-            action=Send(d["action"]["send"]["text"]),
+            action=action,
+            origin=d.get("origin", ORIGIN_OWNER),
+            parent=d.get("parent"),
         )
