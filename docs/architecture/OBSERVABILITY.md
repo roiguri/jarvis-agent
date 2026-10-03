@@ -66,7 +66,12 @@ All four live in `/app/jarvis_data/logs/`. All four use the shared `_append_line
   "active_skills_end": ["media/radarr"],
   "no_action": false,
   "error": null,
-  "outcome": "completed"
+  "outcome": "completed",
+  "budget": {
+    "limits": {"deadline_s": 300, "max_llm_calls": 30, "max_input_tokens": 1500000},
+    "exhausted_by": null,
+    "wrapped_up": false
+  }
 }
 ```
 
@@ -84,6 +89,14 @@ It is a **diagnostic, not a billing field**, and this is the one way it differs 
 `wrapped_up` (finished after the budget's wrap-up notice), `budget_exhausted` (stopped by the turn
 budget, answered with a tool-free summary) or `failed` (an exception or an abnormal model stop;
 `error` carries the detail). `null` on rows written before the field existed.
+
+`budget` is the turn budget as it stood for that turn: the scope's `limits`, which limit ended it
+(`exhausted_by`: `time` / `steps` / `tokens`, else `null`) and whether the wrap-up notice fired
+(`wrapped_up` — true on a turn that later ran out, too). Usage against each limit is the row's own
+`duration_ms`, `llm_calls` and `input_tokens`, so every row says what it used, what it was allowed
+and whether it hit the ceiling — readable across limit changes without deploy dates. A
+`budget_exhausted` row is censored: it shows the limit, not what the turn wanted. `null` on rows
+written before the field existed.
 
 ### `tool_calls.jsonl` — one record per tool invocation
 
@@ -143,6 +156,9 @@ Lives in `gateway/commands/handlers.py`. Thin wrapper around `observability.summ
 ```
 
 Trailing `user` or `heartbeat` always narrows the rollup; combine freely with any date token. The handler reuses `_parse_log_date` from `/logs` for date parsing.
+
+Turn outcomes show alongside the counts: `N errors` (failed turns), `N stopped early (2 steps, 1 time)`
+(budget stops, by limit) and `N wrapped up` — a budget stop is not counted as an error.
 
 Rendering is a compact summary (totals line + per-bucket bullets when ≥ 2 buckets) — readable on mobile, no horizontal scroll, no fixed-width tables. It follows the slash-command reply contract (bold header, blank line, real `- ` items) so it survives both the Telegram and CommonMark renderers — see [GATEWAY.md](GATEWAY.md) § Reply formatting.
 

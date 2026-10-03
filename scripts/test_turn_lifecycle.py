@@ -486,6 +486,38 @@ check("heartbeat wrap-up: only the finished task stamps", stamped, ["inbox-check
 check("heartbeat wrap-up: acked tick sends no failure notice",
       [e for e, _ in sent if e == "heartbeat+tick_failed"], [])
 
+# --- 8. Budget telemetry -----------------------------------------------------
+from observability import format_usage_table, summarize_usage  # noqa: E402
+
+set_budget("user", max_llm_calls=10)
+agent.llm = LoopingLLM()
+agent.ask_jarvis("run out", "t_tele")
+row = last_turn_row()
+check("telemetry: budget block records the limits in force",
+      row.get("budget", {}).get("limits", {}).get("max_llm_calls"), 10)
+check("telemetry: budget block records which limit ended it", row["budget"]["exhausted_by"], "steps")
+check("telemetry: budget block records the wrap-up notice", row["budget"]["wrapped_up"], True)
+# 25% → 50% → 75% → 100%: a small budget can skip the notice, and the row says so.
+set_budget("user", max_llm_calls=4)
+agent.llm = LoopingLLM()
+agent.ask_jarvis("run out fast", "t_tele2")
+check("telemetry: a stop that skipped the notice is visible",
+      (last_turn_row()["budget"]["exhausted_by"], last_turn_row()["budget"]["wrapped_up"]), ("steps", False))
+agent.llm = FakeLLM([AIMessage(content="quick")])
+agent.ask_jarvis("quick", "t_tele")
+check("telemetry: a normal turn records no exhaustion",
+      (last_turn_row()["budget"]["exhausted_by"], last_turn_row()["budget"]["wrapped_up"]), (None, False))
+
+rows = summarize_usage(group_by="scope")
+user = next(r for r in rows if r["group"] == "user")
+check("usage: budget stops are not counted as errors",
+      user["errors"], sum(1 for r in map(json.loads, open(os.path.join(LOG_DIR, "turns.jsonl")))
+                          if r.get("scope") == "user" and r.get("outcome") == "failed"))
+check("usage: stopped-early turns counted by limit", user["exhausted_by"].get("steps", 0) >= 1, True)
+report = format_usage_table(rows, title="**Usage**")
+check("usage: report shows stopped early by limit", "stopped early (" in report and "steps" in report, True)
+check("usage: report shows wrapped up", "wrapped up" in report, True)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {FAILS}")

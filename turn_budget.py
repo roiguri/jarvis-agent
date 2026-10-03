@@ -142,6 +142,19 @@ class TurnTracker:
         elif worst >= WRAP_UP_AT:
             self.wrapped_up = True
 
+    def record(self) -> dict:
+        """The turn's budget as written to turns.jsonl."""
+        b = self.policy.budget
+        return {
+            "limits": {
+                "deadline_s": b.deadline_s,
+                "max_llm_calls": b.max_llm_calls,
+                "max_input_tokens": b.max_input_tokens,
+            },
+            "exhausted_by": self.exhausted_by,
+            "wrapped_up": self.wrapped_up,
+        }
+
     def committed_calls(self) -> tuple[tuple[str, int], ...]:
         return tuple(self.committed.most_common())
 

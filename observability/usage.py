@@ -178,7 +178,13 @@ def _empty_bucket(key: str) -> dict:
         "reasoning_tokens": 0,
         "total_tokens": 0,
         "no_action_count": 0,
+        # Turns that failed (outcome `failed`, or any error on rows older than
+        # the outcome field). A budget stop is counted apart, not as an error.
         "errors": 0,
+        "wrapped_up": 0,
+        "budget_exhausted": 0,
+        # limit name -> count, for budget_exhausted turns that recorded it.
+        "exhausted_by": {},
         "usd_cost": 0.0,
         # Models seen in this bucket that MODEL_PRICES has no entry for, so their
         # tokens contributed $0.00 to usd_cost. A set while accumulating;
@@ -227,7 +233,15 @@ def summarize_usage(
         b["total_tokens"] += int(t.get("total_tokens") or 0)
         if t.get("no_action"):
             b["no_action_count"] += 1
-        if t.get("error"):
+        outcome = t.get("outcome")
+        if outcome == "wrapped_up":
+            b["wrapped_up"] += 1
+        elif outcome == "budget_exhausted":
+            b["budget_exhausted"] += 1
+            by = (t.get("budget") or {}).get("exhausted_by")
+            if by:
+                b["exhausted_by"][by] = b["exhausted_by"].get(by, 0) + 1
+        elif t.get("error"):
             b["errors"] += 1
         model = t.get("model")
         # A null model means the turn made no LLM call (nothing to price), which
@@ -305,7 +319,10 @@ def _unpriced_note(models: list[str]) -> str:
     return f"⚠ unpriced: {', '.join(models)}"
 
 
-def _extras(no_action: int, errors: int, unpriced: list[str]) -> list[str]:
+def _extras(
+    no_action: int, errors: int, unpriced: list[str],
+    wrapped_up: int = 0, exhausted: int = 0, exhausted_by: dict | None = None,
+) -> list[str]:
     """The optional trailing annotations shared by the totals block and each
     row. Returned as parts so callers choose their own separator — the totals
     block renders them as a standalone line, a row appends them inline."""
@@ -314,6 +331,11 @@ def _extras(no_action: int, errors: int, unpriced: list[str]) -> list[str]:
         parts.append(f"{no_action} NO_ACTION")
     if errors:
         parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    if exhausted:
+        by = ", ".join(f"{n} {k}" for k, n in sorted((exhausted_by or {}).items()))
+        parts.append(f"{exhausted} stopped early" + (f" ({by})" if by else ""))
+    if wrapped_up:
+        parts.append(f"{wrapped_up} wrapped up")
     note = _unpriced_note(unpriced)
     if note:
         parts.append(note)
@@ -329,7 +351,8 @@ def _row_line(r: dict) -> str:
     one line. Same reasoning as the /help handler.
     """
     parts = _extras(
-        r.get("no_action_count", 0), r.get("errors", 0), r.get("unpriced_models") or []
+        r.get("no_action_count", 0), r.get("errors", 0), r.get("unpriced_models") or [],
+        r.get("wrapped_up", 0), r.get("budget_exhausted", 0), r.get("exhausted_by"),
     )
     return (
         f"- **{r['group']}** — {r['turns']:,} turn{'s' if r['turns'] != 1 else ''} · "
@@ -350,7 +373,8 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
         - **N** turns · N LLM calls · N tool calls
         - **IN** in (P% cached) → **OUT** out (P% thinking)
         - **$USD** total
-        - N NO_ACTION · N errors            (omitted when all zero)
+        - N NO_ACTION · N errors · N stopped early (N steps, …) · N wrapped up
+                                            (each omitted when zero)
 
         **Breakdown**
 
@@ -367,7 +391,9 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     rather than with those helpers only to keep observability free of a gateway
     import. scripts/ci/check_command_replies.py validates this output via /usage.
 
-    `extras` carries NO_ACTION / error counts and, when any model in the period
+    `extras` carries NO_ACTION / error counts, the turn-budget outcomes (turns
+    stopped early by a limit, with the limit, and turns that wrapped up after
+    the notice) and, when any model in the period
     is missing from MODEL_PRICES, an '⚠ unpriced' marker — without it a $0.00
     from a stale price table is indistinguishable from a genuinely free period.
 
@@ -390,10 +416,19 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     totals_tools = sum(r["tool_calls"] for r in rows)
     totals_no_action = sum(r["no_action_count"] for r in rows)
     totals_errors = sum(r["errors"] for r in rows)
+    totals_wrapped = sum(r.get("wrapped_up", 0) for r in rows)
+    totals_exhausted = sum(r.get("budget_exhausted", 0) for r in rows)
+    totals_exhausted_by: dict[str, int] = {}
+    for r in rows:
+        for k, n in (r.get("exhausted_by") or {}).items():
+            totals_exhausted_by[k] = totals_exhausted_by.get(k, 0) + n
     totals_usd = sum(r["usd_cost"] for r in rows)
 
     totals_unpriced = sorted({m for r in rows for m in (r.get("unpriced_models") or [])})
-    extras_parts = _extras(totals_no_action, totals_errors, totals_unpriced)
+    extras_parts = _extras(
+        totals_no_action, totals_errors, totals_unpriced,
+        totals_wrapped, totals_exhausted, totals_exhausted_by,
+    )
 
     out: list[str] = []
     if title:

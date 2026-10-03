@@ -89,6 +89,10 @@ def record_turn_start(
         # completed | wrapped_up | budget_exhausted | failed (turn_budget); the
         # caller sets it before record_turn_end.
         "outcome": None,
+        # The turn's limits, which one ended it, and whether the wrap-up notice
+        # fired — so each row explains itself across limit changes. Set by the
+        # caller before record_turn_end.
+        "budget": None,
     }
     TURN_ACC.set(acc)
     return acc

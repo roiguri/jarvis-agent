@@ -916,6 +916,7 @@ def ask_jarvis(
         acc = telemetry.TURN_ACC.get()
         if acc is not None:
             acc["outcome"] = outcome.kind if outcome else turn_budget.FAILED
+            acc["budget"] = tracker.record()
         # End-state active_skills + no_action signal — read from the post-run
         # checkpoint snapshot. Falls back to active_start so the record stays
         # consistent even if get_state fails (rare).

@@ -55,6 +55,12 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] Provisional numbers applied (user 300s / 30 calls / 1.5M input; heartbeat 120s / 15 calls / 400k) — **still OPEN for review**
 - [x] Incorrect "LangGraph's own default" comment removed (slice 2 replaced the constant with a backstop)
 
+**Slice 3b — budget telemetry** (the instrument slice 4 reads)
+- [x] Each `turns.jsonl` row carries a `budget` block: limits in force, `exhausted_by`, `wrapped_up`
+- [x] `/usage` shows outcomes: errors (failed only), stopped early by limit, wrapped up
+- [x] `scripts/trace.py` prints `outcome` (and the limit that ended the turn)
+- [x] OBSERVABILITY.md schema + `/usage` section
+
 **Slice 4 — prod verification & re-tune**
 - [ ] Deploy; record the deploy date here
 - [ ] 14-day reading: 400 `INVALID_ARGUMENT` count (expect 0)
@@ -293,6 +299,16 @@ Also fixes the incorrect "LangGraph's own default" comment.
 
 **Order constraint:** slice 3 must not ship before slice 1. Raising the step guard alone moves
 JRV-08's graceful summaries into JRV-01's 400s, because longer turns cross the 50-message line.
+
+## Slice 3b — budget telemetry
+
+Every row already recorded what a turn *used* against each limit (`duration_ms`, `llm_calls`,
+`input_tokens`), but not what it was *allowed*, nor which limit ended it except inside the `error`
+string. The `budget` block makes each row self-describing across limit changes, so re-tuning
+never depends on deploy dates; `/usage` turns the slice 4 readings into one command instead of
+ad-hoc queries (PROBLEMS.md E1: nothing read the instrument). A budget stop no longer counts as an
+error in `/usage`. Censoring stays the reader's job: a `budget_exhausted` row shows the limit, not
+what the turn wanted.
 
 ## Slice 4 — prod verification & re-tune
 
