@@ -1,7 +1,8 @@
 # Turn lifecycle — bounded, honest, self-consistent turns
 
-**Status:** slices 0–3 implemented as a native GitHub stack (#122–#126), code-reviewed and
-revised; staging checks and slice 4 pending. Decisions marked **OPEN** are still under discussion.
+**Status:** COMPLETE and ARCHIVED (2026-10-03), with the merge of stack #127 (PRs #122–#126,
+#128). Slices 0–3b code-reviewed twice, staging-tested 2026-10-03. Slice 4 — the 14-day prod
+readings and the re-tune of the provisional numbers — moved to #129, with the deferred items.
 **Date:** 2026-10-02.
 **Goal:** a turn always ends in one of a small set of named outcomes, never destroys its own
 context, is bounded by wall-clock time rather than an arbitrary step count, and always tells the
@@ -61,8 +62,8 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [x] `scripts/trace.py` prints `outcome` (and the limit that ended the turn)
 - [x] OBSERVABILITY.md schema + `/usage` section
 
-**Slice 4 — prod verification & re-tune**
-- [ ] Deploy; record the deploy date here
+**Slice 4 — prod verification & re-tune** — moved to #129 on archive; the boxes below are its origin
+- [ ] Deploy; record the deploy date in #129
 - [ ] 14-day reading: 400 `INVALID_ARGUMENT` count (expect 0)
 - [ ] 14-day reading: `outcome` distribution per scope; user `budget_exhausted` rate vs 12/705
 - [ ] 14-day reading: uncensored LLM-calls distribution above 13
@@ -70,7 +71,8 @@ JRV-02, JRV-03, JRV-04, JRV-08 — 22 incidents between them.
 - [ ] 14-day reading: errored turns with no owner-facing message, either scope (expect 0)
 - [ ] 14-day reading: `tick_failed` notices sent — decide whether they are noise
 - [ ] Re-tune slice 3 numbers from the readings; record final values and why
-- [ ] Close out #36 directions 1–4 and archive this plan
+- [ ] Disposition #36 (directions 1–4 shipped; direction 5 open) — in #129
+- [x] Archive this plan
 
 ---
 
