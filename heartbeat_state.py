@@ -60,6 +60,9 @@ _DUE_FIELD_RE = re.compile(r"due:\s*(?P<spec>[^|`]+)", re.IGNORECASE)
 # the field boundaries so it cannot be matched out of a word in the notes path
 # or an instruction fragment that shares the line.
 _PAUSED_RE = re.compile(r"(?:^|\|)\s*paused\s*(?=\||$)", re.IGNORECASE)
+# Optional "gate: <name>" field: the task's check runs in code (triggers/gates.py)
+# instead of in the tick's model turn. Same field-boundary anchoring as paused.
+_GATE_RE = re.compile(r"(?:^|\|)\s*gate:\s*(?P<name>[A-Za-z0-9_-]+)\s*(?=\||$)", re.IGNORECASE)
 # Window spec: "[Day[,Day...] ]HH:MM-HH:MM" or "[Day[,Day...] ]HH:MM±Nh"
 # (± also accepted as "+-" or "+/-" for ASCII-only editing).
 _WINDOW_RE = re.compile(
@@ -141,6 +144,7 @@ class HeartbeatTask:
     due: str | None = None  # raw due: spec, if present
     window: DueWindow | None = None  # None = no (or unparseable) window → open
     paused: bool = False  # owner-declared; skipped by the gate without running
+    gate: str | None = None  # checked in code, never in the tick's model turn
 
 
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
@@ -244,22 +248,29 @@ def parse_tasks_text(text: str) -> list[HeartbeatTask]:
                 due=due_raw,
                 window=window,
                 paused=bool(_PAUSED_RE.search(rest)),
+                gate=(gm.group("name") if (gm := _GATE_RE.search(rest)) else None),
             )
         )
     return tasks
 
 
-def filter_heartbeat_md(text: str, due_names: list[str]) -> str:
+def filter_heartbeat_md(text: str, due_names: list[str] | None) -> str:
     """HEARTBEAT.md content with only the named task blocks kept.
 
     The preamble (everything before the first task header) is preserved.
     Task blocks not in ``due_names`` are collapsed into one terse note naming
     them, so the model knows they exist and are simply not due — without
-    paying for their full bodies. Unknown names in ``due_names`` are ignored.
+    paying for their full bodies. Gated tasks are left out of the notes
+    entirely: code runs them, so they are never the model's to act on.
+    Unknown names in ``due_names`` are ignored. ``None`` (the due-gate
+    failed) keeps every task except the gated ones, with no notes.
     """
     preamble, blocks = split_blocks(text)
-    keep = set(due_names)
-    paused = {t.name for t in parse_tasks_text(text) if t.paused}
+    tasks = parse_tasks_text(text)
+    paused = {t.name for t in tasks if t.paused}
+    gated = {t.name for t in tasks if t.gate}
+    keep = set(due_names) if due_names is not None else {n for n, _ in blocks} - gated
+    blocks = [(n, b) for n, b in blocks if n in keep or n not in gated]
     kept = [b for name, b in blocks if name in keep]
     omitted = [n for n, _ in blocks if n not in keep and n not in paused]
     omitted_paused = [n for n, _ in blocks if n not in keep and n in paused]

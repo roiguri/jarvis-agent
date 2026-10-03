@@ -401,7 +401,7 @@ def build_system_prompt(
       addressed) + yesterday's daily log (older days are reachable via
       read_memory on demand). When ``due_tasks`` is a list, only those task
       blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
-      one-line note); None injects the full file.
+      one-line note); None injects every task except gated ones.
     All files are read per turn (edits take effect next turn, no restart).
     """
     # Date only: the clock lives in the turn's input stamp (_turn_stamp), so
@@ -432,7 +432,7 @@ def build_system_prompt(
         parts.append(_HEARTBEAT_FRAMING)
         parts.append(load_or_blank(_HEARTBEAT_PROMPT_PATH))
         hb = load_or_blank(_HEARTBEAT_MD_PATH)
-        if hb and due_tasks is not None:
+        if hb:
             hb = heartbeat_state.filter_heartbeat_md(hb, due_tasks)
         if hb:
             parts.append(f"--- HEARTBEAT.md ---\n{hb}")
@@ -687,7 +687,7 @@ def ask_jarvis(
             nodes and tool calls can stamp it on telemetry records.
         heartbeat_due_tasks: heartbeat scope only — restrict the HEARTBEAT.md
             blocks injected into the system prompt to these task names.
-            None injects the full file. Overwritten in state every turn.
+            None injects every task except gated ones. Overwritten in state every turn.
         channel: origin channel name (router-stamped), or None for
             origin-less turns. Published via CURRENT_CHANNEL.
         trigger: the trigger whose firing started this turn (a scheduled

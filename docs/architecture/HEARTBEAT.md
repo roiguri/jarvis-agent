@@ -23,6 +23,9 @@ run_heartbeat()                                  heartbeat.py
         │    per task: cadence elapsed AND due-window open
         │    ├─ nothing due ──► log "nothing due", RETURN (no model, no agent import)
         │    └─ gate error  ──► FAIL OPEN: run with the full task list
+        ├─ gated due tasks ──► triggers.gates.evaluate in code; stamped on
+        │    success, never shown to the model (see TRIGGERS.md "Gates")
+        │    └─ none left ──► RETURN (no model)
         ├─ wait for TURN_LOCK (a wake may be running on this thread)
         ▼
 ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
@@ -84,7 +87,7 @@ only input to the gate).
 ## Task grammar
 
 ```
-- **<task-name>** | every <N><unit> [| due: <window>] [| paused] | notes: `heartbeat/<file>.md`
+- **<task-name>** | every <N><unit> [| due: <window>] [| paused] [| gate: <name>] | notes: `heartbeat/<file>.md`
   <free-form prose instruction — the model's brief, never parsed by code>
 ```
 
@@ -99,6 +102,13 @@ only input to the gate).
   a whole field between pipes, so a notes path or window containing the word is
   not the flag. Owner-declared and manual — nothing in the system sets or clears
   it on its own.
+- **`gate:`** (optional): the name of a registered code check
+  (`triggers/gates.py`). The task then never runs in a tick's model turn: its
+  check runs in code when due, and any model work happens in the wakes its
+  handler creates, whose turns are shown this task's block — so the prose
+  describes those wakes. Set by hand-editing (a gate is code);
+  `manage_heartbeat_task` preserves it on every edit. See
+  [TRIGGERS.md](TRIGGERS.md), "Gates".
 - **`notes:`/`state:` pointer**: both words accepted; names the task's notes
   file.
 
@@ -168,12 +178,15 @@ computes that start internally.
 
 Only due task blocks are injected; the preamble is kept and omitted tasks are
 named in a single line so the model knows they exist and are not due
-(`prompts/heartbeat.md` forbids acting on omitted tasks). Paused tasks are named
+(`prompts/heartbeat.md` forbids acting on omitted tasks). Gated tasks are left
+out of those notes entirely: code runs them, so naming them is only noise. Paused tasks are named
 in a *separate* line: "not due yet" invites the model to reason about a next
 run, which is wrong for a task the owner switched off. Cold start / gate failure
-(`due_names=None`) injects the full file, paused tasks included and carrying no
-note — an accepted, bounded cost of the deliberate fail-open: a gate that cannot
-say what is due cannot vouch for what is paused either.
+(`due_names=None`) injects every task except gated ones, paused tasks included
+and carrying no note — an accepted, bounded cost of the deliberate fail-open: a
+gate that cannot say what is due cannot vouch for what is paused either. Gated
+tasks are left out even here, since code (not the model) runs them; they are
+simply not evaluated that tick.
 
 ## The ack (`heartbeat_respond`)
 

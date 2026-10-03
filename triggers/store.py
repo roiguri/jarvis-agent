@@ -16,6 +16,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 
 import config
 from triggers.model import Trigger
@@ -31,7 +32,7 @@ _LOCK = threading.Lock()
 
 
 def _empty() -> dict:
-    return {"version": _VERSION, "triggers": []}
+    return {"version": _VERSION, "triggers": [], "gates": {}}
 
 
 def _read() -> dict:
@@ -41,9 +42,14 @@ def _read() -> dict:
     except FileNotFoundError:
         return _migrate_legacy()
     except json.JSONDecodeError:
-        logger.exception("triggers store unreadable: %s — treating as empty", STORE_PATH)
+        # Moved aside, never overwritten: a later write must not turn a
+        # recoverable file into an empty one.
+        aside = f"{STORE_PATH}.corrupt-{int(time.time())}"
+        os.replace(STORE_PATH, aside)
+        logger.exception("triggers store unreadable — moved to %s, starting empty", aside)
         return _empty()
     data.setdefault("triggers", [])
+    data.setdefault("gates", {})
     return data
 
 
@@ -118,5 +124,40 @@ def remove(trigger_id: str) -> bool:
         if len(kept) == len(data["triggers"]):
             return False
         data["triggers"] = kept
+        _write(data)
+        return True
+
+
+def get_by_key(key: str) -> Trigger | None:
+    return next((t for t in all_triggers() if t.key == key), None)
+
+
+def with_key_prefix(prefix: str) -> list[Trigger]:
+    return [t for t in all_triggers() if t.key and t.key.startswith(prefix)]
+
+
+def gate_state(task: str):
+    """The last committed state of a gated task's check, or None."""
+    with _LOCK:
+        return _read()["gates"].get(task)
+
+
+def set_gate_state(task: str, state) -> None:
+    commit_gate(task, state, [], [])
+
+
+def commit_gate(task: str, state, add: list[Trigger], remove_ids: list[str]) -> bool:
+    """A gate's outcome in one write: its new state plus the triggers its
+    handler created and cancelled, so a crash can't leave half of it applied.
+    Skips the write when nothing changed. Returns whether it wrote."""
+    with _LOCK:
+        data = _read()
+        gone = set(remove_ids)
+        rows = [r for r in data["triggers"] if r.get("id") not in gone]
+        rows += [t.to_dict() for t in add]
+        if rows == data["triggers"] and data["gates"].get(task) == state:
+            return False
+        data["triggers"] = rows
+        data["gates"][task] = state
         _write(data)
         return True

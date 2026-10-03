@@ -36,8 +36,42 @@ async def run_heartbeat() -> None:
     logger.info("Heartbeat: due tasks: %s",
                 "unknown (running all)" if due_names is None else due_names)
 
+    if due_names is not None:
+        due_names = await _run_gated(due_names, now_utc)
+        if not due_names:
+            return
     async with TURN_LOCK:
         await _run_tick(now_utc, due_names)
+
+
+async def _run_gated(due_names: list[str], now_utc: datetime.datetime) -> list[str]:
+    """Run the due tasks that have a gate in code (triggers/gates.py) and
+    stamp each one that completed. Returns the due tasks left for the model."""
+    from triggers import gates
+
+    try:
+        gate_of = {t.name: t.gate for t in await asyncio.to_thread(heartbeat_state.parse_tasks)}
+    except Exception:
+        logger.exception("Heartbeat: couldn't read task gates — running every due task in the model")
+        return due_names
+    rest = []
+    for name in due_names:
+        gate_name = gate_of.get(name)
+        if not gate_name:
+            rest.append(name)
+            continue
+        if not gates.is_registered(gate_name):
+            # A typo in a hand-edited header must not silently stop the task.
+            logger.error("Heartbeat: task %s names unknown gate %r — running it in the model",
+                         name, gate_name)
+            rest.append(name)
+            continue
+        if await gates.evaluate(name, gate_name):
+            try:
+                await asyncio.to_thread(heartbeat_state.stamp, [name], now_utc)
+            except Exception:
+                logger.exception("Heartbeat: failed to stamp gated task %s", name)
+    return rest
 
 
 async def _run_tick(now_utc: datetime.datetime, due_names: list[str] | None) -> None:
@@ -163,21 +197,30 @@ async def run_wake(trigger) -> None:
     failed delivery is retried, as a plain send of the text the turn wrote."""
     from agent import ask_jarvis
     from triggers import runner, store
-    from triggers.model import ORIGIN_OWNER, Send, Trigger
+    from triggers.model import ORIGIN_CODE, ORIGIN_OWNER, Send, Trigger
 
     async with TURN_LOCK:
         now_israel = datetime.datetime.now(ISRAEL_TZ)
-        source = "set by the owner in chat" if trigger.origin == ORIGIN_OWNER else "set by you in an earlier background turn"
+        task = trigger.action.task
+        source = {
+            ORIGIN_OWNER: "set by the owner in chat",
+            ORIGIN_CODE: f"set automatically by task {task}'s check" if task else "set automatically",
+        }.get(trigger.origin, "set by you in an earlier background turn")
         prompt = (
             f"Scheduled wake [{trigger.id}], {source}. Work only this instruction, "
-            "following the scheduled-wake rules above:\n\n"
-            f"{trigger.action.instruction}"
+            "following the scheduled-wake rules above"
+            + (f" and task {task}'s block in HEARTBEAT.md" if task else "")
+            + f":\n\n{trigger.action.instruction}"
         )
-        await asyncio.to_thread(store.remove, trigger.id)
+        # Cancelled or replaced while waiting for the lock (or before a
+        # restart's past-due run): it is gone from the store, so it doesn't run.
+        if not await asyncio.to_thread(store.remove, trigger.id):
+            logger.info("Heartbeat: wake %s was cancelled before it ran — skipping", trigger.id)
+            return
         logger.info("Heartbeat: running wake %s", trigger.id)
         outcome = await asyncio.to_thread(
             ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
-            scope="heartbeat", heartbeat_due_tasks=[], trigger=trigger,
+            scope="heartbeat", heartbeat_due_tasks=[task] if task else [], trigger=trigger,
         )
         if not outcome.finished:
             logger.error("Heartbeat: wake %s ended %s: %s", trigger.id, outcome.kind, outcome.cause)
@@ -196,7 +239,8 @@ async def run_wake(trigger) -> None:
                     trigger.id, ack.get("notify"), str(ack.get("summary", ""))[:200])
         undelivered = await _deliver(ack, metadata={"trigger": trigger.id})
         if undelivered is not None:
-            retry = Trigger(trigger.id, trigger.when, Send(undelivered), trigger.origin, trigger.parent)
+            retry = Trigger(trigger.id, trigger.when, Send(undelivered), trigger.origin,
+                            trigger.parent, trigger.key)
             await asyncio.to_thread(store.add, retry)
             logger.warning("Heartbeat: wake %s delivery failed — retrying as a send", trigger.id)
             runner.retry(retry, 0, "delivery failed")

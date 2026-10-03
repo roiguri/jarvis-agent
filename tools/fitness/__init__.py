@@ -3,9 +3,10 @@
 One module per concern, so a tool and the rows it owns stay together; `_db.py`
 holds the schema and the helpers they share, `_arbox.py` the gym's API surface.
 Importing this package imports each module, running its ``@tool_register``
-side-effects.
+side-effects (and ``gates.py``'s gate registration).
 """
 
+from tools.fitness import gates  # noqa: F401  (registers the Arbox gate)
 from tools.fitness.classes import (  # noqa: F401
     fetch_upcoming_arbox_classes,
     fetch_weekly_gym_schedule,

@@ -48,18 +48,45 @@ ticked.
       the ack.
 
 **S3 — Gates, the `code` action, crossfit.**
-- [ ] Prerequisite: the fitness read/sync split (constraint 1), sequenced with
-      [FITNESS_LOGGING_PLAN.md](FITNESS_LOGGING_PLAN.md).
-- [ ] `triggers/gates.py`, `triggers/handlers.py` registries. Gate state commits only after the
-      action and its delivery succeed.
-- [ ] `HEARTBEAT.md` header grammar gains `| gate: <name>` (parser and `manage_heartbeat_task`
-      validation).
-- [ ] `arbox_registrations` gate + `apply_arbox_change` handler: keyed one-shots for the briefing
-      and the check-in form; cancel them and wake a turn when a class is dropped.
-- [ ] The crossfit task's body rewritten for its new shape.
-- [ ] Verify on staging: an unchanged tick makes no model call; a new class creates both keyed
-      one-shots; a dropped class cancels them and wakes a turn; a turn that fails after a change
-      sees that change again on the next tick.
+- [x] Prerequisite: the fitness read/sync split (constraint 1). `tools/fitness/classes.py`:
+      `_fetch_registered()` only reads Arbox; `_apply_registered()` is the DB upsert and purge;
+      `_sync_registered_classes()` = apply(fetch), so the existing tools are unchanged. The fitness
+      redesign had already shipped its slices 0–2, so nothing collided.
+- [x] `triggers/gates.py`: `@gate` / `@gate_handler` registries, `evaluate()`; the gate's state and
+      its keyed `Upsert` / `Cancel` changes commit in one store write, after the handler succeeds. A gate error retries next tick; one owner notice after 3 in a row.
+      The "code" action is the handler: it returns follow-ups and never runs a turn itself.
+- [x] `HEARTBEAT.md` header grammar gains `| gate: <name>` (parser; `manage_heartbeat_task`
+      preserves it on every edit). A gated task never runs in the tick's model turn.
+- [x] `Turn` gains `task`: a wake's turn is shown that task's block (a gate's wakes belong to
+      its task); `prompts/heartbeat.md` says how to follow it.
+- [x] `tools/fitness/gates.py`: `arbox_registrations` gate + handler. Briefing wake 2h before
+      start (now, if closer); check-in wake at the class's end (start + 60 min); a dropped class
+      cancels both. Any change (booked, moved, dropped) also wakes Jarvis at once with the whole
+      change, to discuss the week against quota; the first run only records the starting set.
+      Keys `arbox:<class>:{brief,checkin}` and `arbox:change:<digest>`.
+- [x] Gated tasks are left out of the tick prompt entirely (not even the "not due" note).
+- [x] Staging's crossfit task rewritten for its gate and wakes.
+- [x] Offline: `scripts/test_triggers.py` (engine on a fake gate; the Arbox gate on a faked
+      fetch; a tick whose gated task never reaches the model; a task-linked wake).
+- [x] Independent review (2026-10-03), fixes applied: an empty Arbox fetch must repeat before
+      it counts as "everything dropped" (and a reply without `data` is an error); a wake cancelled
+      while queued for the lock doesn't run; gated tasks are hidden on the fail-open path too; the
+      gate's state and trigger changes commit in one write (an unchanged tick writes nothing);
+      a corrupt store is moved aside rather than overwritten; classes already underway are
+      ignored; a typo'd gate name falls back to the model; lead times computed in UTC.
+      Accepted as known limits: gate state outlives a deleted or renamed task; two tasks naming
+      one gate would share its keys; a category-only change reads as "moved"; the failure streak
+      is in memory (a restart resets it); a misconfigured `plans.binding` surfaces only as a
+      generic gate failure.
+- [ ] **Deploy step:** prod's crossfit task gets `| gate: arbox_registrations` and the new body
+      (staging's copy is the reference).
+- [ ] **Deploy step:** the gate's first run sees every booked class as new and schedules its
+      wakes, so cancel prod's old-style class-end reminders (e.g. `b07079b9` "How was the WOD?")
+      at deploy to avoid a duplicate check-in.
+- [ ] Verify in prod after the deploy (owner's choice, 2026-10-03: no staging run for S3), around
+      the end of the following week: an unchanged tick makes no model call; each booked class gets
+      both keyed wakes; the briefing and check-in wakes say something useful (the part offline
+      tests can't cover); a dropped class cancels them and wakes a turn.
 - [ ] Measure: no-op heartbeat turns per day, before and after.
 
 **S4 — Heartbeat folded in, daily log as a task.**

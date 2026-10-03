@@ -122,7 +122,7 @@ USER.md            (jarvis_memory — durable user profile)
 ─ scope == "heartbeat" ────────────────────────────────────────
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
-     (non-due tasks collapse to a one-line note; None = full file)
+     (non-due tasks collapse to a one-line note; None = every task but gated ones)
    + today's user chat (live slice of chat_history.jsonl)
    + yesterday's daily log
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here

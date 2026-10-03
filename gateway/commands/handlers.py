@@ -429,7 +429,7 @@ async def _triggers(inbound: InboundMessage, args: list[str]) -> str:
     `cancel <id>` removes one and disarms its job."""
     import timeutils
     from triggers import scheduler, store
-    from triggers.model import ORIGIN_OWNER, Turn
+    from triggers.model import ORIGIN_CODE, ORIGIN_OWNER, Turn
 
     if args and args[0].lower() == "cancel":
         if len(args) < 2:
@@ -452,7 +452,8 @@ async def _triggers(inbound: InboundMessage, args: list[str]) -> str:
             kind, body = "wake", t.action.instruction
         else:
             kind, body = "reminder", t.action.text
-        source = "from chat" if t.origin == ORIGIN_OWNER else "set by Jarvis"
+        source = {ORIGIN_OWNER: "from chat", ORIGIN_CODE: f"automatic, {t.parent}"}.get(
+            t.origin, "set by Jarvis")
         excerpt = body if len(body) <= 80 else body[:79] + "…"
         items.append(f"`{t.id}` {when} — {kind}, {source}: {excerpt}")
     return section("Scheduled", items, empty="_Nothing scheduled._")

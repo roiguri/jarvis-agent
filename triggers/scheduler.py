@@ -6,7 +6,7 @@ record, so every pending trigger is re-armed from it on startup.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -37,10 +37,12 @@ def _job_id(trigger_id: str) -> str:
 
 
 def arm(trigger: Trigger, run_date: datetime | None = None, attempt: int = 0) -> None:
-    """Schedule ``trigger`` to run at its instant, or at ``run_date`` for a retry."""
+    """Schedule ``trigger`` to run at its instant, or at ``run_date`` for a retry.
+    A time already past runs at once rather than being missed."""
+    soonest = datetime.now(timezone.utc) + timedelta(seconds=1)
     get_scheduler().add_job(
         runner.run,
-        DateTrigger(run_date=run_date or trigger.when.instant),
+        DateTrigger(run_date=max(run_date or trigger.when.instant, soonest)),
         id=_job_id(trigger.id),
         args=[trigger, attempt],
         replace_existing=True,

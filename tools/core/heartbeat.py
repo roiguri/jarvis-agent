@@ -58,7 +58,7 @@ def _notes_of(header: str) -> str | None:
 
 def _build_block(
     name: str, cadence: str, due: str, instruction: str, notes: str,
-    paused: bool = False,
+    paused: bool = False, gate: str | None = None,
 ) -> list[str]:
     """A canonical task block: header line + two-space-indented body.
 
@@ -72,6 +72,8 @@ def _build_block(
         fields.append(f"due: {due}")
     if paused:
         fields.append("paused")
+    if gate:
+        fields.append(f"gate: {gate}")
     fields.append(f"notes: `{notes}`")
     block = [" | ".join(fields)]
     block += [f"  {line}".rstrip() for line in instruction.strip().splitlines()]
@@ -295,8 +297,10 @@ def manage_heartbeat_task(
                 "'06:00-22:00', 'Tue,Sat 20:30±3h', '09:00±2h' (or 'none' to clear)."
             )
 
+        # A gate is code, set by hand-editing the file; every edit keeps it.
+        new_gate = None if action == "create" else prior.gate
         new_block = _build_block(
-            name, norm_cadence, new_due, instruction, notes, paused=new_paused
+            name, norm_cadence, new_due, instruction, notes, paused=new_paused, gate=new_gate
         )
         if action == "create":
             new_blocks = blocks + [(name, new_block)]
@@ -327,6 +331,7 @@ def manage_heartbeat_task(
             or t.cadence is None
             or (new_due and t.window is None)
             or t.paused != new_paused
+            or t.gate != new_gate
         ):
             return (
                 "Error: internal validation failed — the resulting task would not "

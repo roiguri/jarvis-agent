@@ -1,6 +1,7 @@
 # Fitness logging — compositional session model, explicit plan binding
 
-**Status:** planned, not started.
+**Status:** slices 0–2 implemented (5c19f63, 80766e1, 7aec27e; 1c4d0b3 retired
+`log_running_session`). Slice 3 (live verification) not recorded here.
 **Date:** 2026-09-06.
 **Goal:** make "a workout happened" recordable from anywhere (travel, hotel WODs, other gyms),
 attach workouts to plans explicitly instead of by heuristic, and restructure the logging tools
