@@ -89,11 +89,10 @@ message instead of failing silently.
 | `MEMORY_DIR` | `tools/core/memory.py` | `/app/jarvis_memory` | Long-term memory sandbox root |
 | `JELLYFIN_INTERNAL_URL` | `gateway/webhook/notifier.py` | `http://jellyfin.local:8096` | Poster fetch endpoint (env-overridable) |
 | `SILENCE_SERIES` / `SILENCE_MOVIE` | `gateway/webhook/notifier.py` | `600` / `120` (s) | Notification fallback timers |
-| `HEARTBEAT_INTERVAL_HOURS` | `main.py` | `1` | Heartbeat agent-turn cadence |
+| `TICK_INTERVAL_HOURS` | `heartbeat_state.py` | `1` | Heartbeat tick lattice (`triggers.scheduler.add_heartbeat` builds the cron from it) |
 | `HEARTBEAT_THREAD_ID` | `heartbeat.py` | `"heartbeat"` | Shared thread for all scheduled turns |
-| `STATE_PATH` | `heartbeat_state.py` | `/app/jarvis_data/heartbeat/state.json` | Code-owned per-task last_run stamps (due-gate input) |
 | `TURN_LOCK` | `heartbeat.py` | — | Serializes every heartbeat-thread turn (ticks and wakes); waits, never drops |
-| `STORE_PATH` | `triggers/store.py` | `/app/jarvis_data/triggers/triggers.json` | Pending triggers (reminders) across restarts |
+| `STORE_PATH` | `triggers/store.py` | `/app/jarvis_data/triggers/triggers.json` | Pending triggers, gate state, and heartbeat tasks' last_run stamps (due-gate input) |
 | `DB_PATH` (fitness) | `tools/fitness/_db.py` | `/app/jarvis_data/fitness/fitness.sqlite` | Fitness-skill DB |
 | `_HEARTBEAT_MD_PATH` | `agent.py` | `/app/jarvis_memory/HEARTBEAT.md` | Injected into heartbeat-scope prompt |
 | `_AGENTS_PATH` / `_HEARTBEAT_PROMPT_PATH` | `agent.py` | `/app/jarvis_code/prompts/AGENTS.md` / `heartbeat.md` | Dev-controlled prompt content |

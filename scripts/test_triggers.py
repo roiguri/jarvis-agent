@@ -109,7 +109,8 @@ def ack(text="", n=90):
 
 
 def reset_store():
-    for p in (store.STORE_PATH, store.LEGACY_PATH, store.LEGACY_PATH + ".migrated"):
+    for p in (store.STORE_PATH, store.LEGACY_PATH, store.LEGACY_PATH + ".migrated",
+              store.LEGACY_STAMPS_PATH, store.LEGACY_STAMPS_PATH + ".migrated"):
         if os.path.exists(p):
             os.remove(p)
 
@@ -151,6 +152,12 @@ def as_chat():
 
 async def main():
     sched = scheduler.init_scheduler()
+    scheduler.add_heartbeat(heartbeat.run_heartbeat)
+    hb_job = sched.get_job("heartbeat")
+    check("scheduler: the hourly tick is registered on :00 UTC",
+          (hb_job is not None, str(hb_job.trigger) if hb_job else None),
+          (True, "cron[hour='*/1', minute='0']"))
+    sched.remove_job("heartbeat")
     sched.start()
 
     # --- 1. Legacy migration -------------------------------------------------
@@ -174,6 +181,21 @@ async def main():
 
     reset_store()
     check("fresh instance: empty store", store.all_triggers(), [])
+
+    # Heartbeat task stamps move in from heartbeat/state.json, once.
+    reset_store()
+    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"inbox-check": "2026-10-03T09:00:00+00:00"}})
+    check("stamps: migrated into the store", store.task_stamps(), {"inbox-check": "2026-10-03T09:00:00+00:00"})
+    check("stamps: old file kept as backup", os.path.exists(store.LEGACY_STAMPS_PATH + ".migrated"))
+    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"other": "2026-10-03T10:00:00+00:00"}})
+    check("stamps: migration runs once", sorted(store.task_stamps()), ["inbox-check"])
+    reset_store()
+    write_json(store.LEGACY_PATH, {"events": [
+        {"id": "r1", "type": "reminder", "text": "x", "fire_at": "2030-01-01T09:00:00+00:00"}]})
+    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"t": "2026-10-03T09:00:00+00:00"}})
+    check("both legacy files migrate on one read", ([t.id for t in store.all_triggers()], store.task_stamps()),
+          (["r1"], {"t": "2026-10-03T09:00:00+00:00"}))
+    reset_store()
 
     # --- 2. Unreadable rows are skipped, never dropped -----------------------
     reset_store()
@@ -552,6 +574,8 @@ async def main():
     check("tick: the gated task isn't even named", "gated" not in system.replace("ungated", ""))
     stamps = heartbeat_state.load_state().get("last_run", {})
     check("tick: both tasks stamped", sorted(stamps), ["gated", "plain"])
+    check("tick: stamps live in the trigger store", sorted(store.task_stamps()), ["gated", "plain"])
+    check("tick: no per-tick daily-log rule in the prompt", "update today's daily log" not in system)
     heartbeat_state.any_due = lambda now: (True, ["gated"])
     llm = FakeLLM([])
     agent.llm = llm

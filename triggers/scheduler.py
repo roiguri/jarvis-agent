@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+
+import heartbeat_state
 
 from triggers import runner, store
 from triggers.model import Trigger
@@ -30,6 +33,24 @@ def get_scheduler() -> AsyncIOScheduler:
     if _scheduler is None:
         raise RuntimeError("Scheduler not initialized — call init_scheduler() first")
     return _scheduler
+
+
+def add_heartbeat(run_heartbeat) -> None:
+    """Register the hourly heartbeat tick.
+
+    Cron, not interval: an interval trigger anchors its first run at scheduler
+    start, so every restart re-phased the schedule to whatever minute the
+    process booted at. UTC keeps it 24 ticks a day across DST. Built from the
+    gate's own lattice, so the two cannot drift apart."""
+    get_scheduler().add_job(
+        run_heartbeat,
+        CronTrigger(hour=f"*/{heartbeat_state.TICK_INTERVAL_HOURS}", minute=0, timezone=timezone.utc),
+        id="heartbeat",
+        replace_existing=True,
+        # Held to the gate's grace: a tick delayed past this is dropped
+        # rather than fired off-lattice, and comes due again next hour.
+        misfire_grace_time=int(heartbeat_state.CADENCE_GRACE.total_seconds()),
+    )
 
 
 def _job_id(trigger_id: str) -> str:

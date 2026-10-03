@@ -6,10 +6,10 @@ Two concerns the agent never touches directly:
   (name + cadence). A task whose cadence can't be parsed surfaces with
   ``cadence=None`` so callers treat it as always due — a malformed line
   degrades to "let the model look at it", never to a silently dropped task.
-- ``load_state()`` / ``stamp()`` — per-task last-run timestamps in
-  ``/app/jarvis_data/heartbeat/state.json``, stamped only for the tasks the
-  agent reported acting on (its ``heartbeat_respond`` ack). Writes are
-  atomic; unknown task names are logged and skipped, never fatal.
+- ``load_state()`` / ``stamp()`` — per-task last-run timestamps, kept in the
+  trigger store (``triggers/store.py``, ``last_run``), stamped only for the
+  tasks the agent reported acting on (its ``heartbeat_respond`` ack) or whose
+  gate completed. Unknown task names are logged and skipped, never fatal.
 
 The agent's own narrative notes (``heartbeat/<task>.md`` in the memory dir)
 are unrelated to this module and stay agent-owned.
@@ -17,11 +17,9 @@ are unrelated to this module and stay agent-owned.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ
@@ -31,8 +29,6 @@ import config
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_PATH = os.path.join(config.MEMORY_DIR, "HEARTBEAT.md")
-STATE_DIR = os.path.join(config.DATA_DIR, "heartbeat")
-STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
 
 # The tick lattice: minute 0 of every Nth hour. The gate rounds to it and the
@@ -296,24 +292,15 @@ def filter_heartbeat_md(text: str, due_names: list[str] | None) -> str:
     return "\n\n".join(p for p in out if p)
 
 
-def load_state(path: str = STATE_PATH) -> dict:
+def load_state() -> dict:
     """The last-run map: ``{"last_run": {"<task>": "<iso8601>", ...}}``.
 
-    Missing or corrupt file → a fresh empty map (every task then looks
-    never-run, i.e. due — the safe direction).
+    An unreadable store reads as empty (every task then looks never-run,
+    i.e. due — the safe direction).
     """
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return {"last_run": {}}
-    except (OSError, json.JSONDecodeError):
-        logger.warning("heartbeat_state: unreadable %s — starting fresh", path)
-        return {"last_run": {}}
-    if not isinstance(data, dict) or not isinstance(data.get("last_run"), dict):
-        logger.warning("heartbeat_state: malformed %s — starting fresh", path)
-        return {"last_run": {}}
-    return data
+    from triggers import store
+
+    return {"last_run": store.task_stamps()}
 
 
 def _floor_to_tick(when: datetime) -> datetime:
@@ -326,7 +313,6 @@ def any_due(
     now: datetime | None = None,
     *,
     heartbeat_path: str = HEARTBEAT_PATH,
-    state_path: str = STATE_PATH,
 ) -> tuple[bool, list[str] | None]:
     """Which tasks are cadence-due at ``now`` (default: now, UTC).
 
@@ -349,7 +335,7 @@ def any_due(
             heartbeat_path,
         )
         return True, None
-    last_run = load_state(state_path)["last_run"]
+    last_run = load_state()["last_run"]
 
     due: list[str] = []
     for t in tasks:
@@ -401,13 +387,11 @@ def stamp(
     when: datetime | None = None,
     *,
     heartbeat_path: str = HEARTBEAT_PATH,
-    state_path: str = STATE_PATH,
 ) -> list[str]:
     """Record ``when`` (default: now, UTC) as last_run for the named tasks.
 
     Only names present in HEARTBEAT.md are stamped; unknown names are logged
-    and skipped. Nothing valid → no write. The file is replaced atomically
-    (tmp + os.replace). Returns the names actually stamped.
+    and skipped. Nothing valid → no write. Returns the names actually stamped.
     """
     when = when or datetime.now(timezone.utc)
     known = {t.name for t in parse_tasks(heartbeat_path)}
@@ -420,23 +404,11 @@ def stamp(
     if not stamped:
         return []
 
-    state = load_state(state_path)
-    for name in stamped:
-        state["last_run"][name] = when.isoformat()
+    from triggers import store
 
-    state_dir = os.path.dirname(state_path)
-    os.makedirs(state_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, sort_keys=True)
-            f.write("\n")
-        os.replace(tmp, state_path)
+        store.stamp_tasks(stamped, when.isoformat())
     except OSError:
-        logger.exception("heartbeat_state: failed to write %s", state_path)
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        logger.exception("heartbeat_state: failed to write stamps")
         return []
     return stamped

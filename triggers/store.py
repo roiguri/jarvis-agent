@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 STORE_PATH = os.path.join(config.DATA_DIR, "triggers", "triggers.json")
 # Reminders lived here before triggers existed; migrated once, then renamed.
 LEGACY_PATH = os.path.join(config.DATA_DIR, "scheduling", "scheduled_events.json")
+# So did heartbeat task stamps (heartbeat_state's last_run map); same treatment.
+LEGACY_STAMPS_PATH = os.path.join(config.DATA_DIR, "heartbeat", "state.json")
 _VERSION = 1
 
 _LOCK = threading.Lock()
@@ -40,16 +42,18 @@ def _read() -> dict:
         with open(STORE_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        return _migrate_legacy()
+        data = _migrate_legacy()
     except json.JSONDecodeError:
         # Moved aside, never overwritten: a later write must not turn a
         # recoverable file into an empty one.
         aside = f"{STORE_PATH}.corrupt-{int(time.time())}"
         os.replace(STORE_PATH, aside)
         logger.exception("triggers store unreadable — moved to %s, starting empty", aside)
-        return _empty()
+        data = _empty()
     data.setdefault("triggers", [])
     data.setdefault("gates", {})
+    if "last_run" not in data:
+        _migrate_stamps(data)
     return data
 
 
@@ -88,6 +92,25 @@ def _migrate_legacy() -> dict:
     os.replace(LEGACY_PATH, LEGACY_PATH + ".migrated")
     logger.info("migrated %d reminder(s) from %s", len(data["triggers"]), LEGACY_PATH)
     return data
+
+
+def _migrate_stamps(data: dict) -> None:
+    """A store without ``last_run`` predates it: take the stamps from the old
+    heartbeat/state.json when there is one, write, and keep that file as a
+    backup. Without one the map starts empty and is written on first stamp."""
+    data["last_run"] = {}
+    try:
+        with open(LEGACY_STAMPS_PATH, encoding="utf-8") as f:
+            legacy = json.load(f)
+    except FileNotFoundError:
+        return
+    except json.JSONDecodeError:
+        logger.exception("legacy stamp file unreadable: %s — not migrated", LEGACY_STAMPS_PATH)
+        return
+    data["last_run"] = dict(legacy.get("last_run") or {})
+    _write(data)
+    os.replace(LEGACY_STAMPS_PATH, LEGACY_STAMPS_PATH + ".migrated")
+    logger.info("migrated %d task stamp(s) from %s", len(data["last_run"]), LEGACY_STAMPS_PATH)
 
 
 def _parse(rows: list[dict]) -> list[Trigger]:
@@ -161,3 +184,17 @@ def commit_gate(task: str, state, add: list[Trigger], remove_ids: list[str]) -> 
         data["gates"][task] = state
         _write(data)
         return True
+
+
+def task_stamps() -> dict[str, str]:
+    """Heartbeat tasks' last-run instants, ISO 8601, by task name."""
+    with _LOCK:
+        return dict(_read()["last_run"])
+
+
+def stamp_tasks(names: list[str], when_iso: str) -> None:
+    with _LOCK:
+        data = _read()
+        for name in names:
+            data["last_run"][name] = when_iso
+        _write(data)

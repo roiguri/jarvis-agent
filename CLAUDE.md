@@ -22,7 +22,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── heartbeat.py           # heartbeat tick runner (pre-LLM due-gate + tick ack handling)
 ├── triggers/              # the one scheduler for timed work: trigger store, APScheduler wiring, runner
 │                          #   (reminders and wakes; see docs/architecture/TRIGGERS.md)
-├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
+├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), last_run stamps (kept in the trigger store)
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
@@ -61,8 +61,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/jarvis_data/          # Tool-opaque state — NEVER in the memory tool surface, never read_memory'd
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
-├── triggers/triggers.json          # pending triggers (reminders), code-owned (triggers/store.py)
-├── heartbeat/state.json            # code-owned per-task last_run stamps (heartbeat_state.py; gate input)
+├── triggers/triggers.json          # code-owned (triggers/store.py): pending triggers, gate state, task last_run stamps
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 └── logs/
     ├── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
@@ -142,12 +141,12 @@ Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation
 
 Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs on the shared scheduler (`triggers/scheduler.py`) at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
 
-1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
+1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per its code-owned `last_run` stamp (in `/app/jarvis_data/triggers/triggers.json`) — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with every task except gated ones). Due tasks with a `| gate:` run in code instead (docs/architecture/TRIGGERS.md "Gates"); if only those are due, no model call either.
 2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
-3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance `state.json`, and a failed send skips stamping so the tasks re-run next tick
-4. Writes a unified daily log: `daily/daily_YYYY-MM-DD.md` covering both heartbeat activity and today's user conversations (via `get_chat_history(since=...)`)
+3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance their stamp, and a failed send skips stamping so the tasks re-run next tick
+4. The daily log (`daily/daily_YYYY-MM-DD.md`, heartbeat activity + today's conversations + proactive sends) is its own `daily-log` task in HEARTBEAT.md (every 3h), not a side effect of every tick
 
-Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). The agent's notes files still carry a transitional `last_run:` line in parallel with `state.json` until the two have agreed in production.
+Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). Run timestamps are code-owned; the agent never writes a `last_run:` line.
 
 The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
 

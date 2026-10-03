@@ -1,7 +1,7 @@
 # Triggers — Plan
 
-**Date:** 2026-10-03 · **Status:** design settled (D1 and D2 decided 2026-10-03, §7); S1 and S2 done
-(2026-10-03), S3–S4 not started.
+**Date:** 2026-10-03 · **Status:** S1–S4 implemented (2026-10-03); awaiting PR, deploy, and the post-deploy checks
+(S3 behavior in prod; the no-op-turn measurement).
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A7, A8, A9 (no-op heartbeat
 ticks), plus two capability gaps PROBLEMS.md doesn't list: Jarvis can't wake itself at an exact
 time, and reminders and heartbeat tasks are two separate scheduling systems.
@@ -89,14 +89,34 @@ ticked.
       tests can't cover); a dropped class cancels them and wakes a turn.
 - [ ] Measure: no-op heartbeat turns per day, before and after.
 
-**S4 — Heartbeat folded in, daily log as a task.**
-- [ ] Recurring `HEARTBEAT.md` tasks evaluated by the triggers scheduler; `heartbeat/state.json`
-      migrated into the store; the due-gate maths moved from `heartbeat_state.py`.
-- [ ] The daily-log rule moved out of `prompts/heartbeat.md` into a `HEARTBEAT.md` task, once in
-      the evening to start (§6, "The daily log").
-- [ ] `docs/architecture/HEARTBEAT.md` rewritten around triggers.
-- [ ] Verify: a full staging day, with every task firing on its usual schedule and the daily log
-      written once.
+**S4 — Heartbeat stamps into the store, daily log as a task.** Rescoped 2026-10-03, after S1–S3:
+- [x] `heartbeat/state.json` migrated into the trigger store (`last_run`), with a `.migrated`
+      backup; `heartbeat_state.load_state`/`stamp` read and write it there.
+- [x] The hourly tick's registration moved from `main.py` to `triggers.scheduler.add_heartbeat`,
+      so every scheduled job is set up in one place.
+- [x] The daily log becomes its own task: the per-tick rule leaves `prompts/heartbeat.md`; a
+      `daily-log` task (`every 3h | due: 05:00-23:30`) folds in today's chat and proactive sends.
+      With crossfit gated, the per-tick rule would have left most days without a log. Staging's
+      `HEARTBEAT.md` has the task.
+- [x] `docs/architecture/HEARTBEAT.md`, `MEMORY.md`, `CLAUDE.md`, `DEVELOPMENT.md` updated.
+- [x] Offline: `scripts/test_triggers.py` (stamp migration, the tick registration, no daily-log
+      rule in the tick prompt).
+- [ ] **Deploy step:** add the `daily-log` task (and its notes file) to prod's `HEARTBEAT.md`;
+      staging's copy is the reference.
+- [ ] **After the prod deploy, once both migrations have run** (prod has
+      `scheduling/scheduled_events.json.migrated` and `heartbeat/state.json.migrated`, and
+      `triggers.json` holds the reminders and `last_run` stamps): delete the migration code —
+      `store._migrate_legacy`, `store._migrate_stamps`, `LEGACY_PATH`, `LEGACY_STAMPS_PATH`, their
+      calls in `store._read`, and their harness sections in `scripts/test_triggers.py` — plus the
+      migration notes in `docs/architecture/TRIGGERS.md`, `HEARTBEAT.md` and `DEVELOPMENT.md`.
+      Staging must have migrated too (it already has, for reminders). Then remove the `.migrated`
+      backups on both instances.
+- **Dropped:** moving the due-gate maths out of `heartbeat_state.py` into `triggers/`. The tick
+  already runs on the one shared scheduler; the maths (lattice, misfire handling, #114's DST
+  note) is prod-hardened, and moving it would be a rewrite with no change in behavior.
+- **Decided against, for now:** a once-a-day log. Kept at a 3h cadence so the user scope's
+  "today's log" stays about as fresh as before; the cadence is a task setting, tunable without
+  code. A day-close pass (or a code-written log) is a separate question.
 
 ---
 

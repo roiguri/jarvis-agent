@@ -42,7 +42,7 @@ run_heartbeat() reads the ack (agent.get_heartbeat_ack)
         │  → code-built notice, event="heartbeat", tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
         │                event="heartbeat")         send + log-on-success
-        └─ stamp(acted_tasks) → state.json          only acted tasks advance,
+        └─ stamp(acted_tasks) → last_run (store)    only acted tasks advance,
                                                     and only after delivery
                                                     settled (see below)
 ```
@@ -73,14 +73,13 @@ stamps normally.
 
 | File | Owner | Holds | Read by |
 |---|---|---|---|
-| `/app/jarvis_memory/HEARTBEAT.md` | Roi (hand-edit) + agent (via `manage_heartbeat_task` only) | Task **definitions**: name, cadence, optional `due:` window, prose instruction | gate parser AND prompt injection |
+| `/app/jarvis_memory/HEARTBEAT.md` | the owner (hand-edit) + agent (via `manage_heartbeat_task` only) | Task **definitions**: name, cadence, optional `due:` window, optional `gate:`, prose instruction | gate parser AND prompt injection |
 | `/app/jarvis_memory/heartbeat/<task>.md` | agent (free-form via memory tools) | **Notes**: narrative state for reasoning (`target_date`, `last_known_schedule`, …) | agent only — code never parses it |
-| `/app/jarvis_data/heartbeat/state.json` | code (`heartbeat_state.py`) | **Machine state**: `{"last_run": {"<task>": "<iso8601>"}}`, stamped only from the tick ack | code only — outside the memory sandbox, the agent cannot touch it |
+| `/app/jarvis_data/triggers/triggers.json` | code (`triggers/store.py`, via `heartbeat_state.load_state`/`stamp`) | **Machine state**: `last_run: {"<task>": "<iso8601>"}`, stamped only from the tick ack or a completed gate; also the gates' state and pending triggers ([TRIGGERS.md](TRIGGERS.md)) | code only — outside the memory sandbox, the agent cannot touch it |
 
-Transitional note: the agent currently still writes a `last_run:` line into its
-notes files in parallel with `state.json`; the markdown copy is retired once
-the two have demonstrably agreed in production (`state.json` is already the
-only input to the gate).
+The stamps lived in `/app/jarvis_data/heartbeat/state.json` until they moved
+into the trigger store; an instance that still has that file migrates it on the
+first store read and keeps it as `state.json.migrated`.
 
 ---
 
@@ -126,7 +125,7 @@ only input to the gate).
 A task is due when **not paused AND cadence elapsed AND window open**. `paused`
 short-circuits first: no cadence maths, no window check, and the task never
 enters `due_names` — so a tick whose only candidates are paused makes no model
-call at all. Pausing does not touch `state.json`, so a task resumed after a long
+call at all. Pausing does not touch the stamps, so a task resumed after a long
 pause is immediately cadence-due and runs on the next tick inside its window.
 That is intended: resuming is when you want the check to happen.
 
@@ -233,6 +232,16 @@ Guards:
   `./HEARTBEAT.md` cannot bypass it. `manage_heartbeat_task` is the agent's
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
+
+## The daily log
+
+`daily/daily_YYYY-MM-DD.md` is written by an ordinary task, `daily-log` in
+HEARTBEAT.md (every 3h, 05:00–23:30 Israel time), whose prose folds in today's
+chat, today's proactive sends (`get_notification_history`) and the day's
+heartbeat activity. It used to be a rule in `prompts/heartbeat.md` that every
+tick reaching the model followed, which only kept it fresh while an hourly task
+kept waking the model; once crossfit moved behind a gate, that stopped. Chat
+after the last run of the day (23:00) is not captured.
 
 ## Scheduled wakes (`run_wake`)
 
