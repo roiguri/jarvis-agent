@@ -1,7 +1,7 @@
 # Triggers — Plan
 
-**Date:** 2026-10-03 · **Status:** design settled (D1 and D2 decided 2026-10-03, §7); slices not
-started.
+**Date:** 2026-10-03 · **Status:** design settled (D1 and D2 decided 2026-10-03, §7); S1 done
+(2026-10-03), S2–S4 not started.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A7, A8, A9 (no-op heartbeat
 ticks), plus two capability gaps PROBLEMS.md doesn't list: Jarvis can't wake itself at an exact
 time, and reminders and heartbeat tasks are two separate scheduling systems.
@@ -16,14 +16,16 @@ Each slice ships and is verified on its own. Design detail is in §5–§7; this
 ticked.
 
 **S1 — Triggers skeleton, reminders moved in.** A refactor with no behavior change.
-- [ ] `triggers/model.py`, `triggers/store.py`: `jarvis_data/triggers/triggers.json`, migrated
+- [x] `triggers/model.py`, `triggers/store.py`: `jarvis_data/triggers/triggers.json`, migrated
       from `scheduling/scheduled_events.json` on first start.
-- [ ] `triggers/scheduler.py`: APScheduler wiring moved out of `heartbeat.py` and `main.py`
+- [x] `triggers/scheduler.py`: APScheduler wiring moved out of `heartbeat.py` and `main.py`
       (closes #32). One-shots armed on start from the store.
-- [ ] `triggers/runner.py`: the `send` action, which is today's `fire_reminder` with its retries.
-- [ ] `manage_reminder` keeps its interface, now backed by the store.
-- [ ] `CLAUDE.md` layout and `docs/architecture/` updated for the new top-level package.
-- [ ] Verify: pending reminders survive the migration and a restart; a staging reminder fires.
+- [x] `triggers/runner.py`: the `send` action, which is today's `fire_reminder` with its retries.
+- [x] `manage_reminder` keeps its interface, now backed by the store.
+- [x] `CLAUDE.md` layout and `docs/architecture/` updated for the new top-level package.
+- [x] Verify: pending reminders survive the migration and a restart; a staging reminder fires.
+      Offline: `scripts/test_triggers.py` (35 checks). Staging 2026-10-03: the legacy file
+      migrated on first read; a 2-minute reminder fired on time and was removed.
 
 **S2 — The `turn` action and self-wake.**
 - [ ] `runner.py`: `turn` action through one serialized turn queue. It replaces the 30s guard

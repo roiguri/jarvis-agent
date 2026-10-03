@@ -54,7 +54,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
-├── scheduling/scheduled_events.json
+├── triggers/triggers.json
 ├── heartbeat/state.json   # code-owned per-task last_run stamps (gate input — see HEARTBEAT.md doc)
 └── logs/{chat_history,notifications}.jsonl
 
@@ -157,7 +157,7 @@ The final `compact_skill_list(...)` section — every skill's `SKILL.md` descrip
 
 Decisions that intentionally diverge from earlier plan sketches; recorded so they are not "fixed" back later.
 
-- **No env-var overrides for relocated paths.** `fitness.sqlite`, `scheduled_events.json`, and the logs use hardcoded constants — no `FITNESS_DB_PATH` etc. A single Roi-operated LXC has no second deployment to parameterize for; an env knob would be dead configuration (YAGNI).
+- **No env-var overrides for relocated paths.** `fitness.sqlite`, `triggers.json`, and the logs use hardcoded constants — no `FITNESS_DB_PATH` etc. A single Roi-operated LXC has no second deployment to parameterize for; an env knob would be dead configuration (YAGNI).
 - **AGENTS.md lives in code, not `jarvis_memory/`.** Operating rules change by deploy and must not be agent-mutable; putting them in the version-controlled, sandbox-external `prompts/` dir enforces that structurally rather than via a runtime guard.
 - **`MEMORY.md` is tool-read, not prompt-injected** (see Access Model) — a deliberate token trade, not an omission.
 - **`threads.sqlite*` stays in `jarvis_memory/`** as the one deny-listed exception, because LangGraph owns the path. Its disk-footprint hygiene (WAL high-water mark, un-VACUUMed free pages) is self-bounded and tracked separately, not fixed here.
@@ -172,7 +172,7 @@ Decisions that intentionally diverge from earlier plan sketches; recorded so the
 2. writes to a `tempfile.NamedTemporaryFile` in the **same directory**;
 3. `os.replace()` — atomic rename on one filesystem — to publish.
 
-A reader therefore sees either the old or the new file, never a truncated one; concurrent writers serialize. This mirrors the atomic temp+replace pattern `scheduling.py` already uses for `scheduled_events.json`, plus the lock.
+A reader therefore sees either the old or the new file, never a truncated one; concurrent writers serialize. This mirrors the atomic temp+replace pattern `triggers/store.py` uses for `triggers.json`, plus the lock.
 
 ---
 

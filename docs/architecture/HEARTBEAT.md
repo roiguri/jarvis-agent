@@ -1,7 +1,7 @@
 # Heartbeat — Gated Background Ticks
 
-APScheduler fires `run_heartbeat()` at the top of every hour (`main.py`,
-`CronTrigger(hour="*/1", minute=0)` in UTC). The phase is fixed and survives
+The shared APScheduler (`triggers/scheduler.py`) fires `run_heartbeat()` at the
+top of every hour (`main.py`, `CronTrigger(hour="*/1", minute=0)` in UTC). The phase is fixed and survives
 restarts by design — see [The gate](#the-gate-heartbeat_stateany_due).
 **Code decides *when* the model runs; the model decides *what* to do.** A tick
 only becomes an LLM turn when at least one task is due per code-owned state,

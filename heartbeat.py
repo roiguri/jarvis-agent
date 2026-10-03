@@ -3,8 +3,6 @@ import datetime
 import logging
 from timeutils import ISRAEL_TZ
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 import heartbeat_state
 
 
@@ -12,29 +10,10 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_THREAD_ID = "heartbeat"
 
-_scheduler: AsyncIOScheduler | None = None
-
 # Start time of the last tick that reached the model — guards against
 # back-to-back turns if ticks ever fire in quick succession.
 _MIN_TICK_SPACING = datetime.timedelta(seconds=30)
 _last_tick_start: datetime.datetime | None = None
-
-# A reminder whose send fails is kept and retried; past the cap it is dropped
-# so a permanently failing send can't reschedule itself forever.
-_REMINDER_RETRY_DELAY = datetime.timedelta(minutes=5)
-_REMINDER_MAX_RETRIES = 3
-
-
-def init_scheduler() -> AsyncIOScheduler:
-    global _scheduler
-    _scheduler = AsyncIOScheduler()
-    return _scheduler
-
-
-def get_scheduler() -> AsyncIOScheduler:
-    if _scheduler is None:
-        raise RuntimeError("Scheduler not initialized — call init_scheduler() first")
-    return _scheduler
 
 
 async def run_heartbeat() -> None:
@@ -182,58 +161,3 @@ async def _notify_tick_failed(
     )
     if not result.ok:
         logger.error("Heartbeat: failed to send the tick-failure notice: %s", result.error)
-
-
-async def fire_reminder(event: dict) -> None:
-    """Send the reminder text directly. No LLM. The event is removed from the
-    events file only after a successful send; a failed send is retried a few
-    times, and the persisted event survives a restart either way."""
-    from apscheduler.triggers.date import DateTrigger
-    from gateway.factory import default_outbox
-    from gateway.outbox import EVENT_REMINDER
-    from tools.core import _remove_event
-
-    text = event.get("text", "(reminder)")
-    fire_at_str = event.get("fire_at", "")
-    if fire_at_str:
-        try:
-            scheduled = datetime.datetime.fromisoformat(fire_at_str)
-            delay = datetime.datetime.now(datetime.timezone.utc) - scheduled
-            if delay.total_seconds() > 60:
-                scheduled_local = scheduled.astimezone(ISRAEL_TZ).strftime("%H:%M Israel time")
-                text = f"[Originally scheduled for {scheduled_local}]\n{text}"
-        except Exception:
-            pass
-
-    logger.info("Heartbeat: firing reminder id=%s fire_at=%s text=%r",
-                event.get("id"), event.get("fire_at"), text[:80])
-    outcome = await default_outbox().notify_owner(text, event=EVENT_REMINDER)
-    if outcome.ok:
-        await asyncio.to_thread(_remove_event, event["id"])
-        logger.info("Heartbeat: reminder id=%s removed from events file", event.get("id"))
-        return
-
-    retries = int(event.get("retries", 0))
-    if retries >= _REMINDER_MAX_RETRIES:
-        logger.error(
-            "Heartbeat: reminder id=%s undeliverable after %d retries (%s) — dropping",
-            event.get("id"), retries, outcome.error,
-        )
-        await asyncio.to_thread(_remove_event, event["id"])
-        return
-
-    retry_at = datetime.datetime.now(datetime.timezone.utc) + _REMINDER_RETRY_DELAY
-    get_scheduler().add_job(
-        fire_reminder,
-        DateTrigger(run_date=retry_at),
-        id=f"event_{event['id']}",
-        args=[{**event, "retries": retries + 1}],
-        replace_existing=True,
-    )
-    logger.warning(
-        "Heartbeat: reminder id=%s send failed (%s) — retry %d/%d at %s",
-        event.get("id"), outcome.error, retries + 1, _REMINDER_MAX_RETRIES,
-        retry_at.isoformat(timespec="seconds"),
-    )
-
-

@@ -19,7 +19,9 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ```
 /app/jarvis_code/          # Application code (this repo)
 ├── agent.py               # LangGraph agent + system prompt construction
-├── heartbeat.py           # APScheduler heartbeat runner (pre-LLM due-gate + tick ack handling)
+├── heartbeat.py           # heartbeat tick runner (pre-LLM due-gate + tick ack handling)
+├── triggers/              # the one scheduler for timed work: trigger store, APScheduler wiring, runner
+│                          #   (reminders today; see docs/architecture/TRIGGERS.md)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), state.json stamps
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
@@ -59,7 +61,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/jarvis_data/          # Tool-opaque state — NEVER in the memory tool surface, never read_memory'd
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
-├── scheduling/scheduled_events.json# pending reminders (scheduler-owned)
+├── triggers/triggers.json          # pending triggers (reminders), code-owned (triggers/store.py)
 ├── heartbeat/state.json            # code-owned per-task last_run stamps (heartbeat_state.py; gate input)
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 └── logs/
@@ -138,7 +140,7 @@ Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation
 
 ## Heartbeat System
 
-Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs via APScheduler at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
+Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs on the shared scheduler (`triggers/scheduler.py`) at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
 
 1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per code-owned `/app/jarvis_data/heartbeat/state.json` — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with the full task list).
 2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
@@ -209,6 +211,6 @@ message. Never infer or fake service state.
 | Change behavioral rules | `/app/jarvis_code/prompts/AGENTS.md` (always-on) or `prompts/heartbeat.md` (heartbeat-scope only); a skill's own rules go in `tools/<ns>/SKILL.md`. Tool usage is driven by tool docstrings, not prompt prose. |
 | Add a heartbeat task | Ask Jarvis (it uses `manage_heartbeat_task`, validated before write), or hand-edit `/app/jarvis_memory/HEARTBEAT.md` following the grammar in docs/architecture/HEARTBEAT.md (a malformed hand edit degrades to always-due, never a silent drop) |
 | Understand the memory layout | `/app/jarvis_memory/MEMORY.md` |
-| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,HEARTBEAT,OBSERVABILITY}.md` |
+| Full architecture reference | `docs/architecture/{GATEWAY,MEMORY,RUNTIME,HEARTBEAT,TRIGGERS,OBSERVABILITY}.md` |
 | Add per-turn telemetry / read usage | `observability/{telemetry,usage}.py` + `scripts/trace.py` (see [docs/architecture/OBSERVABILITY.md](docs/architecture/OBSERVABILITY.md)) |
 | Deploy / ops / local testing | `DEVELOPMENT.md` |

@@ -4,18 +4,17 @@ import os
 import signal
 import subprocess
 import uvicorn
-from datetime import datetime, timezone
+from datetime import timezone
 from dotenv import load_dotenv
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 
 # Instance paths — first project import (validates JARVIS_ROOT, derives every path).
 import config
 
 from agent import ask_jarvis, ask_jarvis_once
 import heartbeat_state
-from heartbeat import init_scheduler, run_heartbeat, fire_reminder
-from tools.core import _load_events
+from heartbeat import run_heartbeat
+from triggers.scheduler import init_scheduler, restore_pending
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
@@ -287,28 +286,10 @@ async def main() -> None:
         logger.info("jarvis-app channel active (hub polling).")
 
     try:
-        # Restore pending reminders from file (wakeups are handled via HEARTBEAT.md).
-        # Skipped when reminders are disabled — staging must not re-fire the owner's
-        # real events. Hold references to past-due fire tasks so they can't be GC'd.
-        past_due_tasks: list[asyncio.Task] = []
-        events = _load_events().get("events", []) if config.REMINDERS_ENABLED else []
-        for event in events:
-            if event.get("type") != "reminder":
-                continue
-            fire_at_dt = datetime.fromisoformat(event["fire_at"])
-            if fire_at_dt > datetime.now(timezone.utc):
-                scheduler.add_job(
-                    fire_reminder,
-                    DateTrigger(run_date=fire_at_dt),
-                    id=f"event_{event['id']}",
-                    args=[event],
-                    replace_existing=True,
-                )
-                logger.info("Restored reminder %s for %s", event["id"], fire_at_dt)
-            else:
-                # Past-due: fire_reminder annotates the message with the original time
-                past_due_tasks.append(asyncio.create_task(fire_reminder(event)))
-                logger.info("Past-due reminder %s — firing with original time annotation", event["id"])
+        # Re-arm stored triggers. Skipped when reminders are disabled — staging
+        # must not re-fire the owner's real events. Hold references to past-due
+        # runs so they can't be GC'd.
+        past_due_tasks = restore_pending() if config.REMINDERS_ENABLED else []
 
         scheduler.start()
         if config.HEARTBEAT_ENABLED:
