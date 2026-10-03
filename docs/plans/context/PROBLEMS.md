@@ -115,10 +115,17 @@ in A4. 64% of heartbeat turns cross a minute boundary mid-turn. **This finding c
 pass whose draft was never committed and no longer exists**; it has not been re-verified against
 current Gemini documentation. Treat as unconfirmed until it is.
 
-**B3 — The 50-message cap breaks the history prefix independently of the clock.** `ASSERTED`
+**B3 — The 50-message cap breaks the history prefix independently of the clock.** `RESOLVED`
 Both threads sit at `MAX_MESSAGES`, and the reducer hard-slices to exactly that on every state
 update — after each model return *and* each tool return — so the head shifts several times inside a
 single turn. Fixing B1/B2 alone would leave this untouched.
+The same mid-turn slice is also a correctness failure: once a turn's own traffic reaches ~50
+messages (≈40 tool calls), it evicts the turn's own `HumanMessage` and the fallback hands Gemini a
+history starting on an orphaned tool response — `400 INVALID_ARGUMENT`, 7 prod incidents
+2026-09-09..09-20, every one at 40+ tool calls. Resolved by
+[../archive/TURN_LIFECYCLE_PLAN.md](../archive/TURN_LIFECYCLE_PLAN.md) slice 1: the reducer trims
+only when a turn starts, by whole turns, so the prefix no longer shifts mid-turn and a turn can no
+longer evict its own input (staging, 2026-10-03: a 101-tool-call turn completed).
 
 **B4 — Every reminder requires a hand timezone conversion.** `ASSERTED`
 `prompts/AGENTS.md` requires `fire_at` in ISO 8601 UTC while every user-facing time is Israel-local,

@@ -68,27 +68,45 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         attachment_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
     )
 
-    async with _owner_turn_lock:
-        final_response = await asyncio.to_thread(
-            ask_jarvis,
-            inbound.user_text,
-            inbound.thread_id,
-            channel=inbound.channel or None,
-                media_attachments=[
-                {
-                    "kind": a.get("kind"),
-                    "path": a.get("path"),
-                    "mime_type": a.get("mime_type"),
-                }
-                for a in inbound.attachments
-                if a.get("kind") and a.get("path")
-            ]
-            or None,
-        )
+    return await run_owner_turn(
+        inbound.user_text,
+        inbound.thread_id,
+        channel=inbound.channel or None,
+        media_attachments=[
+            {
+                "kind": a.get("kind"),
+                "path": a.get("path"),
+                "mime_type": a.get("mime_type"),
+            }
+            for a in inbound.attachments
+            if a.get("kind") and a.get("path")
+        ]
+        or None,
+    )
 
-    if final_response:
-        await asyncio.to_thread(append_chat_log, "assistant", final_response, inbound.thread_id)
-    return final_response
+
+async def run_owner_turn(
+    user_text: str,
+    thread_id: str,
+    *,
+    channel: str | None = None,
+    media_attachments: list[dict] | None = None,
+) -> str:
+    """One user-scope turn under the owner lock; the single path every
+    conversational caller goes through. Returns the reply — for a turn that did
+    not finish, the runtime's honest account of what happened and what already
+    landed — and chat-logs it when non-empty."""
+    async with _owner_turn_lock:
+        outcome = await asyncio.to_thread(
+            ask_jarvis,
+            user_text,
+            thread_id,
+            channel=channel,
+            media_attachments=media_attachments,
+        )
+    if outcome.text:
+        await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
+    return outcome.text
 
 
 def _running_provenance() -> dict:
@@ -186,10 +204,8 @@ async def main() -> None:
         channel's, supplied by its confirmation store."""
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
-            async with _owner_turn_lock:
-                reply = await asyncio.to_thread(ask_jarvis, system_text, thread_id)
+            reply = await run_owner_turn(system_text, thread_id)
             if reply:
-                await asyncio.to_thread(append_chat_log, "assistant", reply, thread_id)
                 # Conversational reply, already chat-logged — no notification event.
                 await outbox.notify_owner(reply)
         except Exception:

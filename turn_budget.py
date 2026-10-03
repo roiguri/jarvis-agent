@@ -1,0 +1,244 @@
+"""How a turn ends, for every scope: the outcome vocabulary, the tool calls a
+turn committed on the way, and the honest wording when it does not finish.
+
+The runtime (``agent.ask_jarvis``) classifies; callers only decide where the
+text goes — a user turn replies with it, a heartbeat tick turns a failure into
+an owner notice. Scope differences belong here as data, never as branches in
+the loop.
+"""
+
+import contextvars
+import time
+from collections import Counter
+from dataclasses import dataclass
+
+COMPLETED = "completed"
+WRAPPED_UP = "wrapped_up"
+BUDGET_EXHAUSTED = "budget_exhausted"
+FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class TurnOutcome:
+    kind: str
+    # Owner-presentable; may be "" for a legitimately quiet turn.
+    text: str
+    # Why it did not complete normally, in plain language; None when it did.
+    cause: str | None = None
+    # (tool name, count) for every tool call that succeeded this turn.
+    committed_calls: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def finished(self) -> bool:
+        return self.kind in (COMPLETED, WRAPPED_UP)
+
+
+@dataclass(frozen=True)
+class TurnBudget:
+    # Wall-clock seconds for the whole turn.
+    deadline_s: float
+    # LLM calls per turn, the exhaustion call included.
+    max_llm_calls: int
+    # Cumulative input tokens across the turn's calls.
+    max_input_tokens: float
+
+
+@dataclass(frozen=True)
+class ScopePolicy:
+    budget: TurnBudget
+    # Shown to the model, tools still bound, from WRAP_UP_AT of any limit.
+    wrap_up_notice: str
+    # Shown to the model, no tools bound, for the turn's last call.
+    exhaustion_ask: str
+
+
+# Sized against prod turns from Sep 2026, where every user turn needing more
+# than 13 calls was cut off at that old ceiling, so real demand above it is
+# unknown. User: 300s covers the p99 turn (118s) and the longest turn that ever
+# completed (284s); 30 calls at the observed 3.6-9.2s per call land at the
+# same 2-4.5 min; 1.5M input tokens is ~45 calls at ~32k each, above the
+# largest turn seen (1.2M). Heartbeat: set so the wrap-up point sits above every
+# normal tick on record (1,805 since Jun 2026, max 86s / 10 calls / 245k input),
+# leaving the notice to runaways; the one runaway seen (412s, 472k) still stops.
+POLICIES: dict[str, ScopePolicy] = {
+    "user": ScopePolicy(
+        budget=TurnBudget(deadline_s=300, max_llm_calls=30, max_input_tokens=1_500_000),
+        wrap_up_notice=(
+            "[System notice, not from the owner: this turn is close to its limits.] "
+            "Stop starting new lookups or checks. Finish from what you already have: "
+            "make only the writes the request still needs, then answer. Say plainly "
+            "what is not done — the limit stopped it, not the owner."
+        ),
+        exhaustion_ask=(
+            "[System notice, not from the owner: this turn's limits are used up.] "
+            "Do not call any tools. Tell the owner plainly what you established, what "
+            "you did not, and what would finish it. Be brief and do not invent a result."
+        ),
+    ),
+    "heartbeat": ScopePolicy(
+        budget=TurnBudget(deadline_s=120, max_llm_calls=15, max_input_tokens=400_000),
+        wrap_up_notice=(
+            "[System notice: this tick is close to its limits.] Stop working new tasks. "
+            "Call heartbeat_respond now, listing in acted_tasks only the tasks you "
+            "fully completed."
+        ),
+        exhaustion_ask=(
+            "[System notice: this tick's limits are used up.] Do not call any tools. "
+            "In one or two lines, state which due tasks you completed and which you "
+            "did not."
+        ),
+    ),
+}
+
+# Fraction of any limit at which the wrap-up notice starts.
+WRAP_UP_AT = 0.8
+
+EXHAUSTED_CAUSE = {
+    "time": "it ran out of time",
+    "steps": "it ran out of steps",
+    "tokens": "it reached its token budget",
+}
+
+
+class TurnTracker:
+    """One turn's spend against its scope's budget, consulted before every LLM
+    call, plus the tool calls it committed. Mutated in place, so the copy
+    LangGraph's node context sees is the same object ask_jarvis reads after."""
+
+    def __init__(self, policy: ScopePolicy):
+        self.policy = policy
+        self.started = time.monotonic()
+        self.llm_calls = 0
+        # Counted here from each response, not read from telemetry: telemetry
+        # observes the loop and must never be what bounds it.
+        self.input_tokens = 0
+        self.wrapped_up = False
+        self.exhausted_by: str | None = None
+        # Successful tool calls by name. Their effects are already saved when
+        # a later step fails — what the owner and the next turn must be told.
+        self.committed: Counter = Counter()
+
+    def remaining_s(self) -> float:
+        return self.policy.budget.deadline_s - (time.monotonic() - self.started)
+
+    def record_call(self, response) -> None:
+        self.llm_calls += 1
+        usage = getattr(response, "usage_metadata", None) or {}
+        self.input_tokens += int(usage.get("input_tokens") or 0)
+
+    def check(self) -> None:
+        """Set the flags for the call about to be made. Every limit only grows,
+        so a flag once set stays set. The call that reaches a limit is itself
+        the last one — made with no tools — so a turn never exceeds its call
+        budget."""
+        b = self.policy.budget
+        by, worst = max({
+            "steps": (self.llm_calls + 1) / b.max_llm_calls,
+            "time": (time.monotonic() - self.started) / b.deadline_s,
+            "tokens": self.input_tokens / b.max_input_tokens,
+        }.items(), key=lambda kv: kv[1])
+        if worst >= 1:
+            self.exhausted_by = by
+        elif worst >= WRAP_UP_AT:
+            self.wrapped_up = True
+
+    def record(self) -> dict:
+        """The turn's budget as written to turns.jsonl."""
+        b = self.policy.budget
+        return {
+            "limits": {
+                "deadline_s": b.deadline_s,
+                "max_llm_calls": b.max_llm_calls,
+                "max_input_tokens": b.max_input_tokens,
+            },
+            "exhausted_by": self.exhausted_by,
+            "wrapped_up": self.wrapped_up,
+        }
+
+    def committed_calls(self) -> tuple[tuple[str, int], ...]:
+        return tuple(self.committed.most_common())
+
+
+# The running turn's tracker. Set by ask_jarvis; read by the graph's nodes.
+TRACKER: contextvars.ContextVar[TurnTracker] = contextvars.ContextVar("turn_tracker")
+
+
+_SUMMARY_MAX_NAMES = 6
+
+
+def committed_summary(calls: tuple[tuple[str, int], ...]) -> str:
+    parts = [f"{name} ×{n}" if n > 1 else name for name, n in calls[:_SUMMARY_MAX_NAMES]]
+    rest = len(calls) - _SUMMARY_MAX_NAMES
+    if rest > 0:
+        parts.append(f"{rest} other tool{'s' if rest > 1 else ''}")
+    return ", ".join(parts)
+
+
+_STATUS_CAUSE = {
+    502: "the model service was unavailable (overloaded upstream)",
+    503: "the model service was unavailable (overloaded upstream)",
+    504: "the model took too long to respond",
+    429: "the model quota was exhausted",
+    403: "the model service refused the API credentials",
+}
+# Fallback when no status code is attached: match status names, never digits.
+_STATUS_NAMES = {
+    503: ("UNAVAILABLE",),
+    504: ("DEADLINE_EXCEEDED", "Timeout", "timed out"),
+    429: ("RESOURCE_EXHAUSTED",),
+    403: ("PERMISSION_DENIED",),
+}
+
+
+def describe_error(exc: BaseException) -> str:
+    """A plain-language cause. Upstream conditions are told apart from our own
+    faults because they call for different reactions: retry later vs. report.
+
+    The provider's HTTP status wins when the error (or what it wraps) carries
+    one; otherwise the message is matched, by status name, not bare digits."""
+    err, code = exc, None
+    while err is not None and not isinstance(code, int):
+        code, err = getattr(err, "code", None), err.__cause__
+    if not isinstance(code, int):
+        text = str(exc)
+        code = next((c for c, names in _STATUS_NAMES.items()
+                     if any(n in text for n in names)), None)
+    return _STATUS_CAUSE.get(code, f"an internal error on my side ({type(exc).__name__})")
+
+
+def committed_sentence(calls: tuple[tuple[str, int], ...]) -> str:
+    # Reads count too — the tool surface carries no read/write flag — so the
+    # wording claims only what is true of every call: it ran.
+    if not calls:
+        return "No tool call had completed, so nothing was changed."
+    return (
+        f"Before it stopped I had already run: {committed_summary(calls)}. "
+        "Anything those calls changed is saved — check before asking me to redo it."
+    )
+
+
+def failure_text(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
+    """The owner-facing reply for a turn that did not finish."""
+    return f"I couldn't finish that: {cause}. {committed_sentence(calls)}"
+
+
+def failure_note(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
+    """Written into the thread so the next turn knows what already landed.
+    Scope-neutral: what the owner was told differs by scope."""
+    ran = (
+        f" Tool calls that completed: {committed_summary(calls)}. Any changes they "
+        "made are saved — check current state before repeating a write."
+        if calls else " No tool call completed."
+    )
+    return f"[This turn did not finish: {cause}.{ran}]"
+
+
+# Appended to a wrapped-up reply: the model chose what to leave out, so code —
+# not the model's wording — says the turn did not run to completion.
+WRAPPED_UP_LINE = "(Wrapped up early: this turn was close to its limits.)"
+
+
+def stopped_early_line(cause: str) -> str:
+    """Appended to a budget-exhausted reply so a partial answer never reads as
+    a finished one."""
+    return f"(Stopped early: {cause}. Reply \"continue\" to pick up where I left off.)"

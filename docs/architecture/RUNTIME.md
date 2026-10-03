@@ -114,7 +114,7 @@ So for everything but the few scope-declared tools, scope gates neither tools no
 
 ```python
 class JarvisState(AgentState):
-    messages: Required[Annotated[list, _add_and_trim]]   # unchanged (sliding window + blob strip)
+    messages: Required[Annotated[list, _add_and_trim]]   # window trimmed at turn start + blob strip
     scope: str                                            # "user" | "heartbeat"; set on first turn, then stable
     active_skills: Annotated[set[str], _merge_skills]     # namespaces activated in this thread
     heartbeat_due_tasks: list[str] | None                 # heartbeat scope: which HEARTBEAT.md blocks to inject
@@ -122,7 +122,7 @@ class JarvisState(AgentState):
 
 | Field | Reducer | Lifetime |
 |---|---|---|
-| `messages` | `_add_and_trim` (existing) | Sliding window of 50, pruned to one checkpoint per thread by `PruningSqliteSaver`. |
+| `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting), and only by whole turns, so a call is never separated from its response. The previous turn is always kept, however long — a long turn followed by "continue" must still see what it is continuing. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
 | `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
 | `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |
@@ -185,6 +185,35 @@ sequenceDiagram
 The user experience: "Queue Severance season 2" → Jarvis silently activates `media` → searches → confirms — all inside one inbound message. No delay, no re-ask.
 
 ---
+
+## Turn Budget and Outcomes
+
+Every turn runs under its scope's `ScopePolicy` (`turn_budget.POLICIES`: limits plus the
+scope's wrap-up and exhaustion wording — scope differences are data) and ends as exactly one
+`TurnOutcome`. The runtime enforces and classifies; callers only decide delivery: a user turn
+replies with `outcome.text` (`main.run_owner_turn`), a heartbeat tick that ends unfinished
+without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
+
+- **Enforced in `_llm_node`.** A `TurnTracker` (ContextVar, set by `ask_jarvis`) is checked
+  before every model call against elapsed time, calls made, and input tokens — counted by the
+  tracker itself, never read from telemetry. From `WRAP_UP_AT` (80%) of any limit the scope's
+  notice is appended to the **request only**, as a trailing user turn, never the checkpoint, so
+  later turns cannot imitate it. The call that reaches a limit is the last: no tools bound, the
+  exhaustion ask appended, so the graph ends through `tools_condition` as normal.
+- **Per-call timeout** is `min(LLM_CALL_TIMEOUT_S, remaining)`, floored at `MIN_CALL_TIMEOUT_S`.
+  A tool blocking inside the tool node is bounded only by its own client timeouts.
+- **Never `asyncio.wait_for` around the turn thread.** It stops waiting, not the thread: on the
+  user path it would release `_owner_turn_lock` mid-write, and on the heartbeat let the next tick
+  start a second turn on the same thread.
+- **`recursion_limit`** is a backstop just above the call budget; reaching it means a bug in the
+  budget and surfaces as a `failed` outcome.
+- **Outcomes.** `completed`; `wrapped_up` (finished after the notice, plus a code-appended
+  "Wrapped up early" line); `budget_exhausted` (the tool-free answer plus a code-appended
+  "Stopped early" line). Both notices are labelled as system notices, not from the owner, so the
+  model does not credit the stop to the owner; `failed` (exception or abnormal
+  finish reason — `ask_jarvis` does not raise). A failed turn writes a note into its thread
+  naming the tool calls that completed, so the next turn checks state before repeating a write.
+  The kind is recorded as `outcome` in `turns.jsonl` ([OBSERVABILITY.md](OBSERVABILITY.md)).
 
 ## Contracts
 

@@ -85,7 +85,8 @@ def drain_pending() -> tuple[str | None, str | None]:
 
 
 def advance_cursor(last_ts: str) -> None:
-    """Stamp after the turn completed; a failure re-delivers, never loses."""
+    """Stamp once the turn's input (and so the drained block) is checkpointed; a
+    turn that never got that far re-delivers, never loses."""
     try:
         os.makedirs(os.path.dirname(CURSOR_PATH), exist_ok=True)
         tmp = CURSOR_PATH + ".tmp"

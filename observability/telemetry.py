@@ -15,6 +15,7 @@ heartbeat gating, or compaction. See docs/architecture/OBSERVABILITY.md
 (Stage C) for the full schema.
 """
 import contextvars
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -32,6 +33,18 @@ TURN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 TURN_ACC: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "turn_acc", default=None
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _record(path: str, record: dict) -> None:
+    """Write a telemetry row; never raise. Telemetry observes the loop — a full
+    disk must not fail a tool step or a turn after its work has landed."""
+    try:
+        _append_line(path, record)
+    except Exception:
+        logger.exception("telemetry write to %s failed", path)
+
 
 _TRACEBACK_MAX = 3000  # chars; truncated before write as defence-in-depth.
 
@@ -73,6 +86,13 @@ def record_turn_start(
         "active_skills_end": [],
         "no_action": False,
         "error": None,
+        # completed | wrapped_up | budget_exhausted | failed (turn_budget); the
+        # caller sets it before record_turn_end.
+        "outcome": None,
+        # The turn's limits, which one ended it, and whether the wrap-up notice
+        # fired — so each row explains itself across limit changes. Set by the
+        # caller before record_turn_end.
+        "budget": None,
     }
     TURN_ACC.set(acc)
     return acc
@@ -146,7 +166,7 @@ def record_tool_call(
         "error": error_str,
         "traceback": traceback_str,
     }
-    _append_line(TOOL_CALLS_LOG, record)
+    _record(TOOL_CALLS_LOG, record)
     acc = TURN_ACC.get()
     if acc is not None:
         acc["tool_calls"] += 1
@@ -159,8 +179,8 @@ def record_turn_end(
     """Finalize the current turn: stamp ended_at + duration, append one line
     to turns.jsonl, clear TURN_ACC.
 
-    `error` is sourced from acc["error"] — callers set it when an exception
-    is caught (`_llm_node`, `ask_jarvis` try/finally) before re-raising.
+    `error` is sourced from acc["error"] — `ask_jarvis` sets it when a turn
+    fails or ends abnormally; `outcome` likewise, before calling this.
     Idempotent: a second call with TURN_ACC already cleared is a no-op.
     """
     acc = TURN_ACC.get()
@@ -173,5 +193,5 @@ def record_turn_end(
     if active_skills_end is not None:
         acc["active_skills_end"] = sorted(active_skills_end)
     acc["no_action"] = bool(no_action)
-    _append_line(TURNS_LOG, acc)
+    _record(TURNS_LOG, acc)
     TURN_ACC.set(None)

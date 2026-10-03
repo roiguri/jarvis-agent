@@ -70,7 +70,9 @@ def render_turn(turn: dict, tools: list[dict], chat: list[dict], notifs: list[di
         f"    Started {t0_local} Israel",
         f"    duration={turn['duration_ms']}ms  llm_calls={turn['llm_calls']}  tool_calls={turn['tool_calls']}",
         f"    tokens: in={turn.get('input_tokens',0)} (cache={turn.get('cache_read_tokens',0)}) out={turn.get('output_tokens',0)}",
-        f"    no_action={turn.get('no_action')}  error={turn.get('error')}",
+        f"    outcome={turn.get('outcome')}"
+        + (f" (by {turn['budget']['exhausted_by']})" if (turn.get('budget') or {}).get('exhausted_by') else "")
+        + f"  no_action={turn.get('no_action')}  error={turn.get('error')}",
     ]
 
     # Build a single timeline of events ordered by ms-offset.
