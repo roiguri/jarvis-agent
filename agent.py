@@ -887,10 +887,15 @@ def ask_jarvis(
                     f"the model stopped mid-response without an answer (it reported `{reason}`)",
                     suffix=" Rephrasing or splitting the request usually gets past it.",
                 )
+            elif tracker.wrapped_up:
+                outcome = turn_budget.TurnOutcome(
+                    turn_budget.WRAPPED_UP,
+                    f"{final_response}\n\n{turn_budget.WRAPPED_UP_LINE}".strip(),
+                    committed_calls=tracker.committed_calls(),
+                )
             else:
                 outcome = turn_budget.TurnOutcome(
-                    turn_budget.WRAPPED_UP if tracker.wrapped_up else turn_budget.COMPLETED,
-                    final_response,
+                    turn_budget.COMPLETED, final_response,
                     committed_calls=tracker.committed_calls(),
                 )
     except Exception as e:

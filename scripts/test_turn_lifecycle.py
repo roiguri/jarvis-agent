@@ -421,6 +421,9 @@ out = agent.ask_jarvis("finish up", "t_wrap")
 check("wrap-up: notice reached the model", has_notice(loop.log[3][1]), True)
 check("wrap-up: answering after the notice is wrapped_up", out.kind, turn_budget.WRAPPED_UP)
 check("wrap-up: counts as finished", out.finished, True)
+check("wrap-up: code flags the reply as wrapped up early", "Wrapped up early" in out.text, True)
+check("wrap-up: notice says it is not from the owner",
+      "not from the owner" in turn_budget.POLICIES["user"].wrap_up_notice, True)
 
 # Time: the deadline ends the turn and caps each call's timeout.
 set_budget("user", max_llm_calls=50, deadline_s=1.0)

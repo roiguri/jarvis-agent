@@ -207,8 +207,10 @@ without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
   start a second turn on the same thread.
 - **`recursion_limit`** is a backstop just above the call budget; reaching it means a bug in the
   budget and surfaces as a `failed` outcome.
-- **Outcomes.** `completed`; `wrapped_up` (finished after the notice); `budget_exhausted` (the
-  tool-free answer plus a code-appended "Stopped early" line); `failed` (exception or abnormal
+- **Outcomes.** `completed`; `wrapped_up` (finished after the notice, plus a code-appended
+  "Wrapped up early" line); `budget_exhausted` (the tool-free answer plus a code-appended
+  "Stopped early" line). Both notices are labelled as system notices, not from the owner, so the
+  model does not credit the stop to the owner; `failed` (exception or abnormal
   finish reason — `ask_jarvis` does not raise). A failed turn writes a note into its thread
   naming the tool calls that completed, so the next turn checks state before repeating a write.
   The kind is recorded as `outcome` in `turns.jsonl` ([OBSERVABILITY.md](OBSERVABILITY.md)).

@@ -57,25 +57,28 @@ POLICIES: dict[str, ScopePolicy] = {
     "user": ScopePolicy(
         budget=TurnBudget(deadline_s=math.inf, max_llm_calls=13, max_input_tokens=math.inf),
         wrap_up_notice=(
-            "[Turn budget nearly used] Stop starting new lookups or checks. Finish "
-            "from what you already have: make only the writes the request still "
-            "needs, then answer, saying plainly anything that is not done."
+            "[System notice, not from the owner: this turn is close to its limits.] "
+            "Stop starting new lookups or checks. Finish from what you already have: "
+            "make only the writes the request still needs, then answer. Say plainly "
+            "what is not done — the limit stopped it, not the owner."
         ),
         exhaustion_ask=(
-            "This turn's budget is used up. Do not call any tools. Tell the owner "
-            "plainly what you established, what you did not, and what would finish "
-            "it. Be brief and do not invent a result."
+            "[System notice, not from the owner: this turn's limits are used up.] "
+            "Do not call any tools. Tell the owner plainly what you established, what "
+            "you did not, and what would finish it. Be brief and do not invent a result."
         ),
     ),
     "heartbeat": ScopePolicy(
         budget=TurnBudget(deadline_s=90, max_llm_calls=13, max_input_tokens=math.inf),
         wrap_up_notice=(
-            "[Tick budget nearly used] Stop working new tasks. Call heartbeat_respond "
-            "now, listing in acted_tasks only the tasks you fully completed."
+            "[System notice: this tick is close to its limits.] Stop working new tasks. "
+            "Call heartbeat_respond now, listing in acted_tasks only the tasks you "
+            "fully completed."
         ),
         exhaustion_ask=(
-            "This tick's budget is used up. Do not call any tools. In one or two "
-            "lines, state which due tasks you completed and which you did not."
+            "[System notice: this tick's limits are used up.] Do not call any tools. "
+            "In one or two lines, state which due tasks you completed and which you "
+            "did not."
         ),
     ),
 }
@@ -208,6 +211,11 @@ def failure_note(cause: str, calls: tuple[tuple[str, int], ...]) -> str:
         if calls else " No tool call completed."
     )
     return f"[This turn did not finish: {cause}.{ran}]"
+
+
+# Appended to a wrapped-up reply: the model chose what to leave out, so code —
+# not the model's wording — says the turn did not run to completion.
+WRAPPED_UP_LINE = "(Wrapped up early: this turn was close to its limits.)"
 
 
 def stopped_early_line(cause: str) -> str:
