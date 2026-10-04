@@ -77,8 +77,9 @@ def manage_collection(
         name: the collection's exact name (required except for list).
         fields: custom fields, each {name, type, options?}. type is one of text,
             url, number, money, date, rating (1-5), choice (needs options), tags.
-            Names are snake_case; put units in the name (weight_kg). On create:
-            the fields; on edit_schema: fields to add.
+            Names are snake_case. A number field carries its unit in the name
+            (weight_kg); money stores a currency per value, so 'price', never
+            'price_ils'. On create: the fields; on edit_schema: fields to add.
         status: true = the item has a lifecycle (default states open / done);
             false = none (a reference list).
         statuses: custom states in order, e.g. ["unread", "read", "dropped"].
