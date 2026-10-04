@@ -24,8 +24,8 @@ Two layers:
      ANCHORS as "home", "owner", or "both"; stale entries fail too, so the
      roster cannot rot.
 
-Scope is app code: venv, caches, and scripts/ (dev tooling and these guards,
-which seed Israel-dated fixtures) are excluded.
+Scope is app code: venv, caches, scripts/ (dev tooling and these guards) and
+tests/ (which seed Israel-dated fixtures) are excluded.
 
 Run:  python3 scripts/ci/check_timezone_anchors.py    (exit 0 = clean, 1 = defect)
 """
@@ -58,7 +58,7 @@ _VALID = {"home", "owner", "both"}
 SEAM = "timeutils.py"
 # .claude/ holds local agent state, including git worktrees of other branches.
 _SKIP_DIRS = {"venv", "__pycache__", ".git", "node_modules", "media_cache", ".claude"}
-_SKIP_TOP = {"scripts"}
+_SKIP_TOP = {"scripts", "tests"}
 
 _IMPORT_RE = re.compile(r"^\s*(?:from\s+timeutils\s+import|import\s+timeutils)\b", re.M)
 _HARDCODED_ZONE_RE = re.compile(r"ZoneInfo\(\s*[\"']Asia/Jerusalem[\"']")
