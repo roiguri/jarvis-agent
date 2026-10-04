@@ -45,6 +45,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   may own zero tools and nest sub-skills (see "Add a new tool" below)
 ├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
+├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
+│                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/
 └── DEVELOPMENT.md         # Operational/dev runbook (env, constants, systemd, firewall, local testing)
 
 /app/jarvis_memory/        # ONLY genuine memory: markdown the agent both reads AND writes via memory tools

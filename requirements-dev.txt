@@ -1,0 +1,6 @@
+# Test-only dependencies: CI and local test runs install this file; prod installs
+# requirements.txt alone.
+-r requirements.txt
+hypothesis==6.168.3
+pytest==9.1.1
+pytest-asyncio==1.4.0

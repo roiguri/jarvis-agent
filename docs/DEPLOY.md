@@ -142,14 +142,15 @@ venv/bin/python scripts/ci/check_paths.py    # exit 0 clean, 1 on a leak
   git config core.hooksPath .githooks
   ```
   Fast local feedback; bypassable with `git commit --no-verify`.
-- **Merge** — `.github/workflows/ci.yml` runs the guards on every PR and push to `main`, as
-  four independent jobs (`path-isolation`, `channel-agnostic`, `command-replies`,
-  `timezone-anchors`), all four required under the **branch-protection rule** on `main`
+- **Merge** — `.github/workflows/ci.yml` runs the test suite and the guards on every PR and
+  push to `main`, as five independent jobs (`tests`, `path-isolation`, `channel-agnostic`,
+  `command-replies`, `timezone-anchors`), all five required under the **branch-protection rule** on `main`
   (GitHub → Settings → Branches). This is the real gate. `enforce_admins` is deliberately
   **off**: a red check warns the owner rather than hard-blocking, so an emergency merge stays
   possible in a one-person repo.
-  The `scripts/test_*.py` harnesses are deliberately **not** in CI — they are hand-run tools,
-  invoked when working on the area they cover.
+  The `tests` job runs the pytest suite in `tests/` (no network, no secrets — `tests/conftest.py`
+  sets a scratch root and a dummy key). It is not in the pre-commit hook: like
+  `command-replies` it boots the app. Run it locally with `venv/bin/python -m pytest`.
 - **Deploy** — `deploy/deploy.sh` runs the path check before the restart hand-off.
 
 ## `scripts/ci/check_channel_agnostic.py` — channel-agnostic guard
