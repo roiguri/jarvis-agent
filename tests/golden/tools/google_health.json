@@ -1,0 +1,60 @@
+[
+  {
+    "destructive": false,
+    "name": "check_biometrics",
+    "schema": {
+      "description": "Roi's daily resting heart rate and heart-rate variability (HRV) from the\n    Pixel Watch for the last `days` day(s); days=1 = today. Use for resting\n    heart rate or HRV / recovery questions.",
+      "name": "check_biometrics",
+      "parameters": {
+        "properties": {
+          "days": {
+            "default": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "check_sleep",
+    "schema": {
+      "description": "Roi's Pixel Watch sleep for the last `nights` night(s); nights=1 = last\n    night. Reports bedtime, wake time, total asleep, sleep efficiency and the\n    stage breakdown. The Google Health API does NOT expose Fitbit's 0-100\n    sleep score — sleep efficiency (asleep / in-bed) is the closest proxy.",
+      "name": "check_sleep",
+      "parameters": {
+        "properties": {
+          "nights": {
+            "default": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "check_workouts",
+    "schema": {
+      "description": "Logged Pixel Watch workout/exercise sessions in a date range\n    (owner-local dates — Israel unless traveling). `since_date`/`until_date`\n    are inclusive YYYY-MM-DD;\n    `since_date=\"\"` defaults to today, `until_date=\"\"` means no upper bound.\n    For a single day, pass `since_date == until_date`. Reports per session:\n    name, time, duration, distance/pace/steps/elevation when available,\n    calories, avg HR, HR-zone minutes, and per-km splits for GPS sessions.\n    Manually-logged sessions are tagged `(manual)` — their kcal/HR are\n    MET-estimated, not measured.",
+      "name": "check_workouts",
+      "parameters": {
+        "properties": {
+          "since_date": {
+            "default": "",
+            "type": "string"
+          },
+          "until_date": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

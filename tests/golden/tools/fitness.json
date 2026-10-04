@@ -1,0 +1,484 @@
+[
+  {
+    "destructive": false,
+    "name": "fetch_upcoming_arbox_classes",
+    "schema": {
+      "description": "Fetch the Arbox classes the user is registered for and upsert them into the fitness DB.\n\n    Covers Arbox's full 72h registration horizon (you cannot register further\n    ahead than that). Also fetches the WOD for each class date, and removes any\n    local class the user is no longer registered for (un-registered/cancelled\n    in Arbox) so it stops driving reminders, briefings, and attendance stats.\n    Use this each morning to get today's class and WOD before a briefing.\n\n    Returns a summary of registered classes (times + WODs), plus a notice for\n    any class removed because its registration was dropped.",
+      "name": "fetch_upcoming_arbox_classes",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "fetch_weekly_gym_schedule",
+    "schema": {
+      "description": "Fetch the full gym schedule for the coming days for WOD scouting.\n\n    Use this when the user asks 'what should I book this week?' or wants to plan\n    around specific workout types. Returns ALL classes (not just registered ones)\n    with their WOD descriptions so the LLM can reason about which to attend.\n\n    Does NOT write to the database — purely for decision-making.\n\n    Args:\n        days_ahead: How many days ahead to fetch (default 7 = one week).",
+      "name": "fetch_weekly_gym_schedule",
+      "parameters": {
+        "properties": {
+          "days_ahead": {
+            "default": 7,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_adherence_report",
+    "schema": {
+      "description": "Weekly adherence (completed vs target) over the last N weeks, per plan.\n\n    Use for 'how consistent have I been?', streak/trend questions, or multi-week\n    reviews. Complements get_weekly_fitness_summary (current week only). Weeks\n    are Sunday-start, matching get_weekly_fitness_summary's quota math.\n\n    Args:\n        plan_id: Limit to one plan. Default: all active plans.\n        weeks: Trailing weeks to report (default 8, clamped 1-52).",
+      "name": "get_adherence_report",
+      "parameters": {
+        "properties": {
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "weeks": {
+            "default": 8,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_daily_programming",
+    "schema": {
+      "description": "Show ALL Arbox tracks for a date in full — WOD, Endurance, PUMP, W.LIFTING, etc.\n\n    Briefings/scouting already surface the track Roi follows (WOD, or Saturday\n    Endurance) via fetch_upcoming_arbox_classes / fetch_weekly_gym_schedule. Use\n    this only when he explicitly asks about another track (e.g. \"what's the PUMP\n    today?\") or wants to compare them.\n\n    Args:\n        date: 'YYYY-MM-DD'. Defaults to today (Israel time).",
+      "name": "get_daily_programming",
+      "parameters": {
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_today_workout_id",
+    "schema": {
+      "description": "Look up today's workout_id for use in log_exercise_stats.\n\n    Use this when logging exercise stats if the user hasn't specified a workout context,\n    to ensure the log is linked to the correct session.\n\n    Returns the workout_id, class time, and WOD description for today's session.",
+      "name": "get_today_workout_id",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_weekly_fitness_summary",
+    "schema": {
+      "description": "Get a summary of this week's fitness activity: quota progress and logged lifts.\n\n    Use for weekly check-ins, Sunday reviews, or when the user asks 'how am I doing this week?'\n\n    Returns: sessions completed vs target, list of workouts, and recent exercise logs.",
+      "name": "get_weekly_fitness_summary",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_cardio_stats",
+    "schema": {
+      "description": "Attach cardio stats (run/walk/row/hike) to a workout — creating the session if needed.\n\n    Call this immediately when Roi reports a cardio session's numbers.\n    Always call this tool — never just acknowledge without saving.\n\n    Auto-links to the day's most recent cardio-shaped workout that has no\n    stats yet (e.g. a synced endurance class, or a log_workout row). If none\n    exists, it records the session itself as a running workout — check the\n    running program memory notes first and pass the program-matched\n    description (e.g. 'Phase 0 Session 1: 30-min brisk walk'). For cardio\n    stats on a non-running session (a hike, a row), create it first with\n    log_workout and pass its workout_id.\n\n    Args:\n        duration_min: Total duration in minutes (e.g. 32.0) — required.\n        distance_km: Distance in km (from watch GPS); pace is derived.\n        avg_hr: Average heart rate in bpm\n        pain_level: 0=none, 1=slight, 2=moderate, 3=stop-sign\n        prehab_done: Whether pre-hab exercises were completed after the session\n        prehab_notes: Description of pre-hab done (e.g. 'Tibialis 3×15, Calf raises 3×15')\n        notes: Any additional session notes\n        workout_id: Attach to this specific workout. Omit to auto-link (or create).\n        description: Session description, used only when creating a new running\n            workout (required then; must match the running program phase).\n        date: Session date as YYYY-MM-DD (defaults to today in Israel time)",
+      "name": "log_cardio_stats",
+      "parameters": {
+        "properties": {
+          "avg_hr": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "description": {
+            "default": "",
+            "type": "string"
+          },
+          "distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "duration_min": {
+            "type": "number"
+          },
+          "notes": {
+            "default": "",
+            "type": "string"
+          },
+          "pain_level": {
+            "default": 0,
+            "type": "integer"
+          },
+          "prehab_done": {
+            "default": false,
+            "type": "boolean"
+          },
+          "prehab_notes": {
+            "default": "",
+            "type": "string"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "duration_min"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_exercise_stats",
+    "schema": {
+      "description": "Log a weightlifting performance to the fitness database.\n\n    Use this immediately when the user reports what weights they lifted after a gym session.\n    Always call this tool — never just acknowledge without saving.\n\n    Args:\n        exercise_name: Name of the exercise (e.g. 'Back Squat', 'Deadlift', 'Hang Power Clean')\n        sets: Number of sets performed\n        reps: Number of reps per set\n        weight: Weight used in kg\n        notes: Optional qualitative notes (e.g. 'felt strong', 'touch and go')\n        workout_id: Optional. Links this log to today's session. If omitted, auto-looks up today's workout.",
+      "name": "log_exercise_stats",
+      "parameters": {
+        "properties": {
+          "exercise_name": {
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "type": "string"
+          },
+          "reps": {
+            "type": "integer"
+          },
+          "sets": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "exercise_name",
+          "sets",
+          "reps",
+          "weight"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_wod_result",
+    "schema": {
+      "description": "Log the CrossFit WOD result for today's session.\n\n    Call this after the user reports their WOD performance (time, rounds, score).\n    Use after log_exercise_stats — this completes the CrossFit session record.\n\n    Args:\n        result: WOD performance text (e.g. '12:43 RX', '9 rounds + 5 reps scaled', 'AMRAP: 8 rounds Rx')\n        workout_id: Optional. Links to today's CrossFit session. If omitted, auto-looks up today's workout.\n        notes: Optional free-text session note ('scaled to 16kg', 'shoulder felt off').\n            Provided -> set/overwrite; omitted -> any existing note is preserved.",
+      "name": "log_wod_result",
+      "parameters": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "result": {
+            "type": "string"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_workout",
+    "schema": {
+      "description": "Record that a workout happened — for sessions with no Arbox class behind them.\n\n    Use for off-gym training: a hotel WOD, a session at another gym, travel\n    workouts, or a new activity type. NEVER for a class the Arbox sync already\n    tracks — that row exists; enrich it with log_wod_result / log_exercise_stats\n    / log_cardio_stats instead. For a run, prefer log_cardio_stats directly —\n    it records the session and the stats in one call.\n\n    Any session_type string is accepted (e.g. 'climbing'); an unlisted type\n    still counts toward its plan, it just gets no automatic stat routing.\n    The reply gives the workout_id — pass it to the stat tools when logging\n    stats for anything but today's session.\n\n    Args:\n        description: What the session was (e.g. 'Hotel WOD: 5 rounds burpees/push-ups/squats')\n        date: Session date as YYYY-MM-DD (defaults to today in Israel time)\n        session_type: 'crossfit', 'running', 'walking', 'hiking', 'mobility', or any other activity name\n        plan: Plan to attach to, by id or name. Omit to attach by the plan's\n            binding (crossfit → the arbox-bound plan, running → the running-bound\n            plan, anything else → the manual-bound plan).\n        allow_duplicate: Pass true only if this really is a second session of the\n            same type on the same day.",
+      "name": "log_workout",
+      "parameters": {
+        "properties": {
+          "allow_duplicate": {
+            "default": false,
+            "type": "boolean"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "description": {
+            "type": "string"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_type": {
+            "default": "crossfit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "manage_fitness_plan",
+    "schema": {
+      "description": "Create, update, or list fitness plans.\n\n    action='create': Create a new plan. Requires name, tracking_mode ('flexible_quota' or\n        'strict_sequential'), and weekly_target_count. start_date defaults to today.\n    action='update': Update an existing plan. Requires plan_id. Provide any fields to change:\n        name, weekly_target_count, status ('active', 'paused', 'completed'), start_date,\n        or binding.\n    action='list': List all plans with current status, start date, and this-week session counts.\n\n    Args:\n        action: 'create', 'update', or 'list'\n        plan_id: Required for 'update'. The plan to modify.\n        name: Plan name (e.g. 'Weekly CrossFit')\n        tracking_mode: 'flexible_quota' (CrossFit — weekly count goal) or 'strict_sequential' (running — ordered sessions)\n        weekly_target_count: How many sessions per week to aim for\n        status: 'active', 'paused', or 'completed'\n        start_date: 'YYYY-MM-DD' the plan begins. Adherence reports ignore weeks before it. Create defaults to today.\n        binding: Which logging channel feeds this plan — 'arbox' (gym class sync),\n            'running' (running sessions), or 'manual' (manually logged sessions).\n            Create defaults to 'manual'. At most one active plan per binding.",
+      "name": "manage_fitness_plan",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tracking_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "weekly_target_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "query_exercise_history",
+    "schema": {
+      "description": "Look up the personal best AND most recent session for a given exercise.\n\n    Use before a class to check what weights Roi has hit before.\n    Does a case-insensitive fuzzy match on the exercise name.\n\n    Args:\n        exercise_name: Exercise to look up (e.g. 'deadlift', 'Back Squat', 'clean')",
+      "name": "query_exercise_history",
+      "parameters": {
+        "properties": {
+          "exercise_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "exercise_name"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "query_fitness_db",
+    "schema": {
+      "description": "Run a read-only SELECT against the fitness DB for ad-hoc analysis.\n\n    Use for questions the fixed tools don't cover: arbitrary date ranges,\n    cross-table joins, custom aggregates, trends. For routine checks prefer\n    get_weekly_fitness_summary / get_adherence_report / query_exercise_history.\n\n    Call with an EMPTY sql to get the LIVE schema (tables, columns, row counts)\n    — do this first if unsure of column names; the live schema is authoritative\n    (the canonical source can drift).\n\n    Rules:\n    - Read-only: a single SELECT or WITH...SELECT only. No writes, no PRAGMA,\n      no ATTACH, no multiple statements. The connection is physically read-only.\n    - Results cap at 200 rows; add your own LIMIT/aggregation if you hit it.\n    - workouts.scheduled_time is Israel-local 'YYYY-MM-DD HH:MM:00';\n      status in ('scheduled','completed','missed'); source in ('arbox','manual').\n\n    Args:\n        sql: A single read-only SELECT/WITH. Empty string = describe schema.",
+      "name": "query_fitness_db",
+      "parameters": {
+        "properties": {
+          "sql": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "sync_arbox_attendance",
+    "schema": {
+      "description": "Sync Arbox attendance data to the fitness DB.\n\n    Fetches the list of dates the user actually attended the gym (from Arbox's attendance log)\n    and marks the corresponding workouts in the DB as 'completed'. Also marks past scheduled\n    workouts that were not attended as 'missed'.\n\n    Call this periodically (e.g. during Sunday heartbeat review) to keep attendance accurate.\n\n    Returns a summary of how many workouts were marked completed or missed.",
+      "name": "sync_arbox_attendance",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

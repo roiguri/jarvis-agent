@@ -1,0 +1,209 @@
+[
+  {
+    "destructive": true,
+    "name": "add_issue_comment",
+    "schema": {
+      "description": "Add a comment to an existing issue. Requests owner confirmation before\n    executing. `repo_name` is the full `owner/repo` form.",
+      "name": "add_issue_comment",
+      "parameters": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name",
+          "issue_number",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "draft_github_issue",
+    "schema": {
+      "description": "Create a new issue. Requests owner confirmation before executing.\n    `repo_name` is the full `owner/repo` form. Pack the relevant context from\n    the conversation into `body`.",
+      "name": "draft_github_issue",
+      "parameters": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name",
+          "title",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "list_github_repositories",
+    "schema": {
+      "description": "List the GitHub repositories the authenticated user can access, most\n    recently updated first. Call this FIRST whenever you don't already know the\n    exact `owner/repo` name you need — never guess a repository name.",
+      "name": "list_github_repositories",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "list_repo_issues",
+    "schema": {
+      "description": "List issues for a repo. `repo_name` must be the full `owner/repo` form\n    (e.g. 'owner/repo'). `state` is 'open', 'closed', or 'all'. Pull\n    requests are excluded.",
+      "name": "list_repo_issues",
+      "parameters": {
+        "properties": {
+          "repo_name": {
+            "type": "string"
+          },
+          "state": {
+            "default": "open",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "list_repo_pulls",
+    "schema": {
+      "description": "List pull requests for a repo. `repo_name` must be the full `owner/repo`\n    form (e.g. 'owner/repo'). `state` is 'open', 'closed', or 'all'.",
+      "name": "list_repo_pulls",
+      "parameters": {
+        "properties": {
+          "repo_name": {
+            "type": "string"
+          },
+          "state": {
+            "default": "open",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "read_issue_details",
+    "schema": {
+      "description": "Read the full description and context of one issue. `repo_name` is the\n    full `owner/repo` form.",
+      "name": "read_issue_details",
+      "parameters": {
+        "properties": {
+          "issue_number": {
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name",
+          "issue_number"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "read_pr_details",
+    "schema": {
+      "description": "Read the full details of one pull request (title, state, body, branches,\n    draft/mergeable flags). `repo_name` is the full `owner/repo` form.",
+      "name": "read_pr_details",
+      "parameters": {
+        "properties": {
+          "pr_number": {
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name",
+          "pr_number"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "update_issue_status",
+    "schema": {
+      "description": "Close (state='closed') or reopen (state='open') an issue. Requests\n    owner confirmation before executing. `repo_name` is the full `owner/repo`\n    form.",
+      "name": "update_issue_status",
+      "parameters": {
+        "properties": {
+          "issue_number": {
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_name",
+          "issue_number",
+          "state"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

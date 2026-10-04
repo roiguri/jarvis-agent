@@ -1,0 +1,71 @@
+[
+  {
+    "destructive": false,
+    "name": "get_jellyseerr_requests",
+    "schema": {
+      "description": "List all media requests in Jellyseerr. Optional status filter: 'pending',\n    'approved', 'declined', 'available'. Use when the user asks about pending or\n    recent requests.",
+      "name": "get_jellyseerr_requests",
+      "parameters": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "request_media",
+    "schema": {
+      "description": "Submit a media request to Jellyseerr. media_type must be 'movie' or 'tv'.\n    Searches for the title then submits the request. Use when the user wants to\n    request a movie or TV show to be added to the library.",
+      "name": "request_media",
+      "parameters": {
+        "properties": {
+          "media_type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "media_type"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "search_jellyseerr",
+    "schema": {
+      "description": "Search Jellyseerr for a movie or TV show. Returns request status (pending,\n    approved, available), who requested it, and overall media availability.\n    Use when the user asks about request status or whether something has been requested.",
+      "name": "search_jellyseerr",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

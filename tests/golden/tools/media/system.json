@@ -1,0 +1,28 @@
+[
+  {
+    "destructive": false,
+    "name": "get_library_overview",
+    "schema": {
+      "description": "Get a high-level count overview of the Sonarr and Radarr libraries — total\n    series and movies, broken down by status. Use when the user asks how much content\n    is in the library or wants a quick summary of what's available.",
+      "name": "get_library_overview",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_media_system_health",
+    "schema": {
+      "description": "Check health, version, and disk space for Sonarr and Radarr. Returns any\n    warnings or errors, application versions, and free disk space per path. Use when\n    the user asks about system status, health alerts, updates, or disk space.",
+      "name": "get_media_system_health",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

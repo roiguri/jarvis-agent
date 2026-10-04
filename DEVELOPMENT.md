@@ -176,7 +176,9 @@ is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooli
    ```bash
    venv/bin/pip install -r requirements-dev.txt   # once per venv
    venv/bin/python -m pytest
+   venv/bin/python -m pytest --update-golden      # after an intended prompt/SKILL.md/docstring change
    ```
+   `tests/golden/` snapshots the system prompt and the tool schemas; review its diff like code.
 3. **Ship** — push the branch, open a PR to `main` (CI runs the test suite and the four guards, all required), merge:
    ```bash
    git push origin feat/my-change

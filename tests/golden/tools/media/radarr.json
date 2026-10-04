@@ -1,0 +1,237 @@
+[
+  {
+    "destructive": false,
+    "name": "add_radarr_movie",
+    "schema": {
+      "description": "Add a movie to Radarr for monitoring and downloading. Looks up the movie by\n    title from TMDB, then adds it with the specified quality profile (or the most\n    commonly used profile in your library if not specified), with a search triggered\n    immediately. Use when the user wants to download a movie.",
+      "name": "add_radarr_movie",
+      "parameters": {
+        "properties": {
+          "quality_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "delete_radarr_movie",
+    "schema": {
+      "description": "Remove a movie from Radarr WITHOUT deleting the file on disk. Use when the\n    user wants to stop tracking a movie but keep the existing file.",
+      "name": "delete_radarr_movie",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "delete_radarr_movie_with_files",
+    "schema": {
+      "description": "Remove a movie from Radarr AND permanently delete the file from disk.\n    This is irreversible — sends a confirmation request before executing.\n    Use when the user explicitly wants to free up disk space by deleting a movie.",
+      "name": "delete_radarr_movie_with_files",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_radarr_library",
+    "schema": {
+      "description": "List all movies in the Radarr library. Optional filter: 'monitored' (monitored\n    with no file), 'available' (file on disk), or 'missing' (monitored + no file).\n    Use when the user asks what movies are in the library or wants to browse by status.",
+      "name": "get_radarr_library",
+      "parameters": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_radarr_queue",
+    "schema": {
+      "description": "Get the current Radarr download queue — movies being downloaded right now.\n    Returns title, quality, download progress percentage, status, and time left.",
+      "name": "get_radarr_queue",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_radarr_wanted",
+    "schema": {
+      "description": "List monitored movies in Radarr that are missing and haven't been downloaded.\n    Use when the user asks what movies are still missing or haven't been found yet.",
+      "name": "get_radarr_wanted",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "remove_from_radarr_queue",
+    "schema": {
+      "description": "Remove a movie from the Radarr download queue, cancelling the in-progress\n    download. Does not delete any already-downloaded files. Use when the user wants\n    to cancel a stuck or unwanted movie download.",
+      "name": "remove_from_radarr_queue",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "search_radarr",
+    "schema": {
+      "description": "Search Radarr for a movie by title. Checks the local library first for accurate\n    on-disk status, then falls back to TMDB lookup for titles not yet in the library.\n    Use when the user asks about a movie's availability or download status.",
+      "name": "search_radarr",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "set_radarr_monitored",
+    "schema": {
+      "description": "Set the monitored status for an existing movie in Radarr. Use when the user\n    wants to start or stop monitoring a movie (monitored=True or False).",
+      "name": "set_radarr_monitored",
+      "parameters": {
+        "properties": {
+          "monitored": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "monitored"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "set_radarr_quality_profile",
+    "schema": {
+      "description": "Change the quality profile for an existing movie in Radarr. Use when the user\n    wants to upgrade or change the quality target for a movie already in the library.\n    quality_profile should be a profile name like 'HD-1080p', 'Any', 'Ultra-HD', etc.",
+      "name": "set_radarr_quality_profile",
+      "parameters": {
+        "properties": {
+          "quality_profile": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "quality_profile"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "trigger_radarr_search",
+    "schema": {
+      "description": "Trigger Radarr to search all configured indexers for a movie right now.\n    Use when the user wants to force a search for a specific movie.",
+      "name": "trigger_radarr_search",
+      "parameters": {
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

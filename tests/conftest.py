@@ -6,6 +6,7 @@ in the environment, so a test that slips past its fake LLM fails instead of
 calling the model.
 """
 
+import difflib
 import os
 import shutil
 import tempfile
@@ -25,8 +26,41 @@ from tests.fakes import FakeOutbox  # noqa: E402
 LOG_DIR = os.path.join(config.DATA_DIR, "logs")
 
 
+GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "golden")
+
+
+def pytest_addoption(parser):
+    parser.addoption("--update-golden", action="store_true",
+                     help="rewrite tests/golden/ from the current code instead of comparing")
+
+
 def pytest_sessionfinish(session, exitstatus):
     shutil.rmtree(_SCRATCH, ignore_errors=True)
+
+
+@pytest.fixture
+def golden(request):
+    """Compare text with ``tests/golden/<name>``; ``--update-golden`` rewrites it."""
+    update = request.config.getoption("--update-golden")
+
+    def check(name, text):
+        path = os.path.join(GOLDEN_DIR, name)
+        if update:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return
+        if not os.path.exists(path):
+            pytest.fail(f"no golden file {name}; run pytest --update-golden and review the diff")
+        with open(path, encoding="utf-8") as f:
+            want = f.read()
+        if text != want:
+            diff = difflib.unified_diff(want.splitlines(keepends=True), text.splitlines(keepends=True),
+                                        f"golden/{name}", "current")
+            pytest.fail(f"{name} changed. If intended, run pytest --update-golden and commit the "
+                        f"diff.\n\n{''.join(diff)}", pytrace=False)
+
+    return check
 
 
 @pytest.fixture(autouse=True)

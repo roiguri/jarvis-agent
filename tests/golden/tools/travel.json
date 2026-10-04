@@ -1,0 +1,328 @@
+[
+  {
+    "destructive": true,
+    "name": "manage_destination",
+    "schema": {
+      "description": "Somewhere you travel to — a city or a country — and the timezone it is in.\n\n    A destination is shared by every trip there and by every place saved in it,\n    so it is created once and reused. ALWAYS call action='list' before naming a\n    new one: a second spelling of a city you already have would split its saved\n    places in two.\n\n    Actions:\n    - list: every destination, with how many places and trips depend on it.\n    - create: needs a name and a timezone. The timezone is not optional — every\n      local time on a trip there is read in it.\n    - update: change a destination's name, kind, country or timezone. This\n      affects every trip and place attached to it, which is the point.\n    - merge: fold one destination into another, moving its places and trips\n      across and deleting it. The way to recover from a duplicate, since a\n      rename would collide with the name that already exists.\n\n    Args:\n        action: list | create | update | merge\n        name: the destination's name — \"Lisbon\", \"Portugal\", \"Japan\".\n        kind: city | region | country. Optional but worth setting.\n        country: the country it is in, for a city.\n        timezone: IANA name, e.g. \"Europe/Lisbon\". Required to create.\n        new_name: the replacement name, for update.\n        into: the destination to merge into, for merge.",
+      "name": "manage_destination",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "country": {
+            "default": "",
+            "type": "string"
+          },
+          "into": {
+            "default": "",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "type": "string"
+          },
+          "new_name": {
+            "default": "",
+            "type": "string"
+          },
+          "timezone": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "manage_itinerary",
+    "schema": {
+      "description": "Build and adjust a trip's day-by-day schedule.\n\n    Scheduling a place does NOT remove it from the wishlist — they are separate\n    lists — and the same place may be scheduled on more than one day.\n\n    Actions:\n    - list: the whole schedule, stays first then a section per day.\n    - schedule: put something on a day. Needs a dated trip. Identify a place by\n      place_id, google_place_id, or a bare title; a transit leg, a note, or a\n      tag needs only a title. For a flight or train that crosses timezones,\n      pass arrival_date and BOTH timezone arguments — the arrival date cannot\n      be worked out from the clocks, and the duration cannot be shown without\n      the zones.\n    - reschedule: change an existing entry's date or times.\n    - update: change anything reschedule does not — title, notes,\n      confirmation_code, the transit endpoints, item_type, which place it points\n      at, or which trip it belongs to. An EMPTY STRING clears a field; omitting\n      an argument leaves it alone. This is how a booking reference learned after\n      the fact gets recorded.\n    - remove: take it off the schedule. The wishlist is a separate list and is\n      never touched — a place removed from a day is still on it.\n\n    Args:\n        action: list | schedule | reschedule | update | remove\n        trip_id: which trip. Required. Call manage_trip(action='list') if unsure.\n        entry_id: the entry to change, from a listing.\n        place_id: an existing place's id.\n        google_place_id: Google's id, from a manage_place search.\n        title: name of the thing — required for transit and notes, which have no\n            place; optional for a place you are creating inline.\n        item_type: place | lodging | transit | note | tag. Defaults to place\n            when a place is given, note otherwise. Use lodging for a stay\n            spanning days, transit for a leg between two points, tag for a\n            day-level label (e.g. \"beach\", \"rest day\") spanning one or more\n            days — no place, no time. Renders on the day header, not in the\n            day's item list; notes doubles as the tag's description.\n        date: the day it happens, YYYY-MM-DD.\n        end_date: last day, for a stay spanning several days.\n        arrival_date: the day a transit leg lands, when that is not the day it\n            left. The same column as end_date, named for the case it fits. Give\n            it whenever the journey crosses timezones — read it off the ticket\n            rather than leaving it to be guessed.\n        start_time: 24-hour HH:MM, local where the item starts.\n        end_time: 24-hour HH:MM. For a transit leg this is the arrival time\n            LOCAL TO THE DESTINATION, the way a flight schedule prints it — so a\n            22:00 departure arriving 06:00 is normal, not a mistake. An end\n            earlier than its start is read as running past midnight and the\n            arrival date is set for you.\n        check_in_time: 24-hour HH:MM. For item_type='lodging', use this instead\n            of start_time — check-in lands on `date`, the day the stay starts.\n            Same column as start_time, named for the case it fits.\n        check_out_time: 24-hour HH:MM. For item_type='lodging', use this\n            instead of end_time — check-out lands on `end_date`, not `date`.\n            Same column as end_time, named for the case it fits. A stay can\n            carry one without the other; leave the unknown one blank rather\n            than guessing.\n        departure_timezone: IANA zone the departure time is local to, e.g.\n            \"Asia/Jerusalem\". Set it on the flights into and out of the trip;\n            leave it blank for anything inside the destination.\n        arrival_timezone: IANA zone the arrival time is local to.\n        from_location: where a transit leg starts — free text, e.g. \"Tel Aviv\".\n        to_location: where it ends. Not a destination row; just a label.\n        confirmation_code: booking reference. Also marks the row as booked, so a\n            trip date change reports it for rebooking instead of moving it.\n        notes: anything else worth remembering about this item.\n        wishlist_id: schedule something straight off the wishlist, using the id\n            its listing shows. The wishlist entry is not consumed.\n        move_to_trip: on update, the trip_id to move this entry to.",
+      "name": "manage_itinerary",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "arrival_date": {
+            "default": "",
+            "type": "string"
+          },
+          "arrival_timezone": {
+            "default": "",
+            "type": "string"
+          },
+          "check_in_time": {
+            "default": "",
+            "type": "string"
+          },
+          "check_out_time": {
+            "default": "",
+            "type": "string"
+          },
+          "confirmation_code": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "date": {
+            "default": "",
+            "type": "string"
+          },
+          "departure_timezone": {
+            "default": "",
+            "type": "string"
+          },
+          "end_date": {
+            "default": "",
+            "type": "string"
+          },
+          "end_time": {
+            "default": "",
+            "type": "string"
+          },
+          "entry_id": {
+            "default": 0,
+            "type": "integer"
+          },
+          "from_location": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "google_place_id": {
+            "default": "",
+            "type": "string"
+          },
+          "item_type": {
+            "default": "",
+            "type": "string"
+          },
+          "move_to_trip": {
+            "default": "",
+            "type": "string"
+          },
+          "notes": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "place_id": {
+            "default": 0,
+            "type": "integer"
+          },
+          "start_time": {
+            "default": "",
+            "type": "string"
+          },
+          "title": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "to_location": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "trip_id": {
+            "default": "",
+            "type": "string"
+          },
+          "wishlist_id": {
+            "default": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "manage_place",
+    "schema": {
+      "description": "Look up and keep places — restaurants, sights, hotels, stations.\n\n    A place belongs to no trip. Saving one makes it available to every trip; use\n    manage_wishlist or manage_itinerary to attach it to a particular one.\n\n    Actions:\n    - search: look the place up with Google and return numbered candidates, each\n      with a google_place_id. Use this before saving anything real — it gets the\n      address and map link right, and it is how you tell branches of a chain\n      apart. Then call save with the chosen candidate's fields.\n    - save: store a place. Pass google_place_id plus the fields from a search\n      result, or just title and address to record somewhere Google doesn't know.\n      Saving a google_place_id that is already stored returns the existing place\n      rather than duplicating it.\n    - list: saved places with their place_id — use when you need an id.\n    - update: correct a saved place. Because a place is shared, fixing an address\n      here fixes it everywhere it appears.\n    - delete: remove a saved place. Refused while any wishlist or itinerary row\n      still points at it, so nothing is orphaned.\n\n    Args:\n        action: search | save | list | update | delete\n        query: what to look up, e.g. \"Time Out Market\". search only.\n        near: a city or neighbourhood to disambiguate. search only.\n        place_id: the id from list/save. Required for update and delete.\n        google_place_id: Google's id, taken from a search result.\n        title: the place's name. Required when saving without a search result.\n        address: street address.\n        maps_url: link to the place on Google Maps.\n        category: one of restaurant, cafe, dessert, bar, market, sights, outdoors,\n            shopping, lodging, transit, other. Usually derived automatically from\n            what Google says the place is — pass it only for a place Google does\n            not know, or to correct a bucket that came out wrong.",
+      "name": "manage_place",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "address": {
+            "default": "",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "type": "string"
+          },
+          "destination": {
+            "default": "",
+            "type": "string"
+          },
+          "google_place_id": {
+            "default": "",
+            "type": "string"
+          },
+          "maps_url": {
+            "default": "",
+            "type": "string"
+          },
+          "near": {
+            "default": "",
+            "type": "string"
+          },
+          "place_id": {
+            "default": 0,
+            "type": "integer"
+          },
+          "query": {
+            "default": "",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "manage_trip",
+    "schema": {
+      "description": "Create and manage trips. One trip is 'current' at a time — that is the one\n    the travel tile shows.\n\n    Actions:\n    - list: every trip, with dates, timezone, and which is current. Call this\n      first whenever you don't already know the exact trip_id.\n    - create: needs trip_id and destination. trip_id is a short slug you choose\n      (e.g. 'lisbon_spring'). destination must be one that already exists — call\n      manage_destination(action='list') to see them, and create it there first if\n      it is new. The timezone comes from the destination, so it is not set here.\n      Dates are optional — a trip with no dates is a \"someday\" bucket you can\n      add wishlist places to but cannot schedule into. Becomes current only if\n      no other trip is; creating a trip never steals the pointer from the trip\n      the owner is currently looking at.\n    - update: change destination, dates, title or notes. Changing the dates does\n      NOT move anything already scheduled — what is on a day stays on that day,\n      and anything now outside the trip's window is listed so it can be dealt\n      with deliberately.\n    - set_current: point the tile at this trip. Use when the owner asks to look\n      at a different trip.\n    - archive: mark a trip finished. Destroys nothing and is reversible via\n      update. Prefer this over delete.\n    - delete: permanently remove the trip AND its wishlist and itinerary rows.\n      Saved places survive (they belong to no trip). Asks the owner to confirm.\n\n    Args:\n        action: list | create | update | set_current | archive | delete\n        trip_id: the trip's id — required for everything except list.\n        destination: the name of an existing destination. Never invent one — list\n            them first, and create a missing one with manage_destination.\n        start_date: YYYY-MM-DD. Give both dates or neither.\n        end_date: YYYY-MM-DD.\n        notes: free text about the trip as a whole.",
+      "name": "manage_trip",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "destination": {
+            "default": "",
+            "type": "string"
+          },
+          "end_date": {
+            "default": "",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "type": "string"
+          },
+          "start_date": {
+            "default": "",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "type": "string"
+          },
+          "trip_id": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "manage_wishlist",
+    "schema": {
+      "description": "Things the owner wants to do at a destination.\n\n    The list belongs to the DESTINATION, not to a trip, so it survives into the\n    next visit and needs no trip to exist. Scheduling something never removes it\n    from here.\n\n    Actions:\n    - list: the destination's list, grouped by city then category. Give a\n      destination or a trip_id. Done items are hidden unless include_done.\n    - add: put something on the list. For a real place, pass place_id (save it\n      with manage_place first if it isn't saved yet). For an intention that has\n      no place — \"somewhere with a view\", \"a good ramen place\" — pass a title\n      and a destination, and optionally a city.\n    - update: change notes, priority, title, city, or mark it done. An EMPTY\n      STRING clears a field; omitting an argument leaves it alone.\n    - remove: take it off the list entirely. Use this for \"changed my mind\";\n      for \"we went\", set done_at instead so the list resolves over repeat trips.\n\n    Args:\n        action: list | add | update | remove\n        wishlist_id: the entry, from a listing. Required for update and remove.\n        destination: whose list, by name. Call manage_destination(action='list')\n            if you don't know it.\n        trip_id: an alternative to destination — the trip's destination is used.\n        place_id: an existing place, from manage_place.\n        title: for a placeless intention, its name. On update, renames the entry.\n        city: which city to group it under, overriding the place's.\n        notes: why this — \"go before 11\", \"only if it rains\".\n        priority: 1 (highest) to 5 (lowest). Leave 0 to keep the default of 3.\n        done_at: YYYY-MM-DD, when the owner actually went.\n        include_done: list items already done as well.",
+      "name": "manage_wishlist",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "city": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "destination": {
+            "default": "",
+            "type": "string"
+          },
+          "done_at": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "include_done": {
+            "default": false,
+            "type": "boolean"
+          },
+          "notes": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "place_id": {
+            "default": 0,
+            "type": "integer"
+          },
+          "priority": {
+            "default": 0,
+            "type": "integer"
+          },
+          "title": {
+            "default": "__unset__",
+            "type": "string"
+          },
+          "trip_id": {
+            "default": "",
+            "type": "string"
+          },
+          "wishlist_id": {
+            "default": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "query_travel_db",
+    "schema": {
+      "description": "Run a read-only SELECT against the travel DB for ad-hoc analysis.\n\n    Use for questions the fixed tools don't cover: cross-trip totals, custom\n    aggregates, \"which places have I saved but never scheduled\".\n\n    Call with an EMPTY sql to get the LIVE schema (tables, columns, row counts)\n    — do this first if unsure of column names; the live schema is authoritative.\n\n    Rules:\n    - Read-only: a single SELECT or WITH...SELECT only. No writes, no PRAGMA,\n      no ATTACH, no multiple statements. The connection is physically read-only.\n    - Results cap at 200 rows; add your own LIMIT/aggregation if you hit it.\n    - Times (start_time/end_time) are 'HH:MM' local to the destination and are\n      never converted; dates are 'YYYY-MM-DD'.\n    - A place carries no trip_id — join through wishlist or itinerary to scope\n      it to one. itinerary.place_id is NULL for transit legs and notes.\n\n    Args:\n        sql: A single read-only SELECT/WITH. Empty string = describe schema.",
+      "name": "query_travel_db",
+      "parameters": {
+        "properties": {
+          "sql": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

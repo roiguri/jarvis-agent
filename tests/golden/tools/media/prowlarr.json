@@ -1,0 +1,22 @@
+[
+  {
+    "destructive": false,
+    "name": "search_prowlarr",
+    "schema": {
+      "description": "Search all configured Prowlarr indexers for NZB/torrent availability of a title.\n    Returns indexer name, seeders, size, and age for the top results. Use when the user\n    wants to know if content is available to download from configured indexers.",
+      "name": "search_prowlarr",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

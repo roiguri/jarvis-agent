@@ -1,0 +1,42 @@
+[
+  {
+    "destructive": false,
+    "name": "fetch_url",
+    "schema": {
+      "description": "Read the page at a URL and return its text.\n\n    Use this whenever you are given a link — an article, a post, a repo, a PDF.\n    Never try to identify a link by searching for it: a URL or a post id is an\n    address, and web_search cannot look one up. Use web_search only when you do\n    NOT have a URL and need to find one.\n\n    If this returns an error, say you could not read the page and record the\n    bare URL. Do not guess what it contained, do not describe it from the\n    surrounding conversation, and do not fall back to web_search.\n\n    Args:\n        url: The full http(s) URL to read.",
+      "name": "fetch_url",
+      "parameters": {
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "web_search",
+    "schema": {
+      "description": "Search the web for current information using Tavily.\n\n    Use this for questions about recent events, news, release dates, or anything\n    that may have changed since the model's training cutoff.\n\n    Use this only when you do NOT already have a URL. If you have a link, read it\n    with fetch_url — searching for a URL or a post id cannot find it.\n\n    Args:\n        query: The search query string.",
+      "name": "web_search",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]
