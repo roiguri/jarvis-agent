@@ -1,8 +1,8 @@
 # Collections — runtime-schema lists, a skill, and a jarvis-app mini-app
 
 **Date:** 2026-10-03 · **Status:** design settled in a grilling session (decisions below);
-C1 done and staging-verified; C3 deferred until
-the tools have been used for real.
+C1 in prod (deploy-2026-10-04-1), C2 done 2026-10-04;
+C3 deferred until the tools have been used for real.
 **Sibling plan:** [TASKS_PLAN.md](TASKS_PLAN.md) — todo/tasks are a separate model and ship
 after this plan is complete.
 **Goal:** replace the markdown lists in memory (reading, shopping, books) with a structured
@@ -39,14 +39,18 @@ Each slice ships and is verified on its own. Order is deliberate: collections en
       markdown file — unprompted it deleted `reading_list.md` (with confirmation).
 
 **C2 — Prod migration, by talking to Jarvis (no code, no script).** After C1 is deployed.
-- [ ] `reading` — every entry from `reading_list.md`, sections and done state preserved.
-- [ ] `shopping` — every entry from `shopping_list.md`, specs intact.
-- [ ] `books` — every entry from `book_list.md`.
-- [ ] Re-fetch and correct the three misattributed `x.com` reading entries (the 2026-08-06
+- [x] `reading` — every entry from `reading_list.md`, sections and done state preserved.
+      Done 2026-10-04 as `Reading List` (open/done): 35/35 matched title, url, section, state, notes.
+- [x] `shopping` — every entry from `shopping_list.md`, specs intact. (1 item; specs in notes.
+      Created with no closed states — card showed no "(closed)" marks — fixed by a schema edit.)
+- [x] `books` — every entry from `book_list.md`. (2 items, `author` field.)
+- [x] Re-fetch and correct the three misattributed `x.com` reading entries (the 2026-08-06
       decision; see §7).
-- [ ] Rewrite the `reading-list-suggestion` heartbeat task to use the collection tools.
-- [ ] Archive the three markdown files (move under `archive/`), update the `MEMORY.md` index.
-- [ ] Checks: per-collection item counts match the source files; spot-check rich entries.
+- [x] Rewrite the `reading-list-suggestion` heartbeat task to use the collection tools.
+- [x] Delete the three markdown files once each is verified, and update the `MEMORY.md` index. Deleted rather than archived: the pre-migration deploy snapshot
+      (`state-deploy-2026-10-04-1-*.tar.gz`, never pruned) holds the originals, and an archived
+      copy would stay in the memory surface as a stale second source.
+- [x] Checks: every entry compared field by field against its source file before its delete.
 
 **C3 — Collections app (agent + jarvis-app).**
 - [ ] Agent: `gateway/apps/collections.py` — GET entries (collections, one collection) and
