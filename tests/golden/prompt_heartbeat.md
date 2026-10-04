@@ -90,6 +90,7 @@ Fixture preamble: kept verbatim above the task blocks.
 - 21:00 evening check-in.
 
 ## Available skills (call activate_skill to load tools for this conversation):
+- collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps
 - fitness: gym attendance, workout logs, running sessions
 - github: GitHub project management — repos, issues, PRs
 - google_health: Pixel Watch sleep, workouts, resting heart rate & HRV (Google Health API)

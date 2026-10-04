@@ -1,0 +1,318 @@
+[
+  {
+    "destructive": false,
+    "name": "add_items",
+    "schema": {
+      "description": "Add one or more items to a collection, in one call.\n\n    Args:\n        collection: the collection's exact name (manage_collection action='list'\n            if unsure).\n        items: each {title, notes?, section?, status?, fields?}. `fields` is\n            {field_name: value} for the collection's custom fields only; money\n            takes 3400, '3400 USD' or {amount, currency}; tags takes a list.\n            status defaults to the first open state. Never invent a value\n            that wasn't given.",
+      "name": "add_items",
+      "parameters": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "collection",
+          "items"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "delete_item",
+    "schema": {
+      "description": "Delete one item, e.g. one added by mistake. To mark something finished,\n    set its status instead — closed items stay answerable later.\n\n    Args:\n        item_id: the item's id.",
+      "name": "delete_item",
+      "parameters": {
+        "properties": {
+          "item_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "list_items",
+    "schema": {
+      "description": "List a collection's items with their ids. Closed items (e.g. done, read,\n    dropped) are hidden unless asked for. Long notes are cut; pass item_id to\n    see one item in full.\n\n    Args:\n        collection: the collection's exact name. Not needed with item_id.\n        status: \"\" = open items only; \"all\" = everything; or one state.\n        section: only items under this section.\n        tag: only items carrying this tag.\n        search: text to find in titles, notes and field values (e.g. a URL).\n        item_id: show just this item, in full.",
+      "name": "list_items",
+      "parameters": {
+        "properties": {
+          "collection": {
+            "default": "",
+            "type": "string"
+          },
+          "item_id": {
+            "default": 0,
+            "type": "integer"
+          },
+          "search": {
+            "default": "",
+            "type": "string"
+          },
+          "section": {
+            "default": "",
+            "type": "string"
+          },
+          "status": {
+            "default": "",
+            "type": "string"
+          },
+          "tag": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "manage_collection",
+    "schema": {
+      "description": "Create and manage collections — structured lists such as reading, shopping\n    or books. A collection's schema is its optional status, its optional sections,\n    and its custom fields.\n\n    Actions:\n    - list: every collection with its schema and item counts. Call this first\n      whenever you don't know the exact name.\n    - create: needs name. With no schema arguments it is a plain list of titles\n      and notes. status=true gives the default open/done lifecycle; sections=true\n      lets items carry a heading. These need no confirmation. Custom `fields` or\n      custom `statuses` ask the owner to confirm, and the collection (with any\n      `items` given here) is created only when they tap Confirm.\n    - edit_schema: change an existing collection's schema. Always asks the owner\n      to confirm and states which items lose or change values. `fields` adds\n      fields; rename_fields / retype_fields / remove_fields change existing ones;\n      statuses / closed_statuses replace the states (status_map moves items out of\n      removed states); status=false or sections=false removes them and clears\n      those values; status=true or sections=true turns them on.\n    - archive / unarchive: an archived collection is kept but read-only.\n    - delete: permanently remove the collection and every item. Asks to confirm.\n      Prefer archive.\n\n    Args:\n        action: list | create | edit_schema | archive | unarchive | delete\n        name: the collection's exact name (required except for list).\n        fields: custom fields, each {name, type, options?}. type is one of text,\n            url, number, money, date, rating (1-5), choice (needs options), tags.\n            Names are snake_case; put units in the name (weight_kg). On create:\n            the fields; on edit_schema: fields to add.\n        status: true = the item has a lifecycle (default states open / done);\n            false = none (a reference list).\n        statuses: custom states in order, e.g. [\"unread\", \"read\", \"dropped\"].\n        closed_statuses: which states are finished and hidden by default,\n            e.g. [\"read\", \"dropped\"].\n        sections: true = items carry a section heading (topic, city, ...).\n        items: create only — first items, each {title, notes?, section?,\n            status?, fields?: {field_name: value}}.\n        rename_fields: edit_schema — {old_name: new_name}.\n        retype_fields: edit_schema — {name: type}, or {name: {type, options}}\n            for a choice. Values that don't convert are cleared.\n        remove_fields: edit_schema — field names to remove with their values.\n        status_map: edit_schema with statuses — {removed_state: new_state} for\n            items in a state the new list drops.",
+      "name": "manage_collection",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "closed_statuses": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "default": "",
+            "type": "string"
+          },
+          "remove_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rename_fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "retype_fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "sections": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status_map": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "statuses": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "update_item",
+    "schema": {
+      "description": "Edit one item. Pass only what changes; an empty string clears notes,\n    section or a field value.\n\n    Args:\n        item_id: the item's id (list_items shows it as #id).\n        title: new title (cannot be cleared).\n        notes: free text.\n        section: the heading it sits under, if the collection has sections.\n        status: one of the collection's states, e.g. marking it done or read.\n        fields: {field_name: value} for custom fields; \"\" clears one.",
+      "name": "update_item",
+      "parameters": {
+        "properties": {
+          "fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "item_id": {
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]
