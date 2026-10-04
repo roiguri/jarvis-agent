@@ -26,6 +26,10 @@ class CollectionsError(Exception):
     different argument, what the valid ones are."""
 
 
+class CollectionsNotFound(CollectionsError):
+    """The addressed collection or item does not exist."""
+
+
 def _get_db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -163,7 +167,7 @@ def _require_collection(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
         raise CollectionsError(f"A collection name is required. Collections: {_names(conn)}")
     row = conn.execute("SELECT * FROM collections WHERE name = ?", (name,)).fetchone()
     if row is None:
-        raise CollectionsError(
+        raise CollectionsNotFound(
             f"No collection {name!r}. Collections: {_names(conn)}. "
             "Use one of these exact names, or create the collection first."
         )
@@ -349,7 +353,7 @@ def _require_item(conn: sqlite3.Connection, item_id) -> tuple[sqlite3.Row, sqlit
         raise CollectionsError(f"item_id must be a number, got {item_id!r}.")
     item = conn.execute("SELECT * FROM items WHERE item_id = ?", (iid,)).fetchone()
     if item is None:
-        raise CollectionsError(f"No item #{iid}. List the collection to find the right id.")
+        raise CollectionsNotFound(f"No item #{iid}. List the collection to find the right id.")
     coll = conn.execute(
         "SELECT * FROM collections WHERE collection_id = ?", (item["collection_id"],)
     ).fetchone()
