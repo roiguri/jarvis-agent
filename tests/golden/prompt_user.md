@@ -46,6 +46,7 @@ You are in a live conversation with Roi — be direct and proactive, and reply i
 - 08:00 morning briefing sent.
 
 ## Available skills (call activate_skill to load tools for this conversation):
+- collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps
 - fitness: gym attendance, workout logs, running sessions
 - github: GitHub project management — repos, issues, PRs
 - google_health: Pixel Watch sleep, workouts, resting heart rate & HRV (Google Health API)

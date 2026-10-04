@@ -19,7 +19,8 @@ Each slice ships and is verified on its own.
 - [ ] Tools: `add_task`, `update_task`, `list_tasks`, `delete_task`.
 - [ ] Repeat rule + roll-forward on completion; completion history recorded.
 - [ ] `list_tasks(view="today")` contract (§4) — the digest and the app's Today tab depend on it.
-- [ ] `tags` via the shared field-type module from collections C1.
+- [ ] `tags` normalised as collections' `tags` type (`tools/collections/_fields.py`):
+      share the module or copy the one function — decide here.
 - [ ] `tools/tasks/SKILL.md`.
 - [ ] Verify on staging: add / complete / undo / cancel / delete; each view; a from-due and a
       from-completion repeat rolling forward; tag filter; empty `today` line.

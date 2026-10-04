@@ -64,6 +64,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 /app/jarvis_data/          # Tool-opaque state — NEVER in the memory tool surface, never read_memory'd
 ├── fitness/fitness.sqlite          # fitness-skill DB (hardcoded path, no env override)
+├── collections/collections.sqlite  # collections-skill DB (per-collection runtime schemas)
 ├── triggers/triggers.json          # code-owned (triggers/store.py): pending triggers, gate state, task last_run stamps
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 └── logs/

@@ -1,7 +1,8 @@
 # Collections — runtime-schema lists, a skill, and a jarvis-app mini-app
 
 **Date:** 2026-10-03 · **Status:** design settled in a grilling session (decisions below);
-slices not started.
+C1 done and staging-verified; C3 deferred until
+the tools have been used for real.
 **Sibling plan:** [TASKS_PLAN.md](TASKS_PLAN.md) — todo/tasks are a separate model and ship
 after this plan is complete.
 **Goal:** replace the markdown lists in memory (reading, shopping, books) with a structured
@@ -16,18 +17,26 @@ Each slice ships and is verified on its own. Order is deliberate: collections en
 (tools → migration → app), then the tasks plan.
 
 **C1 — `collections` skill (agent).**
-- [ ] `tools/fields.py` (or similar shared home): the field-type vocabulary — validation +
-      normalisation per type, reused later by `tasks` (`tags`).
-- [ ] `tools/collections/_db.py`: `jarvis_data/collections/collections.sqlite`, schema below.
-- [ ] Tools: `manage_collection`, `add_items`, `update_item`, `list_items`, `delete_item`.
-- [ ] Confirmation for custom-field creation, custom statuses, schema edits, collection delete;
+- [x] `tools/collections/_fields.py`: the field-type vocabulary — validation + normalisation
+      per type. Private to the skill; whether `tasks` shares it (it needs only `tags`) is
+      decided when T1 starts.
+- [x] `tools/collections/_db.py`: `jarvis_data/collections/collections.sqlite`, schema below.
+- [x] Tools: `manage_collection`, `add_items`, `update_item`, `list_items`, `delete_item`.
+- [x] Confirmation for custom-field creation, custom statuses, schema edits, collection delete;
       the pending creation carries the first items.
-- [ ] `tools/collections/SKILL.md` (description + rules, see §6).
-- [ ] Verify on staging **by creating real collections through Jarvis**, which also leaves the
+- [x] `tools/collections/SKILL.md` (description + rules, see §6).
+- [x] `tests/tools/test_collections.py` — every gated and ungated path, confirm and cancel.
+- [x] Verify on staging **by creating real collections through Jarvis**, which also leaves the
       data C3 is built against: `reading` and `shopping` from staging's own markdown copies,
       plus one collection per path — plain, default status, sections, custom schema (confirm +
-      cancel), custom statuses, `copy_schema_from`, schema edit (add / rename / remove),
+      cancel), custom statuses, schema edit (add / rename / remove),
       archive / unarchive, delete (confirm). This doubles as the C2 runbook rehearsal.
+      Done 2026-10-04 against copies of the prod list files. Every path above passed, plus
+      retype, choice options, status on/off, sections off, and a state list with no closed
+      state. The reading rehearsal matched the source 35/35 (title, url, section, read state,
+      notes). Left on staging: only `reading`; the other test collections were deleted, so C3
+      needs a shopping-shaped collection recreated. C2 note: ask Jarvis to *archive* each
+      markdown file — unprompted it deleted `reading_list.md` (with confirmation).
 
 **C2 — Prod migration, by talking to Jarvis (no code, no script).** After C1 is deployed.
 - [ ] `reading` — every entry from `reading_list.md`, sections and done state preserved.
@@ -110,8 +119,8 @@ changes.
 
 A collection's schema (its custom fields, its status states if enabled, whether sections are on)
 is created at runtime through the agent and stored with the collection. There is no `kinds`
-table: a collection *is* its schema. `copy_schema_from=<collection>` creates a new collection
-with an already-approved schema, without re-confirmation; copies may diverge afterwards.
+table: a collection *is* its schema. (A `copy_schema_from` shortcut was designed and dropped
+in C1 — too specific a scenario for the code it needs.)
 
 ### Examples (the migrated lists, and two that show the range)
 
@@ -147,7 +156,6 @@ where drift or data loss is possible:
 | Action | Confirmation |
 |---|---|
 | Create a collection with the core only, default status, and/or sections | No |
-| Create with `copy_schema_from` | No (schema already approved) |
 | Create with custom fields or custom status states | **Yes** — the prompt lists fields, types and the first items |
 | Edit a schema: add a field | **Yes** (harmless, but still a schema change) |
 | Edit a schema: rename / retype / remove a field, change status states | **Yes** — prompt states how many items are affected / lose data |
@@ -171,7 +179,7 @@ same-turn activation keeps "add X to reading" a one-message request.
 
 | Tool | Does |
 |---|---|
-| `manage_collection(action, …)` | `list` (with schemas and open counts), `create` (optional `copy_schema_from`), `edit_schema`, `archive` / `unarchive`, `delete`. `delete` and the gated creates/edits are `destructive`/confirmed per §3. |
+| `manage_collection(action, …)` | `list` (with schemas and open counts), `create`, `edit_schema`, `archive` / `unarchive`, `delete`. `delete` and the gated creates/edits are `destructive`/confirmed per §3. |
 | `add_items(collection, items=[…])` | One or many items; each `{title, notes?, section?, status?, fields?}`. Bulk is required — migration moves ~30 entries in a handful of calls. |
 | `update_item(item_id, …)` | Edit title / notes / section / status / fields. Empty string clears a value (travel's `_clearable` convention). |
 | `list_items(collection, status?, section?, tag?, search?)` | Returns ids. Default hides closed. `search` matches title, notes and URL. |
@@ -248,7 +256,7 @@ rewritten to use `list_items` before the file is archived.
 4. **Minimal core** (title, notes, order, timestamps); **status and sections are opt-in
    features**; URL is an ordinary field type.
 5. **`tags` is a field type.**
-6. **Schema per collection**, with `copy_schema_from`; no reusable kinds.
+6. **Schema per collection**; no reusable kinds (`copy_schema_from` dropped in C1).
 7. **Keep closed items; archive freely; confirm only collection delete** (and schema changes).
 8. **Two skills, two DBs, not core.**
 9. **Migration by conversation**, no script.
