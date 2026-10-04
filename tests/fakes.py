@@ -1,4 +1,7 @@
-"""Fakes for the seams the suite drives: the model, the Outbox, a channel."""
+"""Fakes for the seams the suite drives: the model, the Outbox, a channel, the clock."""
+
+import datetime as _real_dt
+import types
 
 from gateway.outbox import SendOutcome
 
@@ -58,3 +61,21 @@ class FakeChannel:
 
     async def send_to_owner(self, text):
         self.texts.append(text)
+
+
+def frozen_datetime(now):
+    """A ``datetime`` subclass whose ``now()`` is pinned to the aware ``now``."""
+
+    class Frozen(_real_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    return Frozen
+
+
+def frozen_datetime_module(now):
+    """Stand-in for a module imported as ``import datetime as _dt``, with the
+    clock pinned to ``now``."""
+    return types.SimpleNamespace(datetime=frozen_datetime(now), date=_real_dt.date,
+                                 timezone=_real_dt.timezone, timedelta=_real_dt.timedelta)

@@ -1,6 +1,6 @@
 # Testing and Evals — Plan
 
-**Date:** 2026-10-04 · **Status:** T1 merged (PR #136); T2 implemented (2026-10-04), awaiting PR.
+**Date:** 2026-10-04 · **Status:** T1 and T2 merged (PRs #136, #137); T3 implemented (2026-10-04), awaiting PR.
 **Goal:** a real test suite that runs in CI and catches logic regressions, plus an eval
 harness that measures what the model *does* (tool choice, heartbeat decisions, safety rails),
 which nothing measures today.
@@ -13,7 +13,7 @@ which nothing measures today.
       `tests/` package as native pytest, share their fakes, and add a required `tests` CI job.
 - [x] **T2 — Snapshot what the model sees.** Golden files for the system prompt per scope and
       for the scoped tool surface, so every prompt or docstring change is a reviewable diff.
-- [ ] **T3 — Unit tests where bugs have been.** Heartbeat gate and parser, time boundaries,
+- [x] **T3 — Unit tests where bugs have been.** Heartbeat gate and parser, time boundaries,
       memory sandbox, message trimming, registry scoping, fitness math.
 - [ ] **T4 — Eval runner + heartbeat cases.** Top-level `evals/`: scenario cases run through
       the real graph and real Gemini, graded on the trajectory; about 10 heartbeat cases.
@@ -197,23 +197,42 @@ committed prompts change. Drift from Jarvis's own writes is runtime state; telem
 
 Ordered by bug history. `hypothesis` is used where the input space is a clock.
 
-- [ ] `tests/test_heartbeat_state.py`: the HEARTBEAT.md parser (grammar, `| gate:`, a
-      malformed task degrading to always-due rather than being dropped); `any_due` over
-      cadence, both lattice measurements and `due:` windows, including property tests over
-      arbitrary `last_run` / now pairs; fail-open on gate errors.
-- [ ] `tests/test_time_boundaries.py`: `timeutils` week bounds, the history and mirror day
-      windows, and `/tz` away mode (owner-following boundaries vs. ones that stay on Israel
-      time) — the area of several past fixes.
-- [ ] `tests/tools/test_memory_sandbox.py`: `_get_safe_path` (traversal, alias spellings,
-      symlinks leading out), protected-file guards (no delete; SOUL.md goes through
-      confirmation; HEARTBEAT.md rejects direct writes), and the threads.sqlite deny-list.
-- [ ] `tests/test_agent_messages.py`: `_add_and_trim` (whole turns, previous turn always
-      kept), `_merge_skills`, `_strip_media_blobs`, and media MIME normalization.
-- [ ] `tests/test_registry.py`: scoped `get_tools` (core always present, a skill's tools only
-      when it is active, a sub-skill hidden until its parent is active) and SKILL.md parsing.
-- [ ] `tests/tools/test_fitness.py`: completion and streak math on a seeded DB (no Arbox).
-- [ ] Verify: each file is green. Reverting one past fix per file (from the commits behind
-      §1's numbers) makes at least one test fail. Record which fix in the PR.
+176 tests across six files, about 3s. Each file was checked against a past fix: the fix was
+undone in place, the file had to fail, and the fix was restored (nothing committed).
+
+- [x] `tests/test_heartbeat_state.py` (49): `due:` windows (ranges, midnight wrap, `±Nh` and its
+      ASCII spellings, weekdays, malformed specs), header parsing (cadence units, `paused` and
+      `gate:` only as their own fields, duplicates), `any_due` cases (grace, the lattice rescue
+      and its one-tick exception, unreadable and naive stamps, empty or missing file), property
+      tests over arbitrary stamp/now pairs, and stamping through the real store.
+      Catches `cd63ef6`: without the lattice rescue, or with it extended to hourly tasks.
+- [x] `tests/test_time_boundaries.py` (24): Sunday-anchored weeks across both 2026 DST
+      switches (plus a property test), `get_chat_history`'s `since` in winter and summer, the
+      rolling 24h mirror window, `/tz` set/clear/unreadable, google_health days following the
+      owner, the turn stamp home and away, and home-anchored surfaces ignoring away mode.
+      Catches `422bb53` (a fixed +03:00 day start fails the winter case) and `b2e99ec` (an
+      Israel-day floor drops last night's send).
+- [x] `tests/tools/test_memory_sandbox.py` (39): `_get_safe_path` (traversal, absolute paths,
+      symlinks out of and inside the tree, the checkpointer deny-list), alias spellings, and
+      the tools: HEARTBEAT.md never written directly, SOUL.md only after confirmation (a fake
+      confirmation; the write happens when it is confirmed), protected files never deleted,
+      deletes wait for confirmation, `list_memory` shows only memory files.
+      Catches `6702b7a` (`abspath` for `realpath` lets the symlink out) and `b1a1980`
+      (without canonical names every alias spelling bypasses the guards).
+- [x] `tests/test_agent_messages.py` (25): mime normalization, every alias landing on a
+      supported mime, stripping seen media while keeping the new turn's, `_merge_skills`.
+      `_add_and_trim`'s trimming stays with the lifecycle and mirror tests.
+- [x] `tests/test_registry.py` (31): on a private fake registry — re-registration rules,
+      binding by scope and activation (a parent binds none of its children), `find`, the
+      skill block (children hidden until the parent is active, an active child's rules shown
+      without it), frontmatter parsing; on the real one — every skill has a description and
+      every tool a docstring. Narrower than drafted: T2's `surface.md` already pins what binds.
+- [x] `tests/tools/test_fitness_adherence.py` (8): on the real schema in a temp DB — an unmet
+      current week is pending, targets judged as of each week's start, the walk stops at the
+      plan start and at a miss, what counts toward a week, inclusive week edges.
+      Catches `7c32116` (walking from the current week breaks 4 of 8).
+- [x] No real bug found. One drafted case was wrong rather than the code: `_article("")`
+      returns "an", but its callers only ever pass a known media kind, so the case was dropped.
 
 ---
 

@@ -9,31 +9,24 @@ heartbeat.md, SKILL.md bodies, the framing, or the assembly logic.
 import datetime as real_dt
 import os
 import shutil
-import types
 
 import pytest
 
 import agent
 import config
 from tests.conftest import LOG_DIR
+from tests.fakes import frozen_datetime_module
 from tools import registry
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 NOW = real_dt.datetime(2026, 3, 10, 9, 30, tzinfo=real_dt.timezone.utc)  # 11:30 Israel time
 
 
-class _FrozenDatetime(real_dt.datetime):
-    @classmethod
-    def now(cls, tz=None):
-        return NOW if tz is None else NOW.astimezone(tz)
-
-
 @pytest.fixture
 def fixture_memory(monkeypatch):
     """The fixture memory files and chat log in the scratch root, and agent.py's
     clock pinned to NOW; all removed afterwards."""
-    monkeypatch.setattr(agent, "_dt", types.SimpleNamespace(
-        datetime=_FrozenDatetime, timezone=real_dt.timezone, timedelta=real_dt.timedelta))
+    monkeypatch.setattr(agent, "_dt", frozen_datetime_module(NOW))
     src = os.path.join(FIXTURES, "memory")
     copied = []
     for root, _, files in os.walk(src):
