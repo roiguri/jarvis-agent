@@ -171,7 +171,13 @@ is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooli
    pct exec 106 -- systemctl stop jarvis-staging.service                  # inert again when done
    ```
    Type-checking doesn't catch LLM-behavior regressions — talk to the staging bot.
-3. **Ship** — push the branch, open a PR to `main` (CI runs the four guards, all required), merge:
+   Run the test suite before pushing (test dependencies are in `requirements-dev.txt`,
+   kept out of prod's `requirements.txt`):
+   ```bash
+   venv/bin/pip install -r requirements-dev.txt   # once per venv
+   venv/bin/python -m pytest
+   ```
+3. **Ship** — push the branch, open a PR to `main` (CI runs the test suite and the four guards, all required), merge:
    ```bash
    git push origin feat/my-change
    gh pr create --base main --fill          # merge once CI is green

@@ -1,6 +1,7 @@
 # Testing and Evals — Plan
 
-**Date:** 2026-10-04 · **Status:** drafted; slices not started.
+**Date:** 2026-10-04 · **Status:** T1 implemented (2026-10-04); awaiting PR, the first CI run and
+the branch-protection update.
 **Goal:** a real test suite that runs in CI and catches logic regressions, plus an eval
 harness that measures what the model *does* (tool choice, heartbeat decisions, safety rails),
 which nothing measures today.
@@ -9,7 +10,7 @@ which nothing measures today.
 
 ## Slices
 
-- [ ] **T1 — pytest foundation.** Move the `scripts/test_*.py` harnesses into a top-level
+- [x] **T1 — pytest foundation.** Move the `scripts/test_*.py` harnesses into a top-level
       `tests/` package as native pytest, share their fakes, and add a required `tests` CI job.
 - [ ] **T2 — Snapshot what the model sees.** Golden files for the system prompt per scope and
       for the scoped tool surface, so every prompt or docstring change is a reviewable diff.
@@ -119,32 +120,43 @@ tests/
     ├── test_blocks.py
     └── test_confirmation.py
 pytest.ini                 # testpaths = tests
-requirements-dev.txt       # -r requirements.txt, pytest, hypothesis
+requirements-dev.txt       # -r requirements.txt, pytest, pytest-asyncio, hypothesis
 ```
 `requirements-dev.txt` keeps test deps out of prod, so `deploy.sh`'s pip step is unchanged.
 
 **Checklist.**
-- [ ] `requirements-dev.txt`, `pytest.ini`, `tests/conftest.py` (root + key before imports,
-      with an assert that `config.DATA_DIR` is under the scratch root, as the harnesses do now).
-- [ ] `tests/fakes.py`: one `FakeLLM` (scripted replies or exceptions, records requests,
+- [x] `requirements-dev.txt`, `pytest.ini`, `tests/conftest.py` (root + key before imports,
+      with an assert that `config.ROOT` is the scratch root, as the harnesses did). An autouse
+      fixture empties the activity logs and the mirror cursor before each test.
+- [x] `tests/fakes.py`: one `FakeLLM` (scripted replies or exceptions, records requests,
       exposes the bound tools), `FakeOutbox`, `FakeChannel`. Fixtures install them and
       restore the originals afterwards (`agent.llm`, the factory's outbox, `heartbeat.TURN_LOCK`).
-- [ ] Convert each harness with `git mv` and then edit, so history follows the file. Each
+      Also `gateway_state`, which snapshots the factory's registries and the Outbox's loop.
+- [x] Convert each harness with `git mv` and then edit, so history follows the file. Each
       numbered section becomes a test function. Sections that depend on earlier state share a
       module-scoped fixture or are merged into one test; nothing is reordered silently.
-      - [ ] `test_triggers` · [ ] `test_turn_lifecycle` · [ ] `test_context_mirror`
-      - [ ] `test_travel` · [ ] `test_app_blocks` · [ ] `test_app_confirmation`
-- [ ] **Parity check per file:** the number of assertions after conversion is at least the
-      number of `check()` calls before, recorded in the PR.
-- [ ] `scripts/test_webhooks.py` → `scripts/fire_webhooks.py` (it fires at a live server;
+      - [x] `test_triggers` · [x] `test_turn_lifecycle` · [x] `test_context_mirror`
+      - [x] `test_travel` · [x] `test_app_blocks` · [x] `test_app_confirmation`
+
+      The triggers tests each get their own event loop and started scheduler (`pytest-asyncio`,
+      added to the dev requirements). The travel tests stay one cumulative scenario in file
+      order (shared database); their definitions were reordered to match the old run order.
+- [x] **Parity check per file** — `check()` call sites before → assertions after:
+      triggers 121 → 121 · turn lifecycle 87 → 87 · context mirror 18 → 18 · travel 234 → 234
+      (substring helper kept, now asserting) · app blocks 32 checks + 12 `raises` → 32 + 12 ·
+      app confirmation 8 → 8. Checks the harnesses guarded with `if` (e.g. "if a notice was
+      sent, check its text") are now unconditional. 103 tests, about 35s, green in either
+      module order; no file under the real staging or prod roots changed during a run.
+- [x] `scripts/test_webhooks.py` → `scripts/fire_webhooks.py` (it fires at a live server;
       the `test_` prefix was misleading).
-- [ ] Guards: `check_channel_agnostic.py` swaps its two named `scripts/test_app_*.py`
+- [x] Guards: `check_channel_agnostic.py` swaps its two named `scripts/test_app_*.py`
       exemptions for the `tests/channels/` tree. `check_timezone_anchors.py` skips `tests/`
-      and `evals/` (fixtures seed Israel-dated data), as it skips `scripts/` today.
-- [ ] CI: a `tests` job (`pip install -r requirements-dev.txt`, `pytest -q`), added to the
-      branch-protection required checks.
-- [ ] Docs: the DEPLOY.md regression-gate section (D2), the CLAUDE.md layout (`tests/`,
-      `evals/` as top-level concepts), harness references in `docs/architecture/TRIGGERS.md`,
+      and `evals/` (fixtures seed Israel-dated data), as it skips `scripts/` today. (Only
+      `tests/` for now; `evals/` is added with T4.)
+- [x] CI: a `tests` job (`pip install -r requirements-dev.txt`, `pytest -q`).
+- [ ] **Owner step:** add `tests` to the branch-protection required checks on `main`.
+- [x] Docs: the DEPLOY.md regression-gate section (D2), the CLAUDE.md layout (`tests/`;
+      `evals/` is added with T4), the harness reference in `docs/architecture/TRIGGERS.md`,
       and DEVELOPMENT.md (how to run the suite).
 - [ ] Verify: `pytest` is green locally and in CI. A deliberately broken assertion turns the
       `tests` job red on a throwaway PR.

@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
-"""Exercise AppConfirmationUI against a fake hub, using the real store."""
-import asyncio, sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
+"""AppConfirmationUI against a fake hub, using the real confirmation store."""
 
-from gateway.channels.jarvis_app.confirmation import AppConfirmationUI
+import pytest
+
 from gateway.channels.jarvis_app.client import MessageAlreadyResolved
+from gateway.channels.jarvis_app.confirmation import AppConfirmationUI
 from gateway.confirmation.base import PendingAction
 from gateway.confirmation.store import InMemoryConfirmationStore
 
@@ -51,71 +50,71 @@ async def tap(ui, cb, mid, action="confirm"):
     )
 
 
-async def main():
-    fails = []
-
-    def check(name, got, want):
-        ok = got == want
-        print(f"{'PASS' if ok else 'FAIL'}  {name}: {got!r}")
-        if not ok:
-            fails.append(f"{name}: got {got!r}, want {want!r}")
-
-    # 1 — normal confirm, prompt sent by this process
+@pytest.mark.asyncio
+async def test_normal_confirm():
     c, ui, store = build()
     await ui.send_prompt("cb1", "delete a thing")
     pend(store, "cb1")
     await tap(ui, "cb1", 101)
-    check("normal confirm", c.patches, [(101, "confirmed")])
+    assert c.patches == [(101, "confirmed")]
 
-    # 2 — orphan: this process never sent the prompt (restart), nothing pending
+
+@pytest.mark.asyncio
+async def test_orphan_tap_expires():
+    # This process never sent the prompt (a restart), and nothing is pending.
     c, ui, store = build()
     await tap(ui, "gone", 777)
-    check("orphan expires (was: no PATCH at all)", c.patches, [(777, "expired")])
+    assert c.patches == [(777, "expired")]
 
-    # 3 — re-tap after we already settled it
+
+@pytest.mark.asyncio
+async def test_retap_reaffirms():
     c, ui, store = build()
     await ui.send_prompt("cb3", "delete a thing")
     pend(store, "cb3")
     await tap(ui, "cb3", 101)
     await tap(ui, "cb3", 101)
-    check("re-tap re-affirms (was: silent no-op)", c.patches,
-          [(101, "confirmed"), (101, "confirmed")])
+    assert c.patches == [(101, "confirmed"), (101, "confirmed")]
 
-    # 4 — cancel, then re-tap
+
+@pytest.mark.asyncio
+async def test_retap_after_cancel():
     c, ui, store = build()
     await ui.send_prompt("cb4", "delete a thing")
     pend(store, "cb4")
     await tap(ui, "cb4", 101, action="cancel")
     await tap(ui, "cb4", 101)
-    check("re-tap after cancel", c.patches, [(101, "cancelled"), (101, "cancelled")])
+    assert c.patches == [(101, "cancelled"), (101, "cancelled")]
 
-    # 5 — hub refuses our guess; we learn the truth and re-affirm it next time
+
+@pytest.mark.asyncio
+async def test_learns_settled_state_from_hub():
     c, ui, store = build(raise_state="confirmed")
-    await tap(ui, "unknown", 555)            # tries expired, hub says confirmed stands
-    await tap(ui, "unknown", 555)            # now re-affirms confirmed
-    check("learns settled state from hub", c.patches,
-          [(555, "expired"), (555, "confirmed")])
+    await tap(ui, "unknown", 555)  # tries expired; the hub says confirmed stands
+    await tap(ui, "unknown", 555)  # now re-affirms confirmed
+    assert c.patches == [(555, "expired"), (555, "confirmed")]
 
-    # 6 — TTL eviction path (no tap, so only the send-time handle exists)
+
+@pytest.mark.asyncio
+async def test_ttl_expire():
+    # No tap, so only the send-time handle exists.
     c, ui, store = build()
     await ui.send_prompt("cb6", "delete a thing")
     pend(store, "cb6")
     await ui.expire("cb6")
-    check("TTL expire still works", c.patches, [(101, "expired")])
+    assert c.patches == [(101, "expired")]
 
-    # 7 — prompt send failed, so no handle from either source
+
+@pytest.mark.asyncio
+async def test_no_handle_no_patch():
+    # The prompt send failed, so there is no handle from either source.
     c, ui, store = build()
     await ui.expire("never-sent")
-    check("no handle -> no PATCH", c.patches, [])
+    assert c.patches == []
 
-    # 8 — memory stays bounded
+
+def test_resolved_memory_capped():
     c, ui, store = build()
     for i in range(200):
         ui._remember_resolved(f"cb{i}", "confirmed")
-    check("resolved memory capped", len(ui._resolved), 64)
-
-    print("\n" + ("ALL PASS" if not fails else "FAILURES:\n  " + "\n  ".join(fails)))
-    return 1 if fails else 0
-
-
-sys.exit(asyncio.run(main()))
+    assert len(ui._resolved) == 64

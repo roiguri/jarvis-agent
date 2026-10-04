@@ -153,4 +153,4 @@ error anywhere ─► nothing committed or stamped; retried next tick; one owner
   the ack, delivery and the failure notice.
 - [GATEWAY.md](GATEWAY.md) owns the Outbox and the frozen `event` strings
   (`EVENT_REMINDER`, `EVENT_HEARTBEAT`).
-- Offline harness: `scripts/test_triggers.py`.
+- Tests: `tests/test_triggers.py`.

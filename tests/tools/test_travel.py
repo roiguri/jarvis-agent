@@ -1,43 +1,17 @@
-#!/usr/bin/env python3
-"""
-Travel tools test script — exercises the tool functions directly, no model.
+"""Travel tools, exercised directly — no model.
 
-Runs against a THROWAWAY JARVIS_ROOT, created and deleted per run, so it never
-touches a real instance's database. That is why the root is set here, before any
-project import: config.py binds every state path at import time (same reason
-scripts/ci/check_paths.py sets it first).
-
-This covers the *mechanism* only — that each action does what it claims and
+This covers the *mechanism* only: that each action does what it claims and
 refuses what it should. Whether the model reaches for the right tool with the
-right arguments is judged by hand, in chat.
+right arguments is the evals' job.
 
-Usage:
-    python scripts/test_travel.py            # run everything
-    python scripts/test_travel.py -v         # show each tool's full output
+One cumulative scenario: the tests share the travel database and run in file
+order, each building on the rows the earlier ones left.
 """
 
-import argparse
-import os
-import shutil
-import sys
-import tempfile
-
-# Root first, before config binds. Real secrets are never needed: nothing here
-# makes a network call.
-_SCRATCH = tempfile.mkdtemp(prefix="jarvis-test-travel-")
-os.makedirs(os.path.join(_SCRATCH, "secrets"), exist_ok=True)
-os.environ["JARVIS_ROOT"] = _SCRATCH
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from tools.travel import (  # noqa: E402
+from tools.travel import (
     manage_destination, manage_itinerary, manage_place, manage_trip, manage_wishlist,
     query_travel_db,
 )
-
-VERBOSE = False
-_passed = 0
-_failed = 0
 
 
 def call(tool, **kwargs) -> str:
@@ -47,7 +21,6 @@ def call(tool, **kwargs) -> str:
 def check(label: str, got: str, *, contains=(), missing=()) -> None:
     """Assert on substrings rather than exact text: these strings are written for
     a model to read and will be reworded, but the facts they must carry won't."""
-    global _passed, _failed
     problems = []
     for c in (contains,) if isinstance(contains, str) else contains:
         if c.lower() not in got.lower():
@@ -55,32 +28,69 @@ def check(label: str, got: str, *, contains=(), missing=()) -> None:
     for m in (missing,) if isinstance(missing, str) else missing:
         if m.lower() in got.lower():
             problems.append(f"should NOT contain {m!r}")
-    if problems:
-        _failed += 1
-        print(f"  FAIL  {label}")
-        for p in problems:
-            print(f"          {p}")
-        print(f"        got: {got!r}"[:400])
-    else:
-        _passed += 1
-        print(f"  ok    {label}")
-        if VERBOSE:
-            for line in got.splitlines():
-                print(f"          | {line}")
+    assert not problems, f"{label}: {'; '.join(problems)}\ngot: {got!r}"
 
 
-def section(title: str) -> None:
-    print(f"\n{title}\n{'-' * len(title)}")
+# Two branches of one chain plus an unrelated hit — the case the whole
+# search-then-save split exists for. Shaped exactly like a Text Search reply so
+# _flatten is exercised on the real structure, not a convenient one.
+FAKE_PLACES = [
+    {
+        "id": "ChIJ_branch_one",
+        "displayName": {"text": "Cafe Central — Baixa"},
+        "formattedAddress": "Rua Augusta 1, Lisboa",
+        "location": {"latitude": 38.7107, "longitude": -9.1373},
+        "types": ["coffee_shop", "cafe", "food", "point_of_interest"],
+        "primaryType": "coffee_shop",
+        "primaryTypeDisplayName": {"text": "Coffee Shop"},
+        "googleMapsUri": "https://maps.google.com/?cid=1",
+        "addressComponents": [
+            {"longText": "Rua Augusta", "types": ["route"]},
+            {"longText": "Lisboa", "types": ["locality", "political"]},
+            {"longText": "Portugal", "types": ["country", "political"]},
+        ],
+    },
+    {
+        "id": "ChIJ_branch_two",
+        "displayName": {"text": "Cafe Central — Alfama"},
+        "formattedAddress": "Largo do Chafariz 8, Lisboa",
+        "location": {"latitude": 38.7128, "longitude": -9.1281},
+        "types": ["italian_restaurant", "restaurant", "food"],
+        "primaryType": "italian_restaurant",
+        "primaryTypeDisplayName": {"text": "Italian Restaurant"},
+        "googleMapsUri": "https://maps.google.com/?cid=2",
+        "addressComponents": [
+            {"longText": "Lisboa", "types": ["locality", "political"]},
+            {"longText": "Portugal", "types": ["country", "political"]},
+        ],
+    },
+]
 
 
-# ---------------------------------------------------------------------------
-# manage_trip
-# ---------------------------------------------------------------------------
+_api_calls = 0
+
+
+def _fake_search(query: str, near: str) -> list:
+    global _api_calls
+    _api_calls += 1
+    return FAKE_PLACES
+
+
+def _TYPE_VALUES():
+    from tools.travel.places import _TYPE_TO_CATEGORY, _SUFFIX_RULES
+
+    return list(_TYPE_TO_CATEGORY.values()) + [b for _, b in _SUFFIX_RULES]
+
+
+def _raw():
+    """A direct connection, for arranging rows that the tools under test don't
+    write yet. Replaced by the real tools as later commits add them."""
+    from tools.travel._db import _get_db
+
+    return _get_db()
 
 
 def test_manage_destination() -> None:
-    section("manage_destination — the thing trips and places hang off")
-
     check("an empty list says so", call(manage_destination, action="list"),
           contains="no destinations yet")
 
@@ -161,8 +171,6 @@ def test_manage_destination() -> None:
 
 
 def test_manage_trip() -> None:
-    section("manage_trip — creation and the current-trip pointer")
-
     check("empty list reads as empty", call(manage_trip, action="list"),
           contains="no trips yet")
 
@@ -188,8 +196,6 @@ def test_manage_trip() -> None:
     check("create needs a destination",
           call(manage_trip, action="create", trip_id="gamma"),
           contains="needs both")
-
-    section("manage_trip — refusals name the valid options")
 
     check("unknown id lists the real trips",
           call(manage_trip, action="set_current", trip_id="nope"),
@@ -220,8 +226,6 @@ def test_manage_trip() -> None:
           call(manage_trip, action="update", trip_id="beta", destination="Nowhere"),
           contains=["no destination", "Alpha City"])
 
-    section("manage_trip — set_current, archive")
-
     check("set_current moves the pointer",
           call(manage_trip, action="set_current", trip_id="beta"),
           contains="beta is now the current trip")
@@ -247,260 +251,8 @@ def test_manage_trip() -> None:
           contains="nothing to update")
 
 
-def test_trip_date_shift() -> None:
-    section("manage_trip — changing dates moves nothing")
-
-    call(manage_destination, action="create", name="Shiftland", timezone="Europe/Lisbon")
-    call(manage_trip, action="create", trip_id="shift", destination="Shiftland",
-         start_date="2026-10-10", end_date="2026-10-15")
-
-    for title, kind, s_date, e_date, code in (
-        ("Free walking tour", "note",    "2026-10-11", None, None),
-        ("Hotel",             "lodging", "2026-10-10", "2026-10-15", None),
-        ("Flight out",        "transit", "2026-10-10", None, "PNR-1"),
-    ):
-        call(manage_itinerary, action="schedule", trip_id="shift", title=title,
-             item_type=kind, date=s_date, end_date=e_date or "",
-             confirmation_code=code or "")
-
-    out = call(manage_trip, action="update", trip_id="shift",
-               start_date="2026-10-17", end_date="2026-10-22")
-    check("it says plainly that nothing moved", out,
-          contains="nothing scheduled was moved")
-    check("and names everything now outside the window", out,
-          contains=["outside the trip window", "free walking tour", "hotel", "flight out"])
-
-    check("an unbooked item kept its date",
-          call(query_travel_db,
-               sql="SELECT start_date FROM itinerary WHERE title='Free walking tour'"),
-          contains="2026-10-11")
-
-    check("a booking kept its date too — the code no longer decides anything",
-          call(query_travel_db,
-               sql="SELECT start_date FROM itinerary WHERE title='Flight out'"),
-          contains="2026-10-10")
-
-    check("a stay kept both of its dates",
-          call(query_travel_db,
-               sql="SELECT start_date, end_date FROM itinerary WHERE title='Hotel'"),
-          contains="2026-10-10 | 2026-10-15")
-
-    check("moving the trip back over them stops reporting them",
-          call(manage_trip, action="update", trip_id="shift",
-               start_date="2026-10-09", end_date="2026-10-16"),
-          contains="nothing scheduled was moved", missing="outside the trip window")
-
-
-def test_delete_cascade() -> None:
-    section("manage_trip — delete cascades to rows, spares places")
-
-    conn = _raw()
-    conn.execute(
-        "INSERT INTO places(title, destination_id) "
-        "SELECT 'Somewhere', destination_id FROM destinations WHERE name='Shift City'"
-    )
-    conn.execute(
-        "INSERT INTO wishlist(destination_id, place_id) "
-        "SELECT t.destination_id, 1 FROM trips t WHERE t.trip_id = 'shift'"
-    )
-    conn.commit()
-    conn.close()
-
-    # The confirmation UI needs a channel, which this script has no business
-    # standing up — so the guarded body is called directly. What the button
-    # protects is tested here; that it IS behind a button is read off the code.
-    from tools.travel.trips import _exec_delete_trip
-
-    check("delete reports what it removed, and what it spared",
-          _exec_delete_trip("shift"),
-          contains=["deleted shift", "3 scheduled", "wishlist is untouched"])
-
-    check("the trip is gone",
-          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM trips WHERE trip_id='shift'"),
-          contains="0")
-
-    check("its scheduled rows went with it",
-          call(query_travel_db,
-               sql="SELECT COUNT(*) AS n FROM itinerary WHERE trip_id='shift'"),
-          contains="0")
-
-    check("the saved place survived",
-          call(query_travel_db, sql="SELECT title FROM places"),
-          contains="Somewhere")
-
-    check("and so did the wishlist entry, which belongs to the destination",
-          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM wishlist WHERE place_id=1"),
-          contains="1")
-
-
-# ---------------------------------------------------------------------------
-# manage_place
-# ---------------------------------------------------------------------------
-
-# Two branches of one chain plus an unrelated hit — the case the whole
-# search-then-save split exists for. Shaped exactly like a Text Search reply so
-# _flatten is exercised on the real structure, not a convenient one.
-FAKE_PLACES = [
-    {
-        "id": "ChIJ_branch_one",
-        "displayName": {"text": "Cafe Central — Baixa"},
-        "formattedAddress": "Rua Augusta 1, Lisboa",
-        "location": {"latitude": 38.7107, "longitude": -9.1373},
-        "types": ["coffee_shop", "cafe", "food", "point_of_interest"],
-        "primaryType": "coffee_shop",
-        "primaryTypeDisplayName": {"text": "Coffee Shop"},
-        "googleMapsUri": "https://maps.google.com/?cid=1",
-        "addressComponents": [
-            {"longText": "Rua Augusta", "types": ["route"]},
-            {"longText": "Lisboa", "types": ["locality", "political"]},
-            {"longText": "Portugal", "types": ["country", "political"]},
-        ],
-    },
-    {
-        "id": "ChIJ_branch_two",
-        "displayName": {"text": "Cafe Central — Alfama"},
-        "formattedAddress": "Largo do Chafariz 8, Lisboa",
-        "location": {"latitude": 38.7128, "longitude": -9.1281},
-        "types": ["italian_restaurant", "restaurant", "food"],
-        "primaryType": "italian_restaurant",
-        "primaryTypeDisplayName": {"text": "Italian Restaurant"},
-        "googleMapsUri": "https://maps.google.com/?cid=2",
-        "addressComponents": [
-            {"longText": "Lisboa", "types": ["locality", "political"]},
-            {"longText": "Portugal", "types": ["country", "political"]},
-        ],
-    },
-]
-
-
-_api_calls = 0
-
-
-def _fake_search(query: str, near: str) -> list:
-    global _api_calls
-    _api_calls += 1
-    return FAKE_PLACES
-
-
-def test_categories() -> None:
-    """Bucketing: the exact table, the suffix fallback, and the cases that must
-    stay undecided rather than be filed wrongly."""
-    from tools.travel.places import CATEGORIES, _categorize
-
-    section("manage_place — bucketing Google's types")
-
-    cases = [
-        ("pastry_shop", "dessert"), ("ice_cream_shop", "dessert"),
-        ("coffee_shop", "cafe"), ("cafe", "cafe"),
-        ("kebab_shop", "restaurant"),       # a real type we have actually seen
-        ("barber_shop", None),              # unknown _shop: undecided, not shopping
-        ("italian_restaurant", "restaurant"),   # via suffix
-        ("ramen_restaurant", "restaurant"),     # a cuisine nobody enumerated
-        ("sandwich_shop", "restaurant"),        # named, because the suffix would lie
-        ("wine_bar", "bar"), ("farmers_market", "market"),
-        ("museum", "sights"), ("historical_landmark", "sights"),
-        ("botanical_garden", "outdoors"), ("beach", "outdoors"),
-        ("subway_station", "transit"),          # via suffix
-        ("book_store", "shopping"),             # via suffix
-        ("hotel", "lodging"),
-        ("dentist", None), ("", None), (None, None),
-    ]
-    wrong = [(t, _categorize(t), want) for t, want in cases if _categorize(t) != want]
-    check(f"{len(cases)} type mappings", "ok" if not wrong else f"wrong: {wrong}",
-          contains="ok")
-
-    check("every mapped bucket is in the closed vocabulary",
-          "ok" if all(v in CATEGORIES for v in _TYPE_VALUES()) else "drifted",
-          contains="ok")
-
-    check("a category outside the vocabulary is refused",
-          call(manage_place, action="save", title="X", category="delicious",
-               destination="Beta Town"),
-          contains=["unknown category", "restaurant", "other"])
-
-
-def _TYPE_VALUES():
-    from tools.travel.places import _TYPE_TO_CATEGORY, _SUFFIX_RULES
-
-    return list(_TYPE_TO_CATEGORY.values()) + [b for _, b in _SUFFIX_RULES]
-
-
-def test_locality() -> None:
-    """Where a place's city comes from, and what stands in when Google has no
-    `locality` — the UK uses postal_town, and some places give neither."""
-    from tools.travel.places import _locality_of
-
-    section("manage_place — locality, and its stand-ins")
-
-    cases = [
-        ([{"longText": "Lisboa", "types": ["locality"]},
-          {"longText": "Portugal", "types": ["country"]}],            ("Lisboa", "Portugal")),
-        # No locality: the UK files cities under postal_town.
-        ([{"longText": "London", "types": ["postal_town"]},
-          {"longText": "United Kingdom", "types": ["country"]}],      ("London", "United Kingdom")),
-        # Neither: fall back to the county-level component.
-        ([{"longText": "Kerry", "types": ["administrative_area_level_2"]},
-          {"longText": "Ireland", "types": ["country"]}],             ("Kerry", "Ireland")),
-        # locality wins over the stand-ins when both are present.
-        ([{"longText": "Real City", "types": ["locality"]},
-          {"longText": "Fallback", "types": ["postal_town"]}],        ("Real City", None)),
-        ([], (None, None)),
-    ]
-    wrong = [(p, _locality_of({"addressComponents": p}), want)
-             for p, want in cases if _locality_of({"addressComponents": p}) != want]
-    check(f"{len(cases)} component shapes", "ok" if not wrong else f"wrong: {wrong}",
-          contains="ok")
-
-    check("a place with no components at all is not an error",
-          str(_locality_of({})), contains="(None, None)")
-
-
-def test_search_guards() -> None:
-    """The loop guards: a repeated query must not reach the API, and a run of
-    distinct ones must stop with advice rather than an error to retry."""
-    from tools.travel import places as places_mod
-
-    section("manage_place — loop guards")
-
-    global _api_calls
-    real_search = places_mod._search_places
-    places_mod._search_places = _fake_search
-    places_mod._TURN_SEARCHES.clear()
-    try:
-        _api_calls = 0
-        call(manage_place, action="search", query="ramen", near="Lisbon")
-        call(manage_place, action="search", query="ramen", near="Lisbon")
-        call(manage_place, action="search", query="RAMEN", near="lisbon")
-        check(f"a repeated query never reaches the API (calls={_api_calls})",
-              str(_api_calls), contains="1")
-
-        check("the repeat still returns the candidates",
-              call(manage_place, action="search", query="ramen", near="Lisbon"),
-              contains=["2 candidate", "Baixa"])
-
-        for i in range(2, 6):
-            call(manage_place, action="search", query=f"distinct query {i}")
-        check(f"four more distinct queries hit the API (calls={_api_calls})",
-              str(_api_calls), contains="5")
-
-        check("the sixth distinct query is refused, with a way out",
-              call(manage_place, action="search", query="one too many"),
-              contains=["limit", "ask the owner", "by hand"])
-
-        check("and it did NOT reach the API", str(_api_calls), contains="5")
-
-        check("an already-seen query still works after the cap",
-              call(manage_place, action="search", query="ramen", near="Lisbon"),
-              contains="2 candidate")
-    finally:
-        places_mod._search_places = real_search
-        places_mod._TURN_SEARCHES.clear()
-
-
 def test_manage_place() -> None:
     from tools.travel import places as places_mod
-
-    section("manage_place — lookup returns candidates, never picks for you")
 
     check("no API key is a refusal that still offers a way forward",
           call(manage_place, action="search", query="Cafe Central"),
@@ -519,8 +271,6 @@ def test_manage_place() -> None:
 
         check("search needs a query", call(manage_place, action="search"),
               contains="needs a query")
-
-        section("manage_place — saving keeps what the search knew")
 
         check("saving a candidate reports a new place",
               call(manage_place, action="save", google_place_id="ChIJ_branch_one",
@@ -580,8 +330,6 @@ def test_manage_place() -> None:
     check("save needs at least a title", call(manage_place, action="save"),
           contains="needs at least a title")
 
-    section("manage_place — corrections are shared, deletion is guarded")
-
     check("list shows ids to work with", call(manage_place, action="list"),
           contains=["[1]", "[2]", "[3]"])
 
@@ -626,14 +374,110 @@ def test_manage_place() -> None:
           contains="1")
 
 
-# ---------------------------------------------------------------------------
-# manage_wishlist
-# ---------------------------------------------------------------------------
+def test_categories() -> None:
+    """Bucketing: the exact table, the suffix fallback, and the cases that must
+    stay undecided rather than be filed wrongly."""
+    from tools.travel.places import CATEGORIES, _categorize
+
+    cases = [
+        ("pastry_shop", "dessert"), ("ice_cream_shop", "dessert"),
+        ("coffee_shop", "cafe"), ("cafe", "cafe"),
+        ("kebab_shop", "restaurant"),       # a real type we have actually seen
+        ("barber_shop", None),              # unknown _shop: undecided, not shopping
+        ("italian_restaurant", "restaurant"),   # via suffix
+        ("ramen_restaurant", "restaurant"),     # a cuisine nobody enumerated
+        ("sandwich_shop", "restaurant"),        # named, because the suffix would lie
+        ("wine_bar", "bar"), ("farmers_market", "market"),
+        ("museum", "sights"), ("historical_landmark", "sights"),
+        ("botanical_garden", "outdoors"), ("beach", "outdoors"),
+        ("subway_station", "transit"),          # via suffix
+        ("book_store", "shopping"),             # via suffix
+        ("hotel", "lodging"),
+        ("dentist", None), ("", None), (None, None),
+    ]
+    wrong = [(t, _categorize(t), want) for t, want in cases if _categorize(t) != want]
+    check(f"{len(cases)} type mappings", "ok" if not wrong else f"wrong: {wrong}",
+          contains="ok")
+
+    check("every mapped bucket is in the closed vocabulary",
+          "ok" if all(v in CATEGORIES for v in _TYPE_VALUES()) else "drifted",
+          contains="ok")
+
+    check("a category outside the vocabulary is refused",
+          call(manage_place, action="save", title="X", category="delicious",
+               destination="Beta Town"),
+          contains=["unknown category", "restaurant", "other"])
+
+
+def test_locality() -> None:
+    """Where a place's city comes from, and what stands in when Google has no
+    `locality` — the UK uses postal_town, and some places give neither."""
+    from tools.travel.places import _locality_of
+
+    cases = [
+        ([{"longText": "Lisboa", "types": ["locality"]},
+          {"longText": "Portugal", "types": ["country"]}],            ("Lisboa", "Portugal")),
+        # No locality: the UK files cities under postal_town.
+        ([{"longText": "London", "types": ["postal_town"]},
+          {"longText": "United Kingdom", "types": ["country"]}],      ("London", "United Kingdom")),
+        # Neither: fall back to the county-level component.
+        ([{"longText": "Kerry", "types": ["administrative_area_level_2"]},
+          {"longText": "Ireland", "types": ["country"]}],             ("Kerry", "Ireland")),
+        # locality wins over the stand-ins when both are present.
+        ([{"longText": "Real City", "types": ["locality"]},
+          {"longText": "Fallback", "types": ["postal_town"]}],        ("Real City", None)),
+        ([], (None, None)),
+    ]
+    wrong = [(p, _locality_of({"addressComponents": p}), want)
+             for p, want in cases if _locality_of({"addressComponents": p}) != want]
+    check(f"{len(cases)} component shapes", "ok" if not wrong else f"wrong: {wrong}",
+          contains="ok")
+
+    check("a place with no components at all is not an error",
+          str(_locality_of({})), contains="(None, None)")
+
+
+def test_search_guards() -> None:
+    """The loop guards: a repeated query must not reach the API, and a run of
+    distinct ones must stop with advice rather than an error to retry."""
+    from tools.travel import places as places_mod
+
+    global _api_calls
+    real_search = places_mod._search_places
+    places_mod._search_places = _fake_search
+    places_mod._TURN_SEARCHES.clear()
+    try:
+        _api_calls = 0
+        call(manage_place, action="search", query="ramen", near="Lisbon")
+        call(manage_place, action="search", query="ramen", near="Lisbon")
+        call(manage_place, action="search", query="RAMEN", near="lisbon")
+        check(f"a repeated query never reaches the API (calls={_api_calls})",
+              str(_api_calls), contains="1")
+
+        check("the repeat still returns the candidates",
+              call(manage_place, action="search", query="ramen", near="Lisbon"),
+              contains=["2 candidate", "Baixa"])
+
+        for i in range(2, 6):
+            call(manage_place, action="search", query=f"distinct query {i}")
+        check(f"four more distinct queries hit the API (calls={_api_calls})",
+              str(_api_calls), contains="5")
+
+        check("the sixth distinct query is refused, with a way out",
+              call(manage_place, action="search", query="one too many"),
+              contains=["limit", "ask the owner", "by hand"])
+
+        check("and it did NOT reach the API", str(_api_calls), contains="5")
+
+        check("an already-seen query still works after the cap",
+              call(manage_place, action="search", query="ramen", near="Lisbon"),
+              contains="2 candidate")
+    finally:
+        places_mod._search_places = real_search
+        places_mod._TURN_SEARCHES.clear()
 
 
 def test_manage_wishlist() -> None:
-    section("manage_wishlist — the list belongs to the destination")
-
     check("a list can be asked for by destination, with no trip at all",
           call(manage_wishlist, action="list", destination="Wishville"),
           contains="nothing on its wishlist")
@@ -669,8 +513,6 @@ def test_manage_wishlist() -> None:
                title="somewhere with a view"),
           contains="UNIQUE")
 
-    section("manage_wishlist — a trip reaches its list through its destination")
-
     check("asking by trip finds the destination's list",
           call(manage_wishlist, action="list", trip_id="beta"),
           contains="cafe central")
@@ -689,8 +531,6 @@ def test_manage_wishlist() -> None:
     check("and the listing follows",
           call(manage_wishlist, action="list", destination="Beta Town"),
           contains="BAIXA")
-
-    section("manage_wishlist — updating, clearing, and going")
 
     check("notes and priority change",
           call(manage_wishlist, action="update", wishlist_id=1,
@@ -736,8 +576,6 @@ def test_manage_wishlist() -> None:
                notes="new note"),
           contains=["already on the list", "notes"])
 
-    section("manage_wishlist — removal, and what survives it")
-
     check("remove needs the id from the listing",
           call(manage_wishlist, action="remove"), contains="wishlist_id is required")
 
@@ -758,14 +596,7 @@ def test_manage_wishlist() -> None:
           contains=["unknown action", "add", "remove"])
 
 
-# ---------------------------------------------------------------------------
-# manage_itinerary
-# ---------------------------------------------------------------------------
-
-
 def test_manage_itinerary() -> None:
-    section("manage_itinerary — scheduling needs a dated trip")
-
     call(manage_trip, action="create", trip_id="it0", destination="Undated Town")
     check("an undated trip refuses, and says how to fix it",
           call(manage_itinerary, action="schedule", trip_id="it0",
@@ -801,8 +632,6 @@ def test_manage_itinerary() -> None:
                date="2027-03-11", item_type="transit"),
           contains="needs a title")
 
-    section("manage_itinerary — day numbers derive, edges are flagged")
-
     check("scheduling reports the derived day number",
           call(manage_itinerary, action="schedule", trip_id="it", place_id=1,
                date="2027-03-11", start_time="13:00", end_time="14:30"),
@@ -831,8 +660,6 @@ def test_manage_itinerary() -> None:
     check("a pre-trip day is labelled, not numbered", out, contains="before day 1")
     check("transit shows its endpoints", out, contains="Home → Airport")
 
-    section("manage_itinerary — the wishlist is never consumed")
-
     call(manage_wishlist, action="add", trip_id="it", place_id=2)
     _wl_count = ("SELECT COUNT(*) AS n FROM wishlist w JOIN trips t "
                  "ON t.destination_id = w.destination_id "
@@ -851,8 +678,6 @@ def test_manage_itinerary() -> None:
           call(query_travel_db,
                sql="SELECT COUNT(*) AS n FROM itinerary WHERE trip_id='it' AND place_id=2"),
           contains="2")
-
-    section("manage_itinerary — reschedule, unschedule, remove")
 
     check("a wrong entry_id shows the itinerary",
           call(manage_itinerary, action="reschedule", trip_id="it", entry_id=9999,
@@ -899,8 +724,6 @@ def test_manage_itinerary() -> None:
           call(manage_itinerary, action="frobnicate", trip_id="it"),
           contains=["unknown action", "schedule", "reschedule"])
 
-    section("manage_itinerary — items that run past midnight")
-
     check("an overnight is inferred, not refused",
           call(manage_itinerary, action="schedule", trip_id="it", title="Night bus",
                item_type="transit", date="2027-03-11", start_time="22:00",
@@ -938,8 +761,6 @@ def test_manage_itinerary() -> None:
 
 def test_manage_tags() -> None:
     """item_type='tag' — a day-level label, not a timeline entry."""
-    section("manage_itinerary — tags label a day, they don't occupy one")
-
     call(manage_destination, action="create", name="Tagland", timezone="Europe/Lisbon")
     call(manage_trip, action="create", trip_id="tag", destination="Tagland",
          start_date="2027-08-10", end_date="2027-08-14")
@@ -1011,8 +832,6 @@ def test_manage_tags() -> None:
     check("the same tag on two different days shares one entry_id",
           str(beach_11["entry_id"] == beach_12["entry_id"]), contains="true")
 
-    section("manage_itinerary — update cannot forge an invalid tag")
-
     call(manage_itinerary, action="schedule", trip_id="tag", place_id=1,
          date="2027-08-13", start_time="11:00")
     place_eid = int(call(query_travel_db,
@@ -1070,175 +889,8 @@ def test_manage_tags() -> None:
           contains="no time")
 
 
-# ---------------------------------------------------------------------------
-# the travel app surface (gateway/apps/travel.py)
-# ---------------------------------------------------------------------------
-
-
-def test_tile() -> None:
-    """The tile payload. Deterministic dispatch, no model — so this is the whole
-    contract the app client will be written against."""
-    import asyncio
-
-    from gateway.apps import AppError, dispatch
-
-    def tile(**params):
-        return asyncio.run(dispatch("travel", "tile", params))
-
-    def fails(**params):
-        try:
-            asyncio.run(dispatch("travel", "tile", params))
-            return "NO ERROR"
-        except AppError as e:
-            return f"{e.code}: {e}"
-
-    # This test owns its data: borrowing another test's leftovers made these
-    # assertions depend on what that test happened to delete.
-    call(manage_trip, action="create", trip_id="tile", destination="Tileburg",
-         start_date="2027-06-10", end_date="2027-06-14", timezone="Europe/Lisbon")
-    call(manage_itinerary, action="schedule", trip_id="tile", title="Night train in",
-         item_type="transit", date="2027-06-09", start_time="23:10",
-         from_location="Home", to_location="Tileburg Centraal")
-    call(manage_itinerary, action="schedule", trip_id="tile", title="Hotel Tile",
-         item_type="lodging", date="2027-06-10", end_date="2027-06-14",
-         confirmation_code="BK-TILE")
-    call(manage_itinerary, action="schedule", trip_id="tile", place_id=1,
-         date="2027-06-11", start_time="13:00", end_time="14:30")
-    call(manage_itinerary, action="schedule", trip_id="tile", title="Nap",
-         item_type="note", date="2027-06-11")
-    call(manage_wishlist, action="add", trip_id="tile", place_id=2)
-    call(manage_wishlist, action="add", trip_id="tile", place_id=1, notes="go at dawn")
-
-    section("travel tile — addressing a trip")
-
-    check("an unknown trip is not_found", fails(trip_id="nope"),
-          contains="not_found")
-
-    check("an undeclared param is refused before any handler runs",
-          fails(path="../../secrets/.env"), contains="invalid_request")
-
-    d = tile(trip_id="tile")
-    check("the addressed trip comes back", str(d["trip"]["trip_id"]), contains="tile")
-    check("its timezone and position are resolved",
-          f"{d['trip']['position']} {d['trip']['timezone']}",
-          contains=["before", "Europe/Lisbon"])
-
-    section("travel tile — the day strip")
-
-    dates = [x["date"] for x in d["days"]]
-    check("every day of the trip is present, including empty ones",
-          str(len(dates)), contains="6")   # 5 in-window + 1 edge day
-
-    check("the edge day is the one the item DEPARTS on, not the one it ends on",
-          str(dates[0]), contains="2027-06-09")
-    check("empty middle days are not skipped",
-          str([x["date"] for x in d["days"] if not x["items"]]),
-          contains=["2027-06-12", "2027-06-13", "2027-06-14"])
-    check("an out-of-window day is included and flagged",
-          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-09"]),
-          contains="True")
-    check("in-window days are not flagged",
-          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-11"]),
-          contains="False")
-    check("day numbers count from the trip's start",
-          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-11"]),
-          contains="2")
-    check("a pre-trip day gets a number below 1 rather than a fake one",
-          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-09"]),
-          contains="0")
-    check("days are sorted", str(dates == sorted(dates)), contains="true")
-
-    section("travel tile — stays, items, wishlist")
-
-    check("a stay is lifted out of the day list",
-          str([x["title"] for x in d["lodging"]]), contains="Hotel Tile")
-    check("and does not also appear inside a day",
-          str([i["item_type"] for day in d["days"] for i in day["items"]]),
-          missing="lodging")
-    check("a stay carries its span and its booking",
-          f"{d['lodging'][0]['end_date']} {d['lodging'][0]['confirmation_code']}",
-          contains=["2027-06-14", "BK-TILE"])
-
-    items = [i for day in d["days"] for i in day["items"]]
-    check("a transit leg has no place object, and keeps its endpoints",
-          str([(i["place"], i["from_location"], i["to_location"])
-               for i in items if i["item_type"] == "transit"]),
-          contains=["None", "Tileburg Centraal"])
-    check("a place-backed item carries its place",
-          str([i["place"]["title"] for i in items if i["place"]]),
-          contains="cafe central")
-    check("every item has a title the client can render",
-          "ok" if all(i["title"] for i in items) else "missing", contains="ok")
-    section("travel tile — an item is on every day it touches")
-
-    call(manage_itinerary, action="schedule", trip_id="tile", title="Sleeper train",
-         item_type="transit", date="2027-06-12", arrival_date="2027-06-14",
-         start_time="21:00", end_time="07:30")
-    d2 = tile(trip_id="tile")
-    by_day = {x["date"]: x["items"] for x in d2["days"]}
-
-    check("it appears on the day it leaves, as a start",
-          str([i["role"] for i in by_day["2027-06-12"] if i["title"] == "Sleeper train"]),
-          contains="start")
-    check("on the day in between, as a continuation",
-          str([i["role"] for i in by_day["2027-06-13"] if i["title"] == "Sleeper train"]),
-          contains="continuation")
-    check("and on the day it arrives, as an end",
-          str([i["role"] for i in by_day["2027-06-14"] if i["title"] == "Sleeper train"]),
-          contains="end")
-    check("so no day it touches reads as empty",
-          "ok" if all(by_day[d] for d in ("2027-06-12", "2027-06-13", "2027-06-14"))
-          else "a day was empty", contains="ok")
-    check("a stay is still not placed in any day",
-          str([i["item_type"] for day in d2["days"] for i in day["items"]]),
-          missing="lodging")
-
-    check("an untimed item still appears, sorted after timed ones",
-          str([i["title"] for day in d["days"] if day["date"] == "2027-06-11"
-               for i in day["items"]]),
-          contains="Nap")
-
-    check("the wishlist is grouped, in the vocabulary's own order",
-          str([g["category"] for g in d["wishlist"]]),
-          contains="['restaurant', 'cafe']")
-    check("wishlist items carry their note and place details",
-          str(d["wishlist"][1]["items"][0]),
-          contains=["go at dawn", "Coffee Shop"])
-
-    section("travel tile — the shapes a client parses against")
-
-    check("lodging carries a role too, so one type reads both arrays",
-          str([x["role"] for x in d["lodging"]]), contains="stay")
-
-    check("every item everywhere has a role",
-          "ok" if all("role" in i for day in d["days"] for i in day["items"])
-          and all("role" in x for x in d["lodging"]) else "missing", contains="ok")
-
-    check("and a title, so nothing renders blank",
-          "ok" if all(i["title"] for day in d["days"] for i in day["items"]) else "missing",
-          contains="ok")
-
-    section("travel tile — empty states are not errors")
-
-    d0 = tile(trip_id="it0")
-    check("an undated trip returns a trip with no days, not an error",
-          f"{d0['trip']['trip_id']} days={len(d0['days'])} pos={d0['trip']['position']}",
-          contains=["it0", "days=0", "undated"])
-
-    # The client has to render this, so its shape is pinned: no range to draw,
-    # no strip, and a timezone that is present regardless.
-    check("its dates are null rather than absent, and the timezone still resolves",
-          f"{d0['trip']['start_date']} {d0['trip']['end_date']} {d0['trip']['timezone']}",
-          contains=["None None", "Europe/Lisbon"])
-
-    check("the trip's display name is never null, even with no title",
-          "ok" if d0["trip"]["destination"] else "null", contains="ok")
-
-
 def test_crossing_timezones() -> None:
     """The cases wall-clock times alone cannot answer, and the one they can."""
-    section("manage_itinerary — crossing timezones")
-
     call(manage_destination, action="create", name="Farland", timezone="Asia/Tokyo")
     call(manage_trip, action="create", trip_id="tz", destination="Farland",
          start_date="2027-06-01", end_date="2027-06-10")
@@ -1312,8 +964,6 @@ def test_itinerary_update() -> None:
     """The gaps two design reviews found: everything except dates was write-once,
     the commonest flow needed an id the listing never showed, and there was no
     way to say "remove this value"."""
-    section("manage_itinerary — update, and scheduling off the list")
-
     call(manage_destination, action="create", name="Fixland", timezone="Europe/Lisbon")
     call(manage_trip, action="create", trip_id="fix", destination="Fixland",
          start_date="2027-04-01", end_date="2027-04-10")
@@ -1355,8 +1005,6 @@ def test_itinerary_update() -> None:
           call(manage_itinerary, action="schedule", trip_id="fix", place_id=1,
                date="2027-04-04"),
           contains="scheduled")
-
-    section("manage_itinerary — update covers what reschedule does not")
 
     eid = int(call(query_travel_db,
                    sql="SELECT entry_id FROM itinerary WHERE trip_id='fix' "
@@ -1414,8 +1062,6 @@ def test_itinerary_update() -> None:
                    "OR from_location LIKE '%unset%' OR to_location LIKE '%unset%'"),
           contains="0")
 
-    section("manage_itinerary — the states the schema now refuses")
-
     conn = _raw()
     for label, sql in (
         ("an end before its start",
@@ -1435,8 +1081,6 @@ def test_itinerary_update() -> None:
 
 def test_arrival_ordering() -> None:
     """An arrival sorts by when it lands, on the clock of the day it lands in."""
-    section("manage_itinerary — an arrival sorts by the right clock")
-
     call(manage_destination, action="create", name="Sortland", timezone="Europe/Lisbon")
     call(manage_trip, action="create", trip_id="sort", destination="Sortland",
          start_date="2027-07-01", end_date="2027-07-05")
@@ -1476,44 +1120,231 @@ def test_arrival_ordering() -> None:
           contains="['Breakfast', 'Late arrival']")
 
 
-def _raw():
-    """A direct connection, for arranging rows that the tools under test don't
-    write yet. Replaced by the real tools as later commits add them."""
-    from tools.travel._db import _get_db
+def test_tile() -> None:
+    """The tile payload. Deterministic dispatch, no model — so this is the whole
+    contract the app client will be written against."""
+    import asyncio
 
-    return _get_db()
+    from gateway.apps import AppError, dispatch
+
+    def tile(**params):
+        return asyncio.run(dispatch("travel", "tile", params))
+
+    def fails(**params):
+        try:
+            asyncio.run(dispatch("travel", "tile", params))
+            return "NO ERROR"
+        except AppError as e:
+            return f"{e.code}: {e}"
+
+    # This test owns its data: borrowing another test's leftovers made these
+    # assertions depend on what that test happened to delete.
+    call(manage_trip, action="create", trip_id="tile", destination="Tileburg",
+         start_date="2027-06-10", end_date="2027-06-14", timezone="Europe/Lisbon")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Night train in",
+         item_type="transit", date="2027-06-09", start_time="23:10",
+         from_location="Home", to_location="Tileburg Centraal")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Hotel Tile",
+         item_type="lodging", date="2027-06-10", end_date="2027-06-14",
+         confirmation_code="BK-TILE")
+    call(manage_itinerary, action="schedule", trip_id="tile", place_id=1,
+         date="2027-06-11", start_time="13:00", end_time="14:30")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Nap",
+         item_type="note", date="2027-06-11")
+    call(manage_wishlist, action="add", trip_id="tile", place_id=2)
+    call(manage_wishlist, action="add", trip_id="tile", place_id=1, notes="go at dawn")
+
+    check("an unknown trip is not_found", fails(trip_id="nope"),
+          contains="not_found")
+
+    check("an undeclared param is refused before any handler runs",
+          fails(path="../../secrets/.env"), contains="invalid_request")
+
+    d = tile(trip_id="tile")
+    check("the addressed trip comes back", str(d["trip"]["trip_id"]), contains="tile")
+    check("its timezone and position are resolved",
+          f"{d['trip']['position']} {d['trip']['timezone']}",
+          contains=["before", "Europe/Lisbon"])
+
+    dates = [x["date"] for x in d["days"]]
+    check("every day of the trip is present, including empty ones",
+          str(len(dates)), contains="6")   # 5 in-window + 1 edge day
+
+    check("the edge day is the one the item DEPARTS on, not the one it ends on",
+          str(dates[0]), contains="2027-06-09")
+    check("empty middle days are not skipped",
+          str([x["date"] for x in d["days"] if not x["items"]]),
+          contains=["2027-06-12", "2027-06-13", "2027-06-14"])
+    check("an out-of-window day is included and flagged",
+          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-09"]),
+          contains="True")
+    check("in-window days are not flagged",
+          str([x["outside_window"] for x in d["days"] if x["date"] == "2027-06-11"]),
+          contains="False")
+    check("day numbers count from the trip's start",
+          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-11"]),
+          contains="2")
+    check("a pre-trip day gets a number below 1 rather than a fake one",
+          str([x["day_number"] for x in d["days"] if x["date"] == "2027-06-09"]),
+          contains="0")
+    check("days are sorted", str(dates == sorted(dates)), contains="true")
+
+    check("a stay is lifted out of the day list",
+          str([x["title"] for x in d["lodging"]]), contains="Hotel Tile")
+    check("and does not also appear inside a day",
+          str([i["item_type"] for day in d["days"] for i in day["items"]]),
+          missing="lodging")
+    check("a stay carries its span and its booking",
+          f"{d['lodging'][0]['end_date']} {d['lodging'][0]['confirmation_code']}",
+          contains=["2027-06-14", "BK-TILE"])
+
+    items = [i for day in d["days"] for i in day["items"]]
+    check("a transit leg has no place object, and keeps its endpoints",
+          str([(i["place"], i["from_location"], i["to_location"])
+               for i in items if i["item_type"] == "transit"]),
+          contains=["None", "Tileburg Centraal"])
+    check("a place-backed item carries its place",
+          str([i["place"]["title"] for i in items if i["place"]]),
+          contains="cafe central")
+    check("every item has a title the client can render",
+          "ok" if all(i["title"] for i in items) else "missing", contains="ok")
+    call(manage_itinerary, action="schedule", trip_id="tile", title="Sleeper train",
+         item_type="transit", date="2027-06-12", arrival_date="2027-06-14",
+         start_time="21:00", end_time="07:30")
+    d2 = tile(trip_id="tile")
+    by_day = {x["date"]: x["items"] for x in d2["days"]}
+
+    check("it appears on the day it leaves, as a start",
+          str([i["role"] for i in by_day["2027-06-12"] if i["title"] == "Sleeper train"]),
+          contains="start")
+    check("on the day in between, as a continuation",
+          str([i["role"] for i in by_day["2027-06-13"] if i["title"] == "Sleeper train"]),
+          contains="continuation")
+    check("and on the day it arrives, as an end",
+          str([i["role"] for i in by_day["2027-06-14"] if i["title"] == "Sleeper train"]),
+          contains="end")
+    check("so no day it touches reads as empty",
+          "ok" if all(by_day[d] for d in ("2027-06-12", "2027-06-13", "2027-06-14"))
+          else "a day was empty", contains="ok")
+    check("a stay is still not placed in any day",
+          str([i["item_type"] for day in d2["days"] for i in day["items"]]),
+          missing="lodging")
+
+    check("an untimed item still appears, sorted after timed ones",
+          str([i["title"] for day in d["days"] if day["date"] == "2027-06-11"
+               for i in day["items"]]),
+          contains="Nap")
+
+    check("the wishlist is grouped, in the vocabulary's own order",
+          str([g["category"] for g in d["wishlist"]]),
+          contains="['restaurant', 'cafe']")
+    check("wishlist items carry their note and place details",
+          str(d["wishlist"][1]["items"][0]),
+          contains=["go at dawn", "Coffee Shop"])
+
+    check("lodging carries a role too, so one type reads both arrays",
+          str([x["role"] for x in d["lodging"]]), contains="stay")
+
+    check("every item everywhere has a role",
+          "ok" if all("role" in i for day in d["days"] for i in day["items"])
+          and all("role" in x for x in d["lodging"]) else "missing", contains="ok")
+
+    check("and a title, so nothing renders blank",
+          "ok" if all(i["title"] for day in d["days"] for i in day["items"]) else "missing",
+          contains="ok")
+
+    d0 = tile(trip_id="it0")
+    check("an undated trip returns a trip with no days, not an error",
+          f"{d0['trip']['trip_id']} days={len(d0['days'])} pos={d0['trip']['position']}",
+          contains=["it0", "days=0", "undated"])
+
+    # The client has to render this, so its shape is pinned: no range to draw,
+    # no strip, and a timezone that is present regardless.
+    check("its dates are null rather than absent, and the timezone still resolves",
+          f"{d0['trip']['start_date']} {d0['trip']['end_date']} {d0['trip']['timezone']}",
+          contains=["None None", "Europe/Lisbon"])
+
+    check("the trip's display name is never null, even with no title",
+          "ok" if d0["trip"]["destination"] else "null", contains="ok")
 
 
-def main() -> int:
-    global VERBOSE
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-v", "--verbose", action="store_true", help="print each tool's full output")
-    VERBOSE = ap.parse_args().verbose
+def test_trip_date_shift() -> None:
+    call(manage_destination, action="create", name="Shiftland", timezone="Europe/Lisbon")
+    call(manage_trip, action="create", trip_id="shift", destination="Shiftland",
+         start_date="2026-10-10", end_date="2026-10-15")
 
-    print(f"scratch root: {_SCRATCH}")
-    try:
-        test_manage_destination()
-        test_manage_trip()
-        test_manage_place()
-        test_categories()
-        test_locality()
-        test_search_guards()
-        test_manage_wishlist()
-        test_manage_itinerary()
-        test_manage_tags()
-        test_crossing_timezones()
-        test_itinerary_update()
-        test_arrival_ordering()
-        test_tile()
-        test_trip_date_shift()
-        test_delete_cascade()
-    finally:
-        shutil.rmtree(_SCRATCH, ignore_errors=True)
+    for title, kind, s_date, e_date, code in (
+        ("Free walking tour", "note",    "2026-10-11", None, None),
+        ("Hotel",             "lodging", "2026-10-10", "2026-10-15", None),
+        ("Flight out",        "transit", "2026-10-10", None, "PNR-1"),
+    ):
+        call(manage_itinerary, action="schedule", trip_id="shift", title=title,
+             item_type=kind, date=s_date, end_date=e_date or "",
+             confirmation_code=code or "")
 
-    print(f"\n{_passed} passed, {_failed} failed")
-    return 1 if _failed else 0
+    out = call(manage_trip, action="update", trip_id="shift",
+               start_date="2026-10-17", end_date="2026-10-22")
+    check("it says plainly that nothing moved", out,
+          contains="nothing scheduled was moved")
+    check("and names everything now outside the window", out,
+          contains=["outside the trip window", "free walking tour", "hotel", "flight out"])
+
+    check("an unbooked item kept its date",
+          call(query_travel_db,
+               sql="SELECT start_date FROM itinerary WHERE title='Free walking tour'"),
+          contains="2026-10-11")
+
+    check("a booking kept its date too — the code no longer decides anything",
+          call(query_travel_db,
+               sql="SELECT start_date FROM itinerary WHERE title='Flight out'"),
+          contains="2026-10-10")
+
+    check("a stay kept both of its dates",
+          call(query_travel_db,
+               sql="SELECT start_date, end_date FROM itinerary WHERE title='Hotel'"),
+          contains="2026-10-10 | 2026-10-15")
+
+    check("moving the trip back over them stops reporting them",
+          call(manage_trip, action="update", trip_id="shift",
+               start_date="2026-10-09", end_date="2026-10-16"),
+          contains="nothing scheduled was moved", missing="outside the trip window")
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def test_delete_cascade() -> None:
+    conn = _raw()
+    conn.execute(
+        "INSERT INTO places(title, destination_id) "
+        "SELECT 'Somewhere', destination_id FROM destinations WHERE name='Shift City'"
+    )
+    conn.execute(
+        "INSERT INTO wishlist(destination_id, place_id) "
+        "SELECT t.destination_id, 1 FROM trips t WHERE t.trip_id = 'shift'"
+    )
+    conn.commit()
+    conn.close()
+
+    # The confirmation UI needs a channel, which this script has no business
+    # standing up — so the guarded body is called directly. What the button
+    # protects is tested here; that it IS behind a button is read off the code.
+    from tools.travel.trips import _exec_delete_trip
+
+    check("delete reports what it removed, and what it spared",
+          _exec_delete_trip("shift"),
+          contains=["deleted shift", "3 scheduled", "wishlist is untouched"])
+
+    check("the trip is gone",
+          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM trips WHERE trip_id='shift'"),
+          contains="0")
+
+    check("its scheduled rows went with it",
+          call(query_travel_db,
+               sql="SELECT COUNT(*) AS n FROM itinerary WHERE trip_id='shift'"),
+          contains="0")
+
+    check("the saved place survived",
+          call(query_travel_db, sql="SELECT title FROM places"),
+          contains="Somewhere")
+
+    check("and so did the wishlist entry, which belongs to the destination",
+          call(query_travel_db, sql="SELECT COUNT(*) AS n FROM wishlist WHERE place_id=1"),
+          contains="1")
