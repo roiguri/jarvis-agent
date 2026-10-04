@@ -1,7 +1,6 @@
 # Testing and Evals — Plan
 
-**Date:** 2026-10-04 · **Status:** T1 implemented (2026-10-04); awaiting PR, the first CI run and
-the branch-protection update.
+**Date:** 2026-10-04 · **Status:** T1 merged (PR #136); T2 implemented (2026-10-04), awaiting PR.
 **Goal:** a real test suite that runs in CI and catches logic regressions, plus an eval
 harness that measures what the model *does* (tool choice, heartbeat decisions, safety rails),
 which nothing measures today.
@@ -12,7 +11,7 @@ which nothing measures today.
 
 - [x] **T1 — pytest foundation.** Move the `scripts/test_*.py` harnesses into a top-level
       `tests/` package as native pytest, share their fakes, and add a required `tests` CI job.
-- [ ] **T2 — Snapshot what the model sees.** Golden files for the system prompt per scope and
+- [x] **T2 — Snapshot what the model sees.** Golden files for the system prompt per scope and
       for the scoped tool surface, so every prompt or docstring change is a reviewable diff.
 - [ ] **T3 — Unit tests where bugs have been.** Heartbeat gate and parser, time boundaries,
       memory sandbox, message trimming, registry scoping, fitness math.
@@ -168,20 +167,29 @@ requirements-dev.txt       # -r requirements.txt, pytest, pytest-asyncio, hypoth
 The prompt and the tool schemas *are* the behavior surface. A golden file makes any change to
 them visible in review, including accidental ones such as a tool silently becoming always-on.
 
-- [ ] `tests/fixtures/memory/`: a small fixture SOUL.md, USER.md, HEARTBEAT.md and daily log.
-- [ ] `tests/test_prompt_snapshot.py`: `build_system_prompt` for the `user` and `heartbeat`
-      scopes, with no skill active and with each skill active, against the fixtures and a
-      pinned clock (monkeypatch the module's time helpers). Compared with
-      `tests/golden/prompt_<scope>[_<skill>].md`.
-- [ ] `tests/test_tool_surface.py`: for each scope and active-skill set, the tools
-      `registry.get_tools` returns: name, namespace, destructive flag, docstring and args
-      JSON schema. Written as `tests/golden/tools_<scope>[_<skill>].json`, plus an estimated
-      token count per set (characters ÷ 4, labelled as an estimate) so growth in the
-      always-on surface shows up in the diff.
-- [ ] `pytest --update-golden` (a conftest option) rewrites the golden files. A mismatch
-      fails with a unified diff.
-- [ ] Verify: editing one tool docstring fails exactly one tool-surface test with a readable
-      diff, and `--update-golden` clears it.
+Every memory file Jarvis writes (SOUL.md, USER.md, HEARTBEAT.md, daily logs, the chat log) is
+a committed fixture, never the real file, so the golden files move only when code or the
+committed prompts change. Drift from Jarvis's own writes is runtime state; telemetry
+(`turns.jsonl` input tokens) is where that shows.
+
+- [x] `tests/fixtures/`: fixture SOUL.md, USER.md, today's and yesterday's daily logs, a
+      chat log (rows from yesterday and from the heartbeat thread, which must be dropped), and
+      a HEARTBEAT.md with a due, a not-due, a gated and a paused task, so the due-filtering is
+      covered too.
+- [x] `tests/test_prompt_snapshot.py`: `build_system_prompt` for `user` and for `heartbeat`
+      (one due task), against the fixtures with agent.py's clock pinned; plus the skill block
+      with every skill active, which covers every `SKILL.md` body. Three golden files instead
+      of one per scope × skill: the per-skill prompts would differ only in that block.
+- [x] `tests/test_tool_surface.py`: one golden file per namespace, `tests/golden/tools/<ns>.json`
+      (name, destructive flag, scopes, and the schema from the docstring and arguments), one
+      parametrized test each; plus `tests/golden/surface.md`: the always-on tools and the
+      count and estimated tokens (characters ÷ 4) per scope and active skill. The schema is
+      langchain's neutral form (`convert_to_openai_tool`); Gemini's own conversion is private.
+- [x] `pytest --update-golden` (a conftest option) rewrites the golden files. A mismatch
+      fails with a unified diff; a missing golden file fails rather than being created.
+- [x] Verify: a one-word edit to `fetch_url`'s docstring failed `test_tool_schemas[web]` with
+      a readable diff, and `surface.md` with it (the token estimate moved). Reverted, green.
+      The golden files are identical under other system timezones and contain no scratch paths.
 
 ---
 

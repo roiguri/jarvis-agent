@@ -1,0 +1,357 @@
+[
+  {
+    "destructive": false,
+    "name": "activate_skill",
+    "schema": {
+      "description": "Load the tools for one or more skills into this conversation.\n\n    Call this the moment you realize you need a capability you don't currently\n    have — the skill's tools become available immediately, in this same turn,\n    so act on the request without asking the user to repeat themselves. The\n    available skills and what each is for are listed under \"Available skills\"\n    in your context. Some skills expose sub-skills (shown indented once the\n    parent is active, e.g. ``media/radarr``); activate those the same way.",
+      "name": "activate_skill",
+      "parameters": {
+        "properties": {
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespaces"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "deactivate_skill",
+    "schema": {
+      "description": "Drop a skill's tools from this conversation to shrink the tool surface.\n\n    Use when a skill is clearly no longer needed for the rest of the\n    conversation.",
+      "name": "deactivate_skill",
+      "parameters": {
+        "properties": {
+          "namespaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespaces"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": true,
+    "name": "delete_memory",
+    "schema": {
+      "description": "Permanently delete a memory file. Requests owner confirmation (showing a content preview) before executing.\n\n    Use when a file is stale, empty, or explicitly no longer needed.\n    Protected files (cannot be deleted): SOUL.md, HEARTBEAT.md, MEMORY.md, USER.md.\n\n    Args:\n        filename: The name of the file to delete (e.g., 'old_notes.txt').",
+      "name": "delete_memory",
+      "parameters": {
+        "properties": {
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_chat_history",
+    "schema": {
+      "description": "Read chat exchanges between Roi and Jarvis. Use when you need history\n    from earlier days — today's chat is already in context.\n\n    Args:\n        limit: max number of entries to return.\n        since: optional. A plain date '2026-05-08' means the start of that day,\n               Israel time — the day boundary is computed for you. A full\n               ISO 8601 timestamp with a UTC offset makes a precise cut instead.",
+      "name": "get_chat_history",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_notification_history",
+    "schema": {
+      "description": "Read the last N notification events that Jarvis sent (media ready, upgrades,\n    failures, system alerts). Use when the user asks what notifications were sent recently.",
+      "name": "get_notification_history",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "heartbeat_respond",
+    "schema": {
+      "description": "Report the outcome of this heartbeat tick or scheduled wake. Call\n    exactly once, as your last tool call, after all the work is done.\n\n    Args:\n        acted_tasks: Exact names (from HEARTBEAT.md) of every task you\n            resolved this tick — completed its work and updated its state\n            file, or confirmed Roi already handled it in today's chat.\n            Empty list if none. Never list a task you left for a later tick\n            (its body's conditions weren't met yet), and never a task that\n            was omitted from this tick's list. Always [] for a scheduled wake.\n        notify: True only if Roi should receive a message from this tick.\n        summary: One line for the internal log — what this tick did (or why\n            nothing was done). Always required.\n        notification_text: The user-facing message, required when notify is\n            True. Ignored when notify is False. Defaults to summary.",
+      "name": "heartbeat_respond",
+      "parameters": {
+        "properties": {
+          "acted_tasks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "notification_text": {
+            "default": "",
+            "type": "string"
+          },
+          "notify": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "acted_tasks",
+          "notify",
+          "summary"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": [
+      "heartbeat"
+    ]
+  },
+  {
+    "destructive": false,
+    "name": "list_memory",
+    "schema": {
+      "description": "List all memory files (.txt and .md), including files in subdirectories.\n\n    Use read_memory(\"MEMORY.md\") for a quick categorised overview instead of\n    reading every file individually.",
+      "name": "list_memory",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "manage_heartbeat_task",
+    "schema": {
+      "description": "Create, update, delete, pause, resume or list the recurring heartbeat\n    tasks in HEARTBEAT.md. Use this — never write_memory — to change the task\n    list.\n\n    Use for RECURRING or CONDITIONAL proactive wishes (\"check in after my\n    workouts\", \"every Sunday summarize my week\"). For a one-shot ping at a\n    fixed moment (\"remind me at 15:00 to call\") use manage_trigger instead.\n\n    Prefer pause over delete when the owner wants a task to stop only for now\n    (\"stop the gym reminders while I'm away\"): a paused task keeps its\n    cadence, window, instruction and accumulated notes file, and is skipped\n    entirely until resumed. Delete is for tasks that should not come back.\n    Only pause or resume when the owner asks — never on your own initiative.\n\n    Changes land immediately. Invalid input (bad cadence, bad due window,\n    duplicate/unknown name) is rejected with the reason and the file stays\n    untouched. On success the resulting task block is returned — report back\n    what actually landed rather than restating what you asked for, since an\n    update keeps the fields you left empty.\n\n    Args:\n        action: \"create\" | \"update\" | \"delete\" | \"pause\" | \"resume\" | \"list\".\n            pause/resume take only `name`; every other field is kept as-is.\n        name: kebab-case task name, e.g. \"post-class-checkin\". Required for\n            create/update/delete.\n        cadence: how often the task should be considered, e.g. \"1h\", \"24h\",\n            \"7d\". Required for create; optional on update (empty = keep).\n        due: optional time window (Israel time) outside which the task never\n            runs, e.g. \"06:00-22:00\", \"Tue,Sat 20:30±3h\", \"09:00±2h\".\n            Empty on update keeps the current window; \"none\" removes it.\n        instruction: what to do when the task is due — free prose, may be\n            multi-line. Required for create; optional on update (empty = keep).",
+      "name": "manage_heartbeat_task",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "cadence": {
+            "default": "",
+            "type": "string"
+          },
+          "due": {
+            "default": "",
+            "type": "string"
+          },
+          "instruction": {
+            "default": "",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "manage_trigger",
+    "schema": {
+      "description": "Create, list, or cancel one-off scheduled actions: reminders and wakes.\n\n    action='create': Schedule one action at `at`. Give exactly one of:\n        message: a REMINDER — this text is sent to the user verbatim at that time.\n            No model runs. Use for a fixed nudge (\"call the dentist\").\n        instruction: a WAKE — at that time you run a background turn with this\n            instruction and your tools, and can message the user (or send a form).\n            Use when the moment needs fresh data or judgment (\"check whether the\n            download finished and tell the user\", \"ask how the workout went\").\n        Call create exactly ONCE per request; the response confirms the scheduled\n        time so you can verify.\n    action='list': Show every pending reminder and wake with IDs and times.\n        Use before cancelling, or when the user asks what is scheduled.\n    action='cancel': Cancel one by ID. To change one: cancel it, then create anew.\n\n    For RECURRING work use manage_heartbeat_task, not this tool.\n\n    Args:\n        action: 'create', 'list', or 'cancel'\n        at: ISO 8601 UTC datetime, e.g. '2026-05-08T09:00:00Z' (required for 'create')\n        message: Reminder text (create a reminder)\n        instruction: What to do when woken (create a wake)\n        trigger_id: Short ID from 'list' output (required for 'cancel')",
+      "name": "manage_trigger",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "trigger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "read_memory",
+    "schema": {
+      "description": "Read information from a previously saved memory file.\n\n    Args:\n        filename: File name or relative path (e.g., 'user_prefs.txt', 'daily/daily_2026-05-08.md').",
+      "name": "read_memory",
+      "parameters": {
+        "properties": {
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "send_form",
+    "schema": {
+      "description": "Send the user a small form — labelled boxes, prefilled with your best guess,\n    submitted in one tap.\n\n    ONLY use a form when you can prefill every box from real data (their logged\n    history, their stated plan) and expect the user to submit it unchanged or with\n    small corrections. A form is for CORRECTING guesses, not for collecting answers:\n    - asking open questions -> just ask in conversation, never a form\n    - one single value -> just ask in conversation\n    - anything you cannot prefill from evidence -> leave that box empty (no default);\n      NEVER invent a plausible-looking default, since unchanged submission records it\n      as fact\n    Do not announce the form separately; message_text accompanies the card.\n\n    After the user submits, the values arrive in this conversation as a\n    \"[Submitted form <id>]\" message naming each field_id — handle it then (e.g. log\n    it with the right tool). A value of \"(left empty)\" means the user saw the box\n    and left it blank: respect that as an explicit \"no value\", don't substitute one.\n\n    Args:\n        message_text: The sentence shown with the card (e.g. \"Push day — fill in\n            what you hit.\"). Required; without it the form opens cold.\n        slug: Short kebab-case name for this form (e.g. 'push-day'). A unique id\n            is derived from it.\n        title: Card heading (e.g. 'Push day').\n        summary: One-line stand-in shown where the card doesn't render\n            (notification preview).\n        rows: Up to 6 rows. Each: {\"label\": str, \"fields\": [{\"field_id\":\n            snake_case str, \"type\": \"text\"|\"number\", \"unit\": str (required when a\n            row has 2+ fields), \"default\": prefill matching the type}]}.\n            Example: [{\"label\": \"Bench press\", \"fields\": [\n                {\"field_id\": \"bench_reps\", \"type\": \"number\", \"unit\": \"reps\", \"default\": 8},\n                {\"field_id\": \"bench_kg\", \"type\": \"number\", \"unit\": \"kg\", \"default\": 60}]}]\n        subtitle: Optional line under the title (e.g. '4 exercises').\n        submit_label: Optional label for the submit button (default 'Submit').",
+      "name": "send_form",
+      "parameters": {
+        "properties": {
+          "message_text": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "submit_label": {
+            "default": "",
+            "type": "string"
+          },
+          "subtitle": {
+            "default": "",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_text",
+          "slug",
+          "title",
+          "summary",
+          "rows"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "write_memory",
+    "schema": {
+      "description": "Write information to a memory file. Creates or overwrites the file.\n\n    SOUL.md is protected: writing to it requests owner confirmation (showing\n    a diff of the change) and only proceeds after Roi approves.\n    HEARTBEAT.md cannot be written directly — change tasks via\n    manage_heartbeat_task.\n\n    Args:\n        filename: File name or relative path (e.g., 'user_prefs.txt', 'daily/daily_2026-05-08.md').\n        content: The exact text to save.",
+      "name": "write_memory",
+      "parameters": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]
