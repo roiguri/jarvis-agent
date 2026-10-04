@@ -1,7 +1,8 @@
 # Collections — runtime-schema lists, a skill, and a jarvis-app mini-app
 
 **Date:** 2026-10-03 · **Status:** design settled in a grilling session (decisions below);
-C1 code done, staging verification pending.
+C1 done and staging-verified; C3 deferred until
+the tools have been used for real.
 **Sibling plan:** [TASKS_PLAN.md](TASKS_PLAN.md) — todo/tasks are a separate model and ship
 after this plan is complete.
 **Goal:** replace the markdown lists in memory (reading, shopping, books) with a structured
@@ -25,11 +26,17 @@ Each slice ships and is verified on its own. Order is deliberate: collections en
       the pending creation carries the first items.
 - [x] `tools/collections/SKILL.md` (description + rules, see §6).
 - [x] `tests/tools/test_collections.py` — every gated and ungated path, confirm and cancel.
-- [ ] Verify on staging **by creating real collections through Jarvis**, which also leaves the
+- [x] Verify on staging **by creating real collections through Jarvis**, which also leaves the
       data C3 is built against: `reading` and `shopping` from staging's own markdown copies,
       plus one collection per path — plain, default status, sections, custom schema (confirm +
       cancel), custom statuses, schema edit (add / rename / remove),
       archive / unarchive, delete (confirm). This doubles as the C2 runbook rehearsal.
+      Done 2026-10-04 against copies of the prod list files. Every path above passed, plus
+      retype, choice options, status on/off, sections off, and a state list with no closed
+      state. The reading rehearsal matched the source 35/35 (title, url, section, read state,
+      notes). Left on staging: only `reading`; the other test collections were deleted, so C3
+      needs a shopping-shaped collection recreated. C2 note: ask Jarvis to *archive* each
+      markdown file — unprompted it deleted `reading_list.md` (with confirmation).
 
 **C2 — Prod migration, by talking to Jarvis (no code, no script).** After C1 is deployed.
 - [ ] `reading` — every entry from `reading_list.md`, sections and done state preserved.
