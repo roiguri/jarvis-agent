@@ -1,7 +1,8 @@
 # Fitness logging — compositional session model, explicit plan binding
 
-**Status:** slices 0–2 implemented (5c19f63, 80766e1, 7aec27e; 1c4d0b3 retired
-`log_running_session`). Slice 3 (live verification) not recorded here.
+**Status:** complete, archived 2026-10-05. Slices 0–2 implemented (5c19f63, 80766e1, 7aec27e;
+1c4d0b3 retired `log_running_session`); slice 3 verified by real use in prod, September 2026
+(see Slice 3 — outcome).
 **Date:** 2026-09-06.
 **Goal:** make "a workout happened" recordable from anywhere (travel, hotel WODs, other gyms),
 attach workouts to plans explicitly instead of by heuristic, and restructure the logging tools
@@ -183,6 +184,24 @@ app poll.
   renamed column.
 - Read side: `get_adherence_report` vs app dashboard streak equality; history endpoint with a
   stats-less running row (the slice-0 guard).
+
+### Outcome (prod use, Sep 2026)
+
+Verified in real use rather than a staged run, mostly on a trip abroad:
+
+- **Manual WOD + lifts:** six off-gym sessions (9-10 → 9-23) logged with `log_workout` +
+  `log_exercise_stats`, all attached to the crossfit plan.
+- **Same-day duplicate refusal:** a second `log_workout` on 9-16 created no row.
+- **Enriching an Arbox-synced class:** 10-05 class got its stats, no duplicate row.
+- **Sync idempotency:** three `sync_arbox_attendance` runs, no duplicate rows.
+- **Unresolvable plan:** the error fired cleanly, but the model's recovery was wrong — it created
+  a plan unasked and rebound the crossfit plan away from `arbox`, partly steered by the error
+  text's "fix bindings via manage_fitness_plan". Follow-up (error wording + delete actions) is
+  #131.
+- **Streak equality:** moot by construction — `reports.py` and `gateway/apps/fitness.py` both
+  call `_adherence.streak_weeks`.
+- **Not exercised:** the cardio path (`log_cardio_stats` find-or-create, one-utterance run) —
+  zero calls, the running plan was paused. The first real logged run is its verification.
 
 ## Deferred (recorded, not planned here)
 

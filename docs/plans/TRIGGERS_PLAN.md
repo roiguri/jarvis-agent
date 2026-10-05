@@ -336,7 +336,7 @@ What existing modules become:
   maths moves to `triggers/scheduler.py`.
 - **`tools/core/scheduling.py`**: folded into `manage_trigger`.
 - **Fitness skill**: the read/sync split (constraint 1). This overlaps
-  [FITNESS_LOGGING_PLAN.md](FITNESS_LOGGING_PLAN.md) and should be sequenced with it.
+  [FITNESS_LOGGING_PLAN.md](archive/FITNESS_LOGGING_PLAN.md) and should be sequenced with it.
 
 ### The daily log
 
