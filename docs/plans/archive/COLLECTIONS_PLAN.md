@@ -1,10 +1,12 @@
 # Collections — runtime-schema lists, a skill, and a jarvis-app mini-app
 
-**Date:** 2026-10-03 · **Status:** design settled in a grilling session (decisions below);
-C1 in prod (deploy-2026-10-04-1), C2 done 2026-10-04;
-C3 deferred until the tools have been used for real.
-**Sibling plan:** [TASKS_PLAN.md](TASKS_PLAN.md) — todo/tasks are a separate model and ship
-after this plan is complete.
+**Date:** 2026-10-03 · **Status:** SHIPPED on the agent side and archived 2026-10-05 — C1 in prod
+(#139, deploy-2026-10-04-1), C2 migrated 2026-10-04 (#140), C3's app surface merged (#141). The
+client half of C3 is jarvis-app work against [COLLECTIONS_APP_HANDOFF.md](COLLECTIONS_APP_HANDOFF.md);
+the POST entries are verified live together with that client. Kept for the reasoning behind the
+decisions, not as a live plan.
+**Sibling plan:** [TASKS_PLAN.md](TASKS_PLAN.md) — todo/tasks as a separate model; archived as
+not planned.
 **Goal:** replace the markdown lists in memory (reading, shopping, books) with a structured
 store that the agent manages through a skill and the owner browses and ticks off in jarvis-app,
 while keeping new list shapes cheap to add.

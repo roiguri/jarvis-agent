@@ -3,7 +3,8 @@
 **For:** the Android client. **Agent side:** `gateway/apps/collections.py` in
 `roiguri/jarvis-agent` (C3 of [COLLECTIONS_PLAN.md](COLLECTIONS_PLAN.md)). **The samples below are
 real responses** from that module against realistic data, trimmed. If this document and the payload
-disagree, the payload is right.
+disagree, the payload is right. Archived with the plan, but **live for the client work** — it
+describes endpoints that are running.
 
 This supersedes the contract section of the earlier mock-UI prompt: `set_status` became the general
 `update_item`, and `quick_add` takes an optional `section`.

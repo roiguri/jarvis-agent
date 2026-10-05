@@ -1,9 +1,9 @@
 # Tasks — a todo model with due dates, repeats and linked reminders, plus a jarvis-app mini-app
 
-**Date:** 2026-10-03 · **Status:** design settled in a grilling session (decisions below);
-slices not started. **Starts after [COLLECTIONS_PLAN.md](COLLECTIONS_PLAN.md) is complete.**
-**Depends on:** [TRIGGERS_PLAN.md](TRIGGERS_PLAN.md) S1 (the trigger store) being in `main`
-before T2.
+**Date:** 2026-10-03 · **Status:** NOT PLANNED — archived 2026-10-05 without any slice started.
+The design was settled in a grilling session (decisions below) and is kept in case todos come back;
+it assumed [COLLECTIONS_PLAN.md](COLLECTIONS_PLAN.md) first and
+[TRIGGERS_PLAN.md](../TRIGGERS_PLAN.md) S1 before T2.
 **Goal:** give the owner a real todo list — one pool of tasks with due dates, priorities, tags
 and repeats, reminders that know their task, a daily-digest-ready view, and an app screen to
 tick things off.
