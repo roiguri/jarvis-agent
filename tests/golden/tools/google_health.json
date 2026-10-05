@@ -1,24 +1,6 @@
 [
   {
     "destructive": false,
-    "name": "check_biometrics",
-    "schema": {
-      "description": "Roi's daily resting heart rate and heart-rate variability (HRV) from the\n    Pixel Watch for the last `days` day(s); days=1 = today. Use for resting\n    heart rate or HRV / recovery questions.",
-      "name": "check_biometrics",
-      "parameters": {
-        "properties": {
-          "days": {
-            "default": 1,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      }
-    },
-    "scopes": null
-  },
-  {
-    "destructive": false,
     "name": "check_sleep",
     "schema": {
       "description": "Roi's Pixel Watch sleep for the last `nights` night(s); nights=1 = last\n    night. Reports bedtime, wake time, total asleep, sleep efficiency and the\n    stage breakdown. The Google Health API does NOT expose Fitbit's 0-100\n    sleep score — sleep efficiency (asleep / in-bed) is the closest proxy.",
@@ -50,6 +32,28 @@
           "until_date": {
             "default": "",
             "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "health_status",
+    "schema": {
+      "description": "Roi's Pixel Watch daily health snapshot. Use for \"how am I doing\",\n    steps / activity on a day (\"yesterday's steps\"), resting heart rate, HRV,\n    recovery, or a week's trend.\n\n    Args:\n        day: YYYY-MM-DD, the owner-local day to report (or the last day of\n            the range); \"\" = today, which is partial.\n        days: 1 = that one day in full; 2-14 = one compact row per day ending\n            on `day`.\n\n    One day reports activity (steps, active zone minutes, calories burned,\n    sedentary time), recovery (sleep that ended that morning; resting HR and\n    HRV against the previous 7 days' average) and overnight vitals (SpO2,\n    breathing rate). Days without data say so — the watch may not have synced.\n    For sleep stages use check_sleep; for individual sessions check_workouts.",
+      "name": "health_status",
+      "parameters": {
+        "properties": {
+          "day": {
+            "default": "",
+            "type": "string"
+          },
+          "days": {
+            "default": 1,
+            "type": "integer"
           }
         },
         "type": "object"

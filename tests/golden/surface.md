@@ -12,7 +12,7 @@ Always on: 11 tools, ≈2617 tokens — activate_skill, deactivate_skill, delete
 | collections | 16 | ≈4376 | +5 tools, ≈+1759 |
 | fitness | 25 | ≈5966 | +14 tools, ≈+3349 |
 | github | 19 | ≈3333 | +8 tools, ≈+716 |
-| google_health | 14 | ≈2998 | +3 tools, ≈+381 |
+| google_health | 14 | ≈3164 | +3 tools, ≈+547 |
 | media | 11 | ≈2617 | +0 tools, ≈+0 |
 | media/jellyseerr | 14 | ≈2896 | +3 tools, ≈+279 |
 | media/prowlarr | 12 | ≈2714 | +1 tools, ≈+97 |
@@ -31,7 +31,7 @@ Always on: 12 tools, ≈2932 tokens — activate_skill, deactivate_skill, delete
 | collections | 17 | ≈4691 | +5 tools, ≈+1759 |
 | fitness | 26 | ≈6281 | +14 tools, ≈+3349 |
 | github | 20 | ≈3648 | +8 tools, ≈+716 |
-| google_health | 15 | ≈3313 | +3 tools, ≈+381 |
+| google_health | 15 | ≈3479 | +3 tools, ≈+547 |
 | media | 12 | ≈2932 | +0 tools, ≈+0 |
 | media/jellyseerr | 15 | ≈3211 | +3 tools, ≈+279 |
 | media/prowlarr | 13 | ≈3029 | +1 tools, ≈+97 |

@@ -93,7 +93,7 @@ Fixture preamble: kept verbatim above the task blocks.
 - collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps
 - fitness: gym attendance, workout logs, running sessions
 - github: GitHub project management — repos, issues, PRs
-- google_health: Pixel Watch sleep, workouts, resting heart rate & HRV (Google Health API)
+- google_health: Pixel Watch daily health status (steps, activity, recovery, vitals), sleep and workouts (Google Health API)
 - media: TV/movie search, library management, download tracking
 - travel: trips, saved places, per-trip wishlists, and hourly itineraries
 - web: search the web, and read the page at a URL
