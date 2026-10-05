@@ -53,8 +53,12 @@ Each slice ships and is verified on its own. Order is deliberate: collections en
 - [x] Checks: every entry compared field by field against its source file before its delete.
 
 **C3 — Collections app (agent + jarvis-app).**
-- [ ] Agent: `gateway/apps/collections.py` — GET entries (collections, one collection) and
-      POST entries (quick actions, §5); one import line in `gateway/apps/specs.py`.
+- [x] Agent: `gateway/apps/collections.py` — GET `home` / `collection`; POST `update_item`,
+      `quick_add`, `delete_item`; one import line in `gateway/apps/specs.py`. Contract and samples
+      in [COLLECTIONS_APP_HANDOFF.md](COLLECTIONS_APP_HANDOFF.md). Writes go through the same
+      functions as the item tools. Changed from §5 in review: one general `update_item` (a
+      JSON `changes` string — app params are flat strings) instead of a status-only entry, so
+      in-app editing later needs no agent change; `quick_add` takes an optional `section`.
 - [ ] jarvis-app client: `AppQueryClient.post()` — the first app write path (the hub already
       relays `POST /v1/apps/{ns}/q/{entry_id}`).
 - [ ] jarvis-app: collections home + one generic schema-driven collection screen + detail sheet.

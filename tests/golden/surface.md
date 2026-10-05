@@ -9,7 +9,7 @@ Always on: 11 tools, ≈2617 tokens — activate_skill, deactivate_skill, delete
 
 | Active skill | Tools | Tokens | Added |
 |---|---|---|---|
-| collections | 16 | ≈4351 | +5 tools, ≈+1734 |
+| collections | 16 | ≈4376 | +5 tools, ≈+1759 |
 | fitness | 25 | ≈5966 | +14 tools, ≈+3349 |
 | github | 19 | ≈3333 | +8 tools, ≈+716 |
 | google_health | 14 | ≈2998 | +3 tools, ≈+381 |
@@ -28,7 +28,7 @@ Always on: 12 tools, ≈2932 tokens — activate_skill, deactivate_skill, delete
 
 | Active skill | Tools | Tokens | Added |
 |---|---|---|---|
-| collections | 17 | ≈4666 | +5 tools, ≈+1734 |
+| collections | 17 | ≈4691 | +5 tools, ≈+1759 |
 | fitness | 26 | ≈6281 | +14 tools, ≈+3349 |
 | github | 20 | ≈3648 | +8 tools, ≈+716 |
 | google_health | 15 | ≈3313 | +3 tools, ≈+381 |

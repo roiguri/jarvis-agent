@@ -6,6 +6,7 @@ collections database and run in file order.
 """
 
 import asyncio
+import json
 import re
 
 import pytest
@@ -291,6 +292,18 @@ def test_schema_edit_statuses(confirm):
           missing="## ")
 
 
+def test_confirmed_edit_applies_to_items_added_while_pending(confirm):
+    call(manage_collection, action="create", name="ideas", status=True, items=[{"title": "A"}])
+    check("the prompt counts what exists now",
+          call(manage_collection, action="edit_schema", name="ideas", status=False),
+          contains="1 item(s) lose their status")
+    call(add_items, collection="ideas", items=[{"title": "B"}])
+    check("the tap re-plans against the rows as they are then", confirm.tap(),
+          contains="2 item(s) lose their status")
+    check("neither item keeps a status", call(list_items, collection="ideas"),
+          contains=["A", "B"], missing="[open]")
+
+
 # ---------------------------------------------------------------------------
 # Archive and delete
 # ---------------------------------------------------------------------------
@@ -313,3 +326,86 @@ def test_archive_and_delete(confirm):
     check("an unknown name lists the real ones",
           call(list_items, collection="packing"), contains=["No collection 'packing'", "reading"])
 
+
+# ---------------------------------------------------------------------------
+# The collections app (gateway/apps/collections.py)
+# ---------------------------------------------------------------------------
+
+
+def app(entry: str, **params):
+    from gateway.apps import dispatch
+
+    return asyncio.run(dispatch("collections", entry, {k: str(v) for k, v in params.items()}))
+
+
+def cid_of(name: str) -> int:
+    return next(c["collection_id"] for c in app("home")["collections"] if c["name"] == name)
+
+
+def test_app_reads():
+    home = {c["name"]: c for c in app("home")["collections"]}
+    assert set(home) >= {"reading", "shopping", "gifts", "chores", "ideas"}
+    assert home["reading"]["has_status"] and home["reading"]["open_count"] == 3
+    assert home["ideas"]["has_status"] is False and home["ideas"]["open_count"] is None
+    assert home["reading"]["updated_at"].endswith("Z")
+
+    data = app("collection", collection_id=home["shopping"]["collection_id"])
+    assert data["collection"]["schema"]["status"]["closed"] == ["bought"]
+    (desk,) = data["items"]
+    assert desk["status"] == "bought" and desk["closed"] is True
+    assert desk["fields"]["price"] == 3400 and desk["section"] == "office"
+
+    reading = app("collection", collection_id=home["reading"]["collection_id"])["items"]
+    graph = next(i for i in reading if i["title"] == "Knowledge graphs")
+    assert graph["fields"]["url"] == "https://x.com/i/status/1"
+    assert reading[-1]["section"] is None, "unsectioned items sort last"
+    assert app("collection", collection_id=home["ideas"]["collection_id"])["items"][0]["closed"] is None
+
+
+def test_app_writes():
+    from gateway.apps import AppInvalidRequest, AppNotFound
+
+    rid = cid_of("reading")
+    added = app("quick_add", collection_id=rid, title="  Quick one ", section="AI")["item"]
+    assert added["title"] == "Quick one" and added["status"] == "unread"
+    assert added["section"] == "AI" and added["fields"] == {}
+    plain = app("quick_add", collection_id=rid, title="No section")["item"]
+    assert plain["section"] is None
+
+    item_id = added["item_id"]
+    done = app("update_item", item_id=item_id, changes=json.dumps({"status": "read"}))["item"]
+    assert done["status"] == "read" and done["closed"] is True
+    check("the app's write is the tools' write", call(list_items, item_id=item_id),
+          contains="[read] Quick one")
+    edited = app("update_item", item_id=item_id, changes=json.dumps(
+        {"notes": "worth it", "fields": {"url": "https://example.com/q", "topics": "AI, Tools"}}))["item"]
+    assert edited["notes"] == "worth it"
+    assert edited["fields"] == {"url": "https://example.com/q", "topics": ["ai", "tools"]}
+    cleared = app("update_item", item_id=item_id, changes=json.dumps({"fields": {"topics": ""}}))["item"]
+    assert "topics" not in cleared["fields"]
+
+    assert app("delete_item", item_id=plain["item_id"]) == {"deleted": plain["item_id"]}
+
+    for entry, params, err in [
+        ("update_item", {"item_id": plain["item_id"], "changes": '{"status": "read"}'}, AppNotFound),
+        ("update_item", {"item_id": item_id, "changes": '{"status": "nonsense"}'}, AppInvalidRequest),
+        ("update_item", {"item_id": item_id, "changes": '{"fields": {"url": "nope"}}'}, AppInvalidRequest),
+        ("update_item", {"item_id": item_id, "changes": '{"colour": "red"}'}, AppInvalidRequest),
+        ("update_item", {"item_id": item_id, "changes": '{"status": 3}'}, AppInvalidRequest),
+        ("update_item", {"item_id": item_id, "changes": "not json"}, AppInvalidRequest),
+        ("update_item", {"item_id": item_id, "changes": "{}"}, AppInvalidRequest),
+        ("collection", {"collection_id": 99999}, AppNotFound),
+        ("collection", {"collection_id": "x"}, AppInvalidRequest),
+        ("quick_add", {"collection_id": rid, "title": " "}, AppInvalidRequest),
+        ("quick_add", {"collection_id": cid_of("ideas"), "title": "T", "section": "S"}, AppInvalidRequest),
+        ("quick_add", {"collection_id": 99999, "title": "T"}, AppNotFound),
+        ("home", {"extra": 1}, AppInvalidRequest),
+    ]:
+        with pytest.raises(err):
+            app(entry, **params)
+
+    gid = cid_of("gifts")
+    call(manage_collection, action="archive", name="gifts")
+    with pytest.raises(AppInvalidRequest, match="archived"):
+        app("quick_add", collection_id=gid, title="Socks")
+    assert next(c for c in app("home")["collections"] if c["name"] == "gifts")["archived"]
