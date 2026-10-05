@@ -1,7 +1,7 @@
-"""Google Health API tools — Roi's Pixel Watch sleep, workouts, biometrics.
+"""Google Health API tools — Roi's Pixel Watch sleep, workouts, daily status.
 
 Read-only. Endpoints, dataType IDs, filter syntax and response shapes were all
-verified against live Pixel Watch 2 data. Setup: tools/google_health/SETUP.md.
+verified against live Pixel Watch data. Setup: tools/google_health/SETUP.md.
 
 Verified rules (Google Health API v4):
 * Resource:  ``users/me/dataTypes/{kebab-data-type}/dataPoints``  (GET list).
@@ -11,15 +11,20 @@ Verified rules (Google Health API v4):
   — start_time is NOT a supported filter member for sleep.
 * Exercise is a session filtered by ``exercise.interval.civil_start_time``
   (ISO ``YYYY-MM-DD`` local civil date).
-* Resting HR / HRV are daily-summary types filtered by ``<snake>.date``
-  (ISO ``YYYY-MM-DD``).
+* Daily-summary types (resting HR, HRV, SpO2, breathing rate) are filtered
+  by ``<snake>.date`` (ISO ``YYYY-MM-DD``); ``>=`` and ``<`` combine with AND.
+* Activity totals (steps, AZM, calories, sedentary time) come from
+  ``dataPoints:dailyRollUp`` over a civil-date range; days without data are
+  omitted, not zero. ``total-calories`` rollups cap the range at 14 days.
 
 Auth (Bearer token + refresh) lives in ``tools.google_health._auth``.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -48,12 +53,16 @@ def _raise_for_auth(resp: requests.Response) -> None:
         )
 
 
-def _list(data_type: str, filter_expr: str, page_size: int = 50) -> list[dict]:
-    """GET users/me/dataTypes/{data_type}/dataPoints?filter=… → dataPoints[]."""
+def _list(data_type: str, filter_expr: str = "", page_size: int = 50) -> list[dict]:
+    """GET users/me/dataTypes/{data_type}/dataPoints?filter=… → dataPoints[],
+    newest first."""
+    params = {"pageSize": page_size}
+    if filter_expr:
+        params["filter"] = filter_expr
     resp = requests.get(
         f"{BASE}/{USER}/dataTypes/{data_type}/dataPoints",
         headers=_auth_header(),
-        params={"filter": filter_expr, "pageSize": page_size},
+        params=params,
         timeout=15,
     )
     _raise_for_auth(resp)
@@ -278,41 +287,280 @@ def check_workouts(since_date: str = "", until_date: str = "") -> str:
     return f"Workouts {range_desc}{_zone_note()}:\n\n" + "\n\n".join(_format_workout(p) for p in points)
 
 
-def _daily(data_type: str, filter_member: str, days: int) -> list[dict]:
-    civil = _since_local(days).strftime("%Y-%m-%d")
-    return _list(data_type, f'{filter_member}.date >= "{civil}"')
+_STATUS_MAX_DAYS = 14  # the API caps total-calories rollups at 14 days
+_BASELINE_DAYS = 7
+
+
+def _iso(d: dict) -> str:
+    return f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}"
+
+
+def _civil(d: date) -> dict:
+    return {"date": {"year": d.year, "month": d.month, "day": d.day}}
+
+
+def _rollup(data_type: str, start: date, end: date) -> dict[str, dict]:
+    """Daily totals for [start, end), keyed by civil date. Days without data
+    are absent, never zero."""
+    resp = requests.post(
+        f"{BASE}/{USER}/dataTypes/{data_type}/dataPoints:dailyRollUp",
+        headers=_auth_header(),
+        json={"range": {"start": _civil(start), "end": _civil(end)}, "windowSizeDays": 1},
+        timeout=15,
+    )
+    _raise_for_auth(resp)
+    resp.raise_for_status()
+    out = {}
+    for p in resp.json().get("rollupDataPoints", []) or []:
+        value = next((v for k, v in p.items() if not k.startswith("civil")), None)
+        if value is not None:
+            out[_iso(p["civilStartTime"]["date"])] = value
+    return out
+
+
+def _daily_range(data_type: str, field: str, start: date, end: date) -> dict[str, dict]:
+    """A once-a-day summary type for [start, end), keyed by its date."""
+    member = re.sub(r"(?<!^)(?=[A-Z])", "_", field).lower()
+    points = _list(
+        data_type, f'{member}.date >= "{start}" AND {member}.date < "{end}"'
+    )
+    return {_iso(p[field]["date"]): p[field] for p in points if p.get(field)}
+
+
+def _sleep_minutes(s: dict) -> tuple[int, int]:
+    """(in bed, asleep) minutes for one sleep session."""
+    summary = s.get("summary") or {}
+    if summary:
+        return int(summary.get("minutesInSleepPeriod") or 0), int(summary.get("minutesAsleep") or 0)
+    iv = s.get("interval", {})
+    in_bed = int((_local(iv["endTime"]) - _local(iv["startTime"])).total_seconds() // 60)
+    asleep = sum(
+        int((_local(st["endTime"]) - _local(st["startTime"])).total_seconds() // 60)
+        for st in s.get("stages", [])
+        if st.get("type") != "AWAKE" and st.get("startTime") and st.get("endTime")
+    )
+    return in_bed, asleep or in_bed
+
+
+def _sleep_by_wake_day(start: date, end: date) -> dict[str, tuple[int, int]]:
+    """The main sleep (longest) of each night, keyed by the day it ended on."""
+    def utc(d: date) -> str:
+        midnight = datetime(d.year, d.month, d.day, tzinfo=owner_tz())
+        return midnight.astimezone(_UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    out: dict[str, tuple[int, int]] = {}
+    for p in _list(
+        "sleep",
+        f'sleep.interval.end_time >= "{utc(start)}" AND sleep.interval.end_time < "{utc(end)}"',
+    ):
+        s = p.get("sleep", {})
+        iv = s.get("interval", {})
+        if not iv.get("startTime") or not iv.get("endTime"):
+            continue
+        day = _local(iv["endTime"]).date().isoformat()
+        mins = _sleep_minutes(s)
+        if mins[1] > out.get(day, (0, 0))[1]:
+            out[day] = mins
+    return out
+
+
+def _last_sync() -> datetime | None:
+    """When the newest heart-rate sample was taken — a proxy for the watch's
+    last sync (the pairedDevices endpoint needs a scope we don't hold)."""
+    points = _list("heart-rate", page_size=1)
+    if not points:
+        return None
+    return _local(points[0]["heartRate"]["sampleTime"]["physicalTime"])
+
+
+def _num(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _avg(values) -> float | None:
+    vals = [v for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _baseline(series: dict[str, float], day: str) -> float | None:
+    """Mean of the `_BASELINE_DAYS` days before `day` that have a value."""
+    d = date.fromisoformat(day)
+    return _avg(series.get((d - timedelta(days=i)).isoformat()) for i in range(1, _BASELINE_DAYS + 1))
+
+
+def _azm(v: dict | None) -> tuple[int, str] | None:
+    if not v:
+        return None
+    parts = [
+        (label, int(v.get(key) or 0))
+        for key, label in (("sumInFatBurnHeartZone", "fat-burn"),
+                           ("sumInCardioHeartZone", "cardio"),
+                           ("sumInPeakHeartZone", "peak"))
+    ]
+    total = sum(m for _, m in parts)
+    detail = ", ".join(f"{label} {m}" for label, m in parts if m)
+    return total, detail
+
+
+def _fetch_status(start: date, end: date) -> dict:
+    """Every series the status needs, fetched in parallel. A series whose
+    request fails comes back as None so the rest still report; an auth
+    failure raises. Keep it to 10 requests: past that the API holds the extra
+    ones back for ~5s."""
+    base_start = start - timedelta(days=_BASELINE_DAYS)
+    jobs = {
+        "steps": lambda: _rollup("steps", start, end),
+        "azm": lambda: _rollup("active-zone-minutes", start, end),
+        "kcal": lambda: _rollup("total-calories", start, end),
+        "sedentary": lambda: _rollup("sedentary-period", start, end),
+        "sleep": lambda: _sleep_by_wake_day(start, end),
+        "rhr": lambda: _daily_range("daily-resting-heart-rate", "dailyRestingHeartRate", base_start, end),
+        "hrv": lambda: _daily_range("daily-heart-rate-variability", "dailyHeartRateVariability", base_start, end),
+        "spo2": lambda: _daily_range("daily-oxygen-saturation", "dailyOxygenSaturation", start, end),
+        "breathing": lambda: _daily_range("daily-respiratory-rate", "dailyRespiratoryRate", base_start, end),
+        "sync": _last_sync,
+    }
+    get_access_token()  # refresh once up front, not racing in every worker
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {name: pool.submit(fn) for name, fn in jobs.items()}
+    out = {}
+    for name, fut in futures.items():
+        try:
+            out[name] = fut.result()
+        except requests.RequestException:
+            out[name] = None
+    return out
+
+
+def _series(data: dict | None, key: str) -> dict[str, float]:
+    return {d: _num(v.get(key)) for d, v in (data or {}).items()}
+
+
+def _vs(value: float | None, base: float | None, fmt: str) -> str:
+    if value is None:
+        return "—"
+    shown = fmt.format(value)
+    return f"{shown} (7d {fmt.format(base)})" if base is not None else shown
+
+
+def _format_day(day: str, data: dict, partial: bool) -> list[str]:
+    steps = (data["steps"] or {}).get(day)
+    azm = _azm((data["azm"] or {}).get(day))
+    kcal = (data["kcal"] or {}).get(day)
+    sed = (data["sedentary"] or {}).get(day)
+
+    activity = []
+    if steps:
+        activity.append(f"{int(_num(steps['countSum']) or 0):,} steps")
+    if azm:
+        activity.append(f"AZM {azm[0]}" + (f" ({azm[1]})" if azm[1] else ""))
+    if kcal:
+        activity.append(f"{round(_num(kcal['kcalSum']) or 0):,} kcal")
+    if sed:
+        activity.append(f"sedentary {_hm(timedelta(seconds=_secs(sed.get('durationSum'))))}")
+
+    rhr = _series(data["rhr"], "beatsPerMinute")
+    hrv = _series(data["hrv"], "averageHeartRateVariabilityMilliseconds")
+    sleep = (data["sleep"] or {}).get(day)
+    recovery = []
+    if sleep:
+        in_bed, asleep = sleep
+        eff = f", eff {round(100 * asleep / in_bed)}%" if in_bed else ""
+        recovery.append(f"sleep {_hm(timedelta(minutes=asleep))}{eff}")
+    recovery.append("RHR " + _vs(rhr.get(day), _baseline(rhr, day), "{:.0f}"))
+    recovery.append("HRV " + _vs(hrv.get(day), _baseline(hrv, day), "{:.0f} ms"))
+
+    breathing = _series(data["breathing"], "breathsPerMinute")
+    spo2 = (data["spo2"] or {}).get(day)
+    overnight = []
+    if spo2 and spo2.get("averagePercentage") is not None:
+        lo, hi = spo2.get("lowerBoundPercentage"), spo2.get("upperBoundPercentage")
+        rng = f" ({lo:g}–{hi:g})" if lo is not None and hi is not None else ""
+        overnight.append(f"SpO2 {spo2['averagePercentage']:g}%{rng}")
+    if breathing.get(day) is not None:
+        overnight.append("breathing " + _vs(breathing[day], _baseline(breathing, day), "{:.1f}/min"))
+
+    lines = [
+        "Activity" + (" (so far)" if partial else "") + ": "
+        + (" · ".join(activity) or "no data"),
+        "Recovery: " + " · ".join(recovery),
+    ]
+    if overnight:
+        lines.append("Overnight: " + " · ".join(overnight))
+    return lines
+
+
+def _format_row(day: str, data: dict) -> str:
+    steps = (data["steps"] or {}).get(day)
+    azm = _azm((data["azm"] or {}).get(day))
+    sleep = (data["sleep"] or {}).get(day)
+    rhr = _series(data["rhr"], "beatsPerMinute").get(day)
+    hrv = _series(data["hrv"], "averageHeartRateVariabilityMilliseconds").get(day)
+    cells = [
+        f"{int(_num(steps['countSum']) or 0):,} steps" if steps else "— steps",
+        f"AZM {azm[0]}" if azm else "AZM —",
+        f"sleep {_hm(timedelta(minutes=sleep[1]))}" if sleep else "sleep —",
+        f"RHR {rhr:.0f}" if rhr is not None else "RHR —",
+        f"HRV {hrv:.0f} ms" if hrv is not None else "HRV —",
+    ]
+    return f"{date.fromisoformat(day):%a %m-%d}: " + " · ".join(cells)
 
 
 @tool_register(namespace="google_health")
 @tool
-def check_biometrics(days: int = 1) -> str:
-    """Roi's daily resting heart rate and heart-rate variability (HRV) from the
-    Pixel Watch for the last `days` day(s); days=1 = today. Use for resting
-    heart rate or HRV / recovery questions."""
+def health_status(day: str = "", days: int = 1) -> str:
+    """Roi's Pixel Watch daily health snapshot. Use for "how am I doing",
+    steps / activity on a day ("yesterday's steps"), resting heart rate, HRV,
+    recovery, or a week's trend.
+
+    Args:
+        day: YYYY-MM-DD, the owner-local day to report (or the last day of
+            the range); "" = today, which is partial.
+        days: 1 = that one day in full; 2-14 = one compact row per day ending
+            on `day`.
+
+    One day reports activity (steps, active zone minutes, calories burned,
+    sedentary time), recovery (sleep that ended that morning; resting HR and
+    HRV against the previous 7 days' average) and overnight vitals (SpO2,
+    breathing rate). Days without data say so — the watch may not have synced.
+    For sleep stages use check_sleep; for individual sessions check_workouts."""
+    today = datetime.now(owner_tz()).date()
+    if day:
+        try:
+            last = date.fromisoformat(day)
+        except ValueError:
+            return "day must be YYYY-MM-DD."
+    else:
+        last = today
+    if last > today:
+        return "day can't be in the future."
+    days = max(1, min(int(days), _STATUS_MAX_DAYS))
+    first = last - timedelta(days=days - 1)
+
     try:
-        rhr = _daily("daily-resting-heart-rate", "daily_resting_heart_rate", days)
-        hrv = _daily("daily-heart-rate-variability", "daily_heart_rate_variability", days)
+        data = _fetch_status(first, last + timedelta(days=1))
     except GoogleHealthNotConfigured as e:
         return str(e)
-    except requests.RequestException as e:
-        return f"Google Health biometrics request failed: {e}"
 
-    def _d(o: dict) -> str:
-        d = o.get("date", {})
-        return f"{d.get('year'):04d}-{d.get('month'):02d}-{d.get('day'):02d}"
+    sync = data["sync"]
+    sync_note = f" · watch last synced {sync:%Y-%m-%d %H:%M}" if sync and last >= today - timedelta(days=1) else ""
+    failed = [k for k in ("steps", "azm", "sleep", "rhr", "hrv") if data[k] is None]
+    fail_note = f"\n(Request failed for: {', '.join(failed)}.)" if failed else ""
 
-    rhr_l = [
-        f"{_d(p['dailyRestingHeartRate'])}: {p['dailyRestingHeartRate'].get('beatsPerMinute')} bpm"
-        for p in rhr if p.get("dailyRestingHeartRate")
-    ]
-    hrv_l = [
-        f"{_d(p['dailyHeartRateVariability'])}: "
-        f"{p['dailyHeartRateVariability'].get('averageHeartRateVariabilityMilliseconds')} ms"
-        for p in hrv if p.get("dailyHeartRateVariability")
-    ]
-    if not rhr_l and not hrv_l:
-        return "No biometric data for that period — the watch may not have synced yet."
-    return (
-        "Resting heart rate:\n" + ("\n".join(rhr_l) or "  (none)")
-        + "\n\nHRV (nightly avg):\n" + ("\n".join(hrv_l) or "  (none)")
-    )
+    if days == 1:
+        header = f"Health — {last:%a %Y-%m-%d}{sync_note}{_zone_note()}"
+        return "\n".join([header, *_format_day(last.isoformat(), data, partial=last == today)]) + fail_note
+
+    header = f"Health — {first:%Y-%m-%d} to {last:%Y-%m-%d}{sync_note}{_zone_note()}"
+    span = [(first + timedelta(days=i)).isoformat() for i in range(days)]
+    lines = [header, *(_format_row(d, data) for d in span)]
+    # Today's partial count would drag the average down.
+    full_days = span[:-1] if last == today else span
+    steps = _series(data["steps"], "countSum")
+    avg = _avg(steps.get(d) for d in full_days)
+    if avg is not None:
+        lines.append(f"Avg steps: {avg:,.0f}" + (" (today excluded)" if last == today else ""))
+    return "\n".join(lines) + fail_note

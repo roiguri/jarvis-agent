@@ -75,9 +75,9 @@ Quick terminal sanity-check before relying on it (uses the production auth path)
 /app/jarvis_code/venv/bin/python3 - <<'PY'
 from dotenv import load_dotenv; load_dotenv("/app/secrets/.env")
 import sys; sys.path.insert(0, "/app/jarvis_code")
-from tools.google_health.google_health_tools import check_workouts, check_biometrics
+from tools.google_health.google_health_tools import check_workouts, health_status
 print(check_workouts.invoke({"since_date": "2026-01-01"}))
-print(check_biometrics.invoke({"days": 7}))
+print(health_status.invoke({"days": 7}))
 PY
 ```
 
