@@ -163,7 +163,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 | `owner` | The one owner conversation — all channels stamp it (50-message window) |
 | `heartbeat` | Scheduled background checks and scheduled wakes (separate window) |
 
-Both threads write to the same `chat_history.jsonl` (tagged by `thread_id`). Cross-thread awareness flows through two paths: today's chat/notification slices are injected directly into each scope's system prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
+Only user-scope turns write to `chat_history.jsonl` (tagged by `thread_id`); heartbeat and wake turns are not logged there. Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
 
 ---
 
