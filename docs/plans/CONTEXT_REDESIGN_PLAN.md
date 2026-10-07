@@ -20,21 +20,27 @@ skeletons, and are not repeated here.
 
 ## Slices
 
-Each slice ships and is verified on its own, with a before/after reading from prod (§9). Design
+**Branch flow (owner, 2026-10-07):** each slice is a PR against `feat/context-redesign`, which
+merges to `main` only when all slices are done. The one exception is S0: it is measurement only, so
+it goes to `main` early and gives real prod baselines; `main` is then merged back into the redesign
+branch. Later slices are verified on staging and with dry runs, and read in prod after the final
+merge.
+
+Each slice ships and is verified on its own, with a before/after reading (§9). Design
 detail is in §3–§8. Order: cheap wins first, then the store everything else depends on, then the
 largest remaining cost (the heartbeat), then the two pieces that change behaviour most
 (compaction, consolidation). Nothing discards or rewrites context until every turn is durably
 recorded (S2).
 
 **S0 — Instrument.**
-- [ ] Per-call telemetry rows (E7): input, cache-read, output per LLM call, with call index.
-- [ ] Per call: bound tool names and schema size. Per tick: the due-task set.
-- [ ] `record_llm_call` records calls made outside a turn (compaction, consolidator), tagged by job.
+- [ ] Per-call telemetry (E7), carried inside the existing `turns.jsonl` row as a `calls` list (no
+      new log file): input, cache-read, output, reasoning, and the call's composition in chars
+      (system prompt, tool schemas, history from earlier turns, this turn's messages so far).
+- [ ] Per turn: the bound tool names. Per tick: the due-task set.
+- [ ] A `job` telemetry context so LLM calls outside a turn (compaction, consolidator) are recorded
+      in the same row shape, tagged by job.
 - [ ] Staging measurements: Gemini `countTokens` on the bound declarations; cached-token share
       before and after a forced tool-set change; cached-input price for the Flash model in use.
-- [ ] Dry-run entry points (CLI) for a tick, a compaction and a consolidator run, against a scratch
-      copy of a prod backup with side-effecting tools stubbed. Staging data is too thin to exercise
-      S4–S6 otherwise.
 - [ ] Before-reading recorded in §9.
 
 **S1 — Quick wins.** No new subsystems.
@@ -80,7 +86,10 @@ reversible (R5):
 - [ ] Verify: an over-cap write is refused and the model recovers in the same turn.
 
 **S4 — Stateless heartbeat** (§6).
-- [ ] First: a small set of heartbeat evals (TESTING_AND_EVALS_PLAN T4) replaying recorded ticks,
+- [ ] Dry-run entry points (CLI) for a tick, and later a compaction and a consolidator run, against a
+      scratch copy of a prod backup with side-effecting tools stubbed (moved from S0: S4 is the
+      first slice that can use them).
+- [ ] A small set of heartbeat evals (TESTING_AND_EVALS_PLAN T4) replaying recorded ticks,
       so behaviour before and after can be compared.
 - [ ] A second graph compiled without a checkpointer for ticks and wakes; the ack and failure notes
       returned in `TurnOutcome` instead of read back from a checkpoint.
@@ -341,6 +350,9 @@ tool changes) are noted beside each reading.
   suggest 90–180 days for disk and privacy (metadata and calls kept forever). Revisit with the S2
   size readings.
 - Which embedding model, and whether it runs via the API or locally (S7).
+- Telemetry storage: stays separate from the episode store (owner, 2026-10-07: production content
+  and telemetry don't share a database). Whether telemetry itself moves from JSONL to its own
+  SQLite is not decided here.
 - Event-conditioned "standing intents" in the triggers system.
 - Cleanup of stale checkpoints in `threads.sqlite` (#12).
 - Re-check Devin's launch around 2026-10-20 for the first user failure reports (DEVIN_MEMORY.md).
