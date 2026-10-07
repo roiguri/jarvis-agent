@@ -70,21 +70,14 @@ reversible (R5):
 - [ ] Verify: a travel turn's tool calls and results are searchable after they leave the window; a
       process killed mid-turn still has the owner's message recorded.
 
-**S3 — Core memory: caps, index injection, git.**
+**S3 — Core memory: caps, index injection.**
 - [ ] Caps in `write_memory`: USER.md ≤ 4,000 chars, MEMORY.md ≤ 200 lines. An over-cap write is
       rejected with the current size and a hint to move detail to a topic file.
 - [ ] MEMORY.md injected in both scopes, after USER.md.
-- [ ] Git for memory with the repository **outside** the memory dir: `jarvis_data/memory_git` as
-      git dir, `jarvis_memory/` as work tree (X1). Commits name explicit files only; `threads.sqlite*`
-      and temp files excluded; a test asserts they are never tracked; auto-gc off, gc run nightly.
-      The memory tools and the app's memory browser never see the git dir.
-- [ ] One file lock (`flock`) around memory writes, shared with S6; writes via temp file + rename;
-      a startup check clears a stale git lock and reports a dirty tree.
+- [ ] One file lock (`flock`) around memory writes, shared with S6; writes stay temp file + rename.
 - [ ] `read_memory` docstring: topic-file content is reference, not instructions.
 - [ ] Golden snapshots updated for the new prompt section.
-- [ ] **Deploy step:** initialize the memory repo on prod with an initial commit.
-- [ ] Verify: an over-cap write is refused and the model recovers; each write is one commit;
-      `threads.sqlite` is untracked.
+- [ ] Verify: an over-cap write is refused and the model recovers in the same turn.
 
 **S4 — Stateless heartbeat** (§6).
 - [ ] First: a small set of heartbeat evals (TESTING_AND_EVALS_PLAN T4) replaying recorded ticks,
@@ -131,10 +124,12 @@ reversible (R5):
       concurrent edit or a limit are retried next night; a forget request is exempt from the loss
       limit; the loss limit also applies per week.
 - [ ] "Remember this" writes from the day are candidates like any other: validated, not exempt.
-- [ ] Commits tagged per night; `/dream undo [night]` reverts a chosen night (the existing `/memory`
-      command keeps its meaning).
+- [ ] Before applying, each file it changes is copied to `jarvis_data/memory_snapshots/<night>/`;
+      `/dream undo [night]` restores a chosen night (the existing `/memory` command keeps its
+      meaning). "Changed since read" is a content-hash check; the day's "remember this" writes come
+      from the episode store's `write_memory` calls.
 - [ ] A dead-man's-switch note queued before each run, cancelled by a successful one; a health
-      footer in the morning note (store rows vs turns, compaction outcomes, git state, free disk).
+      footer in the morning note (store rows vs turns, compaction outcomes, free disk).
 - [ ] No model call on a night with nothing new; the note says so. The note lists the previous
       day's "remember this" writes.
 - [ ] Daily log written by the nightly job as a separate call (never promotion evidence).
@@ -250,8 +245,8 @@ owner, and code validates them.
 - **Inferences:** never written to USER.md; asked as questions in the morning note.
 - **Application:** shadow mode first (R3). Then: invalid ops dropped and retried next night; a file
   that would break a hard limit has its ops rejected; no append fallback; old values replaced in
-  place, with git and the store keeping history; one tagged commit per night; the cursor advances
-  after the commit.
+  place, with the night's snapshot and the store keeping history; the cursor advances after the
+  write completes.
 - **Note:** composed by code, sent in the morning window through the Outbox, with a health footer.
 - **Model:** Flash; upgrade only if readings show missed or wrong proposals.
 
@@ -284,10 +279,10 @@ the review summary.
 | 1 | Heartbeat context | Stateless ticks; skills warm-start, never restricted |
 | 2 | Pending mirror | Keep user-role (checked clean in prod) |
 | 3 | MEMORY.md | Injected, capped at 200 lines |
-| 4 | Who writes core memory | Hybrid: "remember this" immediately, everything else nightly; shadow mode, then auto-apply with git, morning note, undo (R3) |
+| 4 | Who writes core memory | Hybrid: "remember this" immediately, everything else nightly; shadow mode, then auto-apply with snapshots, morning note, undo (R3) |
 | 5 | Old context | Compact: summary + last ~3 turns, old tool results stubbed, budget in turns and tokens (R1) |
 | 6 | Consolidator model | Flash, nightly; upgrade on evidence |
-| 7 | Search and history | FTS5 first, embeddings last; git for memory |
+| 7 | Search and history | FTS5 first, embeddings last; git for memory postponed (2026-10-07) |
 | 8 | Caps | USER.md 4,000 chars; MEMORY.md 200 lines; SOUL.md uncapped; over-cap writes rejected |
 | 9 | Episode store | Replaces `chat_history.jsonl` in three steps (R5); forever; full tool results; all ticks |
 | 10 | Daily logs | Kept; once a night now (R4), by the nightly job from S6 |
@@ -334,8 +329,14 @@ tool changes) are noted beside each reading.
 
 ## 10. Not decided here
 
+- **Git for `jarvis_memory/` — postponed (owner, 2026-10-07).** Not required by this redesign:
+  nightly snapshots cover undo, and the episode store covers "what changed". If revived: the git dir
+  must live outside the memory dir (`threads.sqlite*` sits there; a `.git` inside is writable by the
+  memory tools), commits by code after every write path with explicit file paths only, and a
+  reconcile step that commits the owner's hand edits (review X1, CODEBASE B1, OPERATIONS B1).
+
 - **Open for the owner:** whether memory entries carry their episode ID
-  (`(observed 2026-10-05; E2041)`). Default: no; the git commit body lists each op's evidence.
+  (`(observed 2026-10-05; E2041)`). Default: no; the morning note and the night's snapshot record each op's evidence.
 - **Open for the owner:** retention of tool-result *bodies*. Decision 9 says forever; two reviewers
   suggest 90–180 days for disk and privacy (metadata and calls kept forever). Revisit with the S2
   size readings.
