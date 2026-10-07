@@ -1,6 +1,7 @@
 # Context Redesign — Plan
 
-**Date:** 2026-10-07 · **Status:** decisions made, reviewed; no slice started.
+**Date:** 2026-10-07 · **Status:** decisions made, reviewed, S0 spec approved; implementation
+starts once #135 and #129 are closed (see "Timing" below).
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -26,29 +27,52 @@ it goes to `main` early and gives real prod baselines; `main` is then merged bac
 branch. Later slices are verified on staging and with dry runs, and read in prod after the final
 merge.
 
+**Timing (owner, 2026-10-07):** S0 implementation starts after #135 (triggers validation, ~10-10)
+and #129 (turn-budget readings, ~10-17) are closed. #129 reads `/usage` and `turns.jsonl` over a
+14-day window, and S0 replaces that instrument, so S0 must not reach prod inside that window. The
+R4 `HEARTBEAT.md` edit (`daily-log` once a night) also waits for #135, whose checks include the
+3-hourly daily log and heartbeat turns/day against the 09-30..10-02 baseline.
+
 Each slice ships and is verified on its own, with a before/after reading (§9). Design
 detail is in §3–§8. Order: cheap wins first, then the store everything else depends on, then the
 largest remaining cost (the heartbeat), then the two pieces that change behaviour most
 (compaction, consolidation). Nothing discards or rewrites context until every turn is durably
 recorded (S2).
 
-**S0 — Instrument.**
-- [ ] Per-call telemetry (E7), carried inside the existing `turns.jsonl` row as a `calls` list (no
-      new log file): input, cache-read, output, reasoning, and the call's composition in chars
-      (system prompt, tool schemas, history from earlier turns, this turn's messages so far).
-- [ ] Per turn: the bound tool names. Per tick: the due-task set.
-- [ ] A `job` telemetry context so LLM calls outside a turn (compaction, consolidator) are recorded
-      in the same row shape, tagged by job.
-- [ ] Staging measurements: Gemini `countTokens` on the bound declarations; cached-token share
-      before and after a forced tool-set change; cached-input price for the Flash model in use.
-- [ ] Before-reading recorded in §9.
+**S0 — Instrument.** Telemetry moves from JSONL to its own SQLite store and records every LLM
+call (§2a). Measurement only: no behaviour change. Goes to `main` early.
+- [ ] `jarvis_data/observability/telemetry.sqlite` with the tables in §2a; one writer module
+      (`observability/telemetry.py`), never raising into a turn.
+- [ ] `_llm_node` records each call: tokens, latency, finish reason, composition in chars, the
+      prompt's hash; the bound tool set per turn. Tool calls link to the LLM call that issued them.
+- [ ] Heartbeat turns record their due tasks; wakes their trigger.
+- [ ] `telemetry.job(name)` records LLM calls made outside a turn (used from S5/S6).
+- [ ] One-time import of the last 180 days of `turns.jsonl` and `tool_calls.jsonl` (idempotent).
+- [ ] Readers moved to the store: `/usage` (`observability/usage.py`), `scripts/trace.py`,
+      `scripts/context_report.py` (rewritten as queries; adds per-call composition and cost per
+      due-task set), `scripts/ci/check_command_replies.py`, tests that read `turns.jsonl`.
+- [ ] Writing `turns.jsonl` and `tool_calls.jsonl` stops; the files stay on disk until they age
+      out. `chat_history.jsonl` and `notifications.jsonl` are content, not telemetry: unchanged
+      until S2.
+- [ ] Retention: 180 days for every table, applied at startup with the existing log trim.
+- [ ] Backups: the store is copied with SQLite's online backup, not tarred live.
+- [ ] `scripts/measure_context.py`, run by the owner on staging (it needs the API key): real token
+      cost of core tools and of each skill, and the cache test (same request ×3, then one skill
+      added ×3; run twice).
+- [ ] Docs: OBSERVABILITY.md (store, tables, readers), CLAUDE.md data tree.
+- [ ] Tests: each table written with the right links; composition split at the turn start; a job
+      row; telemetry failure doesn't fail a turn; import is idempotent; readers return the same
+      numbers as the old JSONL path on imported data.
+- [ ] Verify (staging, then prod): `/usage` matches the pre-change numbers for the imported window;
+      a staging turn and tick produce complete rows; before-reading recorded in §9 after ~5 full
+      days in prod.
 
 **S1 — Quick wins.** No new subsystems.
 - [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
       hits after a 60-minute gap, so the reset costs no cache. RUNTIME.md's deferral note and the
       AGENTS.md "deactivate when no longer needed" line updated.
 - [ ] Fitness writer tools scoped to user turns (they are bound on every tick and never called there).
-- [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4). Until S2's "today" view,
+- [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4), after #135 closes. Until S2's "today" view,
       the chat side doesn't see silent heartbeat actions during the day; delivered messages still
       arrive through the mirror.
 - [ ] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
@@ -63,7 +87,7 @@ reversible (R5):
       stripped to path references before writing. Tool calls stored with arguments; tool results
       stored in full with a secret/one-time-code redaction pass. Outbox deliveries written on
       success. Idempotent backfill from `chat_history.jsonl` and `notifications.jsonl`.
-- [ ] Integrity check: turn IDs in `turns.jsonl` vs the store, per day; a missing turn is visible.
+- [ ] Integrity check: turn IDs in the telemetry `turns` table vs the episode store, per day; a missing turn is visible.
 - [ ] The store gets its own rotating backup; `backup_state.sh --prune` stops keeping every deploy
       tarball forever.
 - [ ] "Today" view in the user-scope prompt, built by code from the store: today's tick outcomes and
@@ -198,6 +222,34 @@ Kept as is: per-call prompt rebuild (hot reload), the owner thread spine, the us
 mirror (checked in prod 2026-10-06: no sign of the hermes #118863 failure), the gate and its stamps,
 the Outbox, the SOUL.md confirmation flow.
 
+## 2a. Telemetry store (S0)
+
+Telemetry records what happened and what it cost. Conversation content (messages, tool arguments and
+results) belongs to the episode store (§3), never here. The one exception is the system prompt,
+stored once per distinct text, because "what exactly did the model see" is the first question when
+debugging. Retention for every table: 180 days (owner, 2026-10-07).
+
+**Location.** `jarvis_data/observability/telemetry.sqlite`, WAL mode. A separate file from the
+episode store (owner: production content and telemetry don't share a database).
+
+| Table | One row per | Columns (beyond `id`, `ts`) |
+|---|---|---|
+| `turns` | Turn or job | `turn_id`, `thread_id`, `scope` (`user | heartbeat | job`), `job`, `channel`, `trigger_id`, `due_tasks` (JSON list), started/ended/duration, `llm_calls`, `tool_calls`, token totals (input, cache-read, output, reasoning, total), `model`, `active_skills_start/end`, `no_action`, `outcome`, `error`, `budget` (JSON) |
+| `llm_calls` | LLM call | `turn_id`, `call_index`, `started_at`, `latency_ms`, input / cache-read / output / reasoning tokens, `finish_reason`, `model`, `prompt_hash`, `prompt_chars`, `schema_chars`, `bound_tool_count`, `history_chars` (messages from earlier turns), `turn_chars` (this turn's messages so far), `history_messages`, `turn_messages` |
+| `tool_calls` | Tool call | Today's `tool_calls.jsonl` fields (`tool`, `namespace`, `destructive`, `duration_ms`, `status`, `args_size`, `error`, `traceback`) plus `turn_id`, `llm_call_index` (the call that issued it), `result_size` |
+| `bound_tools` | Turn × tool | `turn_id`, `tool`, `namespace`, `schema_chars`, `first_call_index` |
+| `prompts` | Distinct system prompt | `prompt_hash` (SHA-256), `scope`, `chars`, `text`, `first_seen`, `last_seen` |
+
+**Composition.** Measured in chars, split at the current turn's start (the same boundary the window
+trim uses): system prompt, serialized tool declarations, history from earlier turns, this turn's
+messages. Chars are shares; tokens are cost. Together they split a call's input into prompt, schemas,
+replayed history (A4) and the growing tool-result tail (A5).
+
+**Writes.** One short transaction per event; a failed write is logged and dropped, never raised into
+a turn. Turn rows are inserted at start and updated at end, so a crash leaves a visible open row.
+
+**Size.** Roughly 1–3 MB a month at current volume (prompts deduplicate; most rows are numbers).
+
 ## 3. Episode store (S2)
 
 **Location.** `jarvis_data/episodes/episodes.sqlite`: tool-opaque, so it belongs in `jarvis_data/`
@@ -307,7 +359,7 @@ consolidator, and whether tool-set changes cost enough cache to matter (S0).
 
 ## 9. Readings
 
-Before/after per slice from prod, over full Israel days with no paused tasks in the window (E10).
+Before/after per slice from prod (the telemetry store from S0), over full Israel days with no paused tasks in the window (E10).
 User traffic is light (2–25 turns a day), so windows are at least 5 days and confounders (new tasks,
 tool changes) are noted beside each reading.
 
@@ -350,9 +402,6 @@ tool changes) are noted beside each reading.
   suggest 90–180 days for disk and privacy (metadata and calls kept forever). Revisit with the S2
   size readings.
 - Which embedding model, and whether it runs via the API or locally (S7).
-- Telemetry storage: stays separate from the episode store (owner, 2026-10-07: production content
-  and telemetry don't share a database). Whether telemetry itself moves from JSONL to its own
-  SQLite is not decided here.
 - Event-conditioned "standing intents" in the triggers system.
 - Cleanup of stale checkpoints in `threads.sqlite` (#12).
 - Re-check Devin's launch around 2026-10-20 for the first user failure reports (DEVIN_MEMORY.md).
