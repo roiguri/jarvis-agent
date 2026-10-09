@@ -1,5 +1,5 @@
 """Triggers against a fake Outbox, a scripted fake model and a real scheduler on
-a short clock: the legacy migration, the store's row handling, manage_trigger
+a short clock: the store's row handling, manage_trigger
 create/list/cancel, reminders firing, restoring after a restart, failed sends
 retrying, scheduled wakes — their turn, delivery, failure notice, the
 self-scheduling limits, and waiting for a running tick — and gates: the engine,
@@ -43,10 +43,8 @@ def ack(text="", n=90):
 
 
 def reset_store():
-    for p in (store.STORE_PATH, store.LEGACY_PATH, store.LEGACY_PATH + ".migrated",
-              store.LEGACY_STAMPS_PATH, store.LEGACY_STAMPS_PATH + ".migrated"):
-        if os.path.exists(p):
-            os.remove(p)
+    if os.path.exists(store.STORE_PATH):
+        os.remove(store.STORE_PATH)
 
 
 def write_json(path, data):
@@ -151,41 +149,15 @@ async def test_hourly_tick_registered_on_the_hour():
         (True, "cron[hour='*/1', minute='0']")
 
 
-def test_legacy_reminders_migrate():
-    write_json(store.LEGACY_PATH, {"events": [
-        {"id": "aaa", "type": "reminder", "text": "one", "fire_at": "2030-01-01T09:00:00+00:00"},
-        {"id": "bbb", "type": "reminder", "text": "two", "fire_at": "2030-01-02T09:00:00+00:00"},
-        {"id": "ccc", "type": "mystery", "fire_at": "2030-01-03T09:00:00+00:00"},
-    ]})
-    got = store.all_triggers()
-    assert sorted(t.id for t in got) == ["aaa", "bbb"], "reminders carried over"
-    assert (store.get("aaa").action.text, store.get("aaa").when.instant.isoformat()) == \
-        ("one", "2030-01-01T09:00:00+00:00"), "text and instant kept"
-    assert os.path.exists(store.LEGACY_PATH + ".migrated"), "legacy file kept as backup"
-    assert not os.path.exists(store.LEGACY_PATH), "legacy file moved away"
-    write_json(store.LEGACY_PATH, {"events": [
-        {"id": "zzz", "type": "reminder", "text": "late", "fire_at": "2030-01-04T09:00:00+00:00"},
-    ]})
-    assert len(store.all_triggers()) == 2, "runs once — a store on disk wins"
-
-
 def test_fresh_store_is_empty():
     assert store.all_triggers() == []
 
 
-def test_legacy_stamps_migrate():
-    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"inbox-check": "2026-10-03T09:00:00+00:00"}})
-    assert store.task_stamps() == {"inbox-check": "2026-10-03T09:00:00+00:00"}, "migrated into the store"
-    assert os.path.exists(store.LEGACY_STAMPS_PATH + ".migrated"), "old file kept as backup"
-    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"other": "2026-10-03T10:00:00+00:00"}})
-    assert sorted(store.task_stamps()) == ["inbox-check"], "migration runs once"
-
-    reset_store()
-    write_json(store.LEGACY_PATH, {"events": [
-        {"id": "r1", "type": "reminder", "text": "x", "fire_at": "2030-01-01T09:00:00+00:00"}]})
-    write_json(store.LEGACY_STAMPS_PATH, {"last_run": {"t": "2026-10-03T09:00:00+00:00"}})
-    assert ([t.id for t in store.all_triggers()], store.task_stamps()) == \
-        (["r1"], {"t": "2026-10-03T09:00:00+00:00"}), "both legacy files migrate on one read"
+def test_store_without_last_run():
+    write_json(store.STORE_PATH, {"version": 1, "triggers": []})
+    assert (store.task_stamps(), store.gate_state("x")) == ({}, None), "missing maps read as empty"
+    store.stamp_tasks(["t"], "2026-10-09T09:00:00+00:00")
+    assert store.task_stamps() == {"t": "2026-10-09T09:00:00+00:00"}, "first stamp written"
 
 
 def test_unreadable_rows_skipped_never_dropped():

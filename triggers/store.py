@@ -24,17 +24,13 @@ from triggers.model import Trigger
 logger = logging.getLogger(__name__)
 
 STORE_PATH = os.path.join(config.DATA_DIR, "triggers", "triggers.json")
-# Reminders lived here before triggers existed; migrated once, then renamed.
-LEGACY_PATH = os.path.join(config.DATA_DIR, "scheduling", "scheduled_events.json")
-# So did heartbeat task stamps (heartbeat_state's last_run map); same treatment.
-LEGACY_STAMPS_PATH = os.path.join(config.DATA_DIR, "heartbeat", "state.json")
 _VERSION = 1
 
 _LOCK = threading.Lock()
 
 
 def _empty() -> dict:
-    return {"version": _VERSION, "triggers": [], "gates": {}}
+    return {"version": _VERSION, "triggers": [], "gates": {}, "last_run": {}}
 
 
 def _read() -> dict:
@@ -42,7 +38,7 @@ def _read() -> dict:
         with open(STORE_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        data = _migrate_legacy()
+        data = _empty()
     except json.JSONDecodeError:
         # Moved aside, never overwritten: a later write must not turn a
         # recoverable file into an empty one.
@@ -52,8 +48,7 @@ def _read() -> dict:
         data = _empty()
     data.setdefault("triggers", [])
     data.setdefault("gates", {})
-    if "last_run" not in data:
-        _migrate_stamps(data)
+    data.setdefault("last_run", {})
     return data
 
 
@@ -64,53 +59,6 @@ def _write(data: dict) -> None:
         json.dump(data, tmp, indent=2)
         tmp_path = tmp.name
     os.replace(tmp_path, STORE_PATH)
-
-
-def _migrate_legacy() -> dict:
-    """First read on an instance that still has the pre-triggers reminder file:
-    convert its reminders, write the store, keep the old file as a backup.
-    Called with no store on disk, so it runs at most once per instance."""
-    data = _empty()
-    try:
-        with open(LEGACY_PATH, encoding="utf-8") as f:
-            legacy = json.load(f)
-    except FileNotFoundError:
-        return data
-    except json.JSONDecodeError:
-        logger.exception("legacy reminder file unreadable: %s — not migrated", LEGACY_PATH)
-        return data
-    for event in legacy.get("events", []):
-        if event.get("type") != "reminder":
-            logger.warning("legacy event %r of type %r not migrated", event.get("id"), event.get("type"))
-            continue
-        data["triggers"].append({
-            "id": event["id"],
-            "when": {"at": event["fire_at"]},
-            "action": {"send": {"text": event.get("text", "(reminder)")}},
-        })
-    _write(data)
-    os.replace(LEGACY_PATH, LEGACY_PATH + ".migrated")
-    logger.info("migrated %d reminder(s) from %s", len(data["triggers"]), LEGACY_PATH)
-    return data
-
-
-def _migrate_stamps(data: dict) -> None:
-    """A store without ``last_run`` predates it: take the stamps from the old
-    heartbeat/state.json when there is one, write, and keep that file as a
-    backup. Without one the map starts empty and is written on first stamp."""
-    data["last_run"] = {}
-    try:
-        with open(LEGACY_STAMPS_PATH, encoding="utf-8") as f:
-            legacy = json.load(f)
-    except FileNotFoundError:
-        return
-    except json.JSONDecodeError:
-        logger.exception("legacy stamp file unreadable: %s — not migrated", LEGACY_STAMPS_PATH)
-        return
-    data["last_run"] = dict(legacy.get("last_run") or {})
-    _write(data)
-    os.replace(LEGACY_STAMPS_PATH, LEGACY_STAMPS_PATH + ".migrated")
-    logger.info("migrated %d task stamp(s) from %s", len(data["last_run"]), LEGACY_STAMPS_PATH)
 
 
 def _parse(rows: list[dict]) -> list[Trigger]:
