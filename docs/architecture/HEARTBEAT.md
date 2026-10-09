@@ -77,10 +77,6 @@ stamps normally.
 | `/app/jarvis_memory/heartbeat/<task>.md` | agent (free-form via memory tools) | **Notes**: narrative state for reasoning (`target_date`, `last_known_schedule`, …) | agent only — code never parses it |
 | `/app/jarvis_data/triggers/triggers.json` | code (`triggers/store.py`, via `heartbeat_state.load_state`/`stamp`) | **Machine state**: `last_run: {"<task>": "<iso8601>"}`, stamped only from the tick ack or a completed gate; also the gates' state and pending triggers ([TRIGGERS.md](TRIGGERS.md)) | code only — outside the memory sandbox, the agent cannot touch it |
 
-The stamps lived in `/app/jarvis_data/heartbeat/state.json` until they moved
-into the trigger store; an instance that still has that file migrates it on the
-first store read and keeps it as `state.json.migrated`.
-
 ---
 
 ## Task grammar
@@ -160,8 +156,8 @@ Two constraints on that pass, both load-bearing:
 The trigger is built from `TICK_INTERVAL_HOURS`, so the lattice the gate rounds
 to and the lattice the scheduler fires on cannot drift apart; holding the
 scheduler's misfire grace to `CADENCE_GRACE` bounds how far off-lattice a *tick*
-can stamp. Stamps written by anything else (a hand edit, a migration, a state
-reset) carry no such bound — which is why the single-tick exclusion is a rule
+can stamp. Stamps written by anything else (a hand edit, a state reset) carry
+no such bound — which is why the single-tick exclusion is a rule
 and not an optimization.
 
 **Known gap: DST.** Windows are evaluated in Israel time while cadences count

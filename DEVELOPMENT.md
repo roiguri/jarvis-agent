@@ -214,9 +214,7 @@ Non-obvious runtime behavior that isn't derivable from the architecture docs.
 arms an APScheduler `DateTrigger` job immediately (`triggers/scheduler.py`). On service
 restart `restore_pending()` re-arms every stored trigger; **past-due reminders fire
 immediately** with a staleness annotation (a past-due *wake* runs its turn once, on startup). A trigger is removed from the store only
-after its send succeeds. An instance that still has the pre-triggers
-`scheduling/scheduled_events.json` migrates it on first read and keeps the old file as
-`scheduled_events.json.migrated`.
+after its send succeeds.
 
 ### Notification batch aggregation (`gateway/webhook/notifier.py`)
 

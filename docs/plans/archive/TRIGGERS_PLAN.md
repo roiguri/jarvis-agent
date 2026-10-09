@@ -1,11 +1,11 @@
 # Triggers — Plan
 
-**Date:** 2026-10-03 · **Status:** S1–S4 implemented (2026-10-03); awaiting PR, deploy, and the post-deploy checks
-(S3 behavior in prod; the no-op-turn measurement).
-**Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A7, A8, A9 (no-op heartbeat
+**Date:** 2026-10-03 · **Status:** complete, archived 2026-10-09. S1–S4 deployed 2026-10-03 (`deploy-2026-10-03-3`);
+validated in prod 2026-10-03..10-09 (#135); migration code removed. Follow-ups: #145, #146.
+**Problems addressed:** [context/PROBLEMS.md](../context/PROBLEMS.md) A7, A8, A9 (no-op heartbeat
 ticks), plus two capability gaps PROBLEMS.md doesn't list: Jarvis can't wake itself at an exact
 time, and reminders and heartbeat tasks are two separate scheduling systems.
-**Constraints carried in:** [context/RESEARCH.md](context/RESEARCH.md) §3.1 (four constraints on
+**Constraints carried in:** [context/RESEARCH.md](../context/RESEARCH.md) §3.1 (four constraints on
 any deterministic-wake design), restated in §3.
 
 ---
@@ -35,8 +35,9 @@ ticked.
 - [x] `/triggers` slash command (list and cancel), with `check_command_replies.py` cases.
 - [x] Prompts (`AGENTS.md`, `heartbeat.md` with a "Scheduled wakes" section) and tool docstrings
       name `manage_trigger`; staging's `HEARTBEAT.md` task bodies updated.
-- [ ] **Deploy step:** prod's `HEARTBEAT.md` names `manage_reminder` in the crossfit and
-      fitness-scouting task bodies (3 lines). Update them with the deploy.
+- [x] **Deploy step:** prod's `HEARTBEAT.md` names `manage_reminder` in the crossfit and
+      fitness-scouting task bodies (3 lines). Update them with the deploy. Done; no
+      `manage_reminder` left in prod (2026-10-09).
 - [x] Offline: `scripts/test_triggers.py` extended (wake turn and delivery, quiet wake, broken
       wake, delivery retry, every D2 rule, waiting on the lock, the running wake seen in-turn).
 - [x] Verify: "check X in 10 minutes" from chat wakes a turn at that time. A triggered turn can
@@ -78,16 +79,23 @@ ticked.
       one gate would share its keys; a category-only change reads as "moved"; the failure streak
       is in memory (a restart resets it); a misconfigured `plans.binding` surfaces only as a
       generic gate failure.
-- [ ] **Deploy step:** prod's crossfit task gets `| gate: arbox_registrations` and the new body
+- [x] **Deploy step:** prod's crossfit task gets `| gate: arbox_registrations` and the new body
       (staging's copy is the reference).
-- [ ] **Deploy step:** the gate's first run sees every booked class as new and schedules its
+- [x] **Deploy step:** the gate's first run sees every booked class as new and schedules its
       wakes, so cancel prod's old-style class-end reminders (e.g. `b07079b9` "How was the WOD?")
-      at deploy to avoid a duplicate check-in.
-- [ ] Verify in prod after the deploy (owner's choice, 2026-10-03: no staging run for S3), around
+      at deploy to avoid a duplicate check-in. Verified 2026-10-09: `b07079b9` is gone from prod's
+      store and no old-style check-in reminder has fired since the deploy.
+- [x] Verify in prod after the deploy (owner's choice, 2026-10-03: no staging run for S3), around
       the end of the following week: an unchanged tick makes no model call; each booked class gets
       both keyed wakes; the briefing and check-in wakes say something useful (the part offline
       tests can't cover); a dropped class cancels them and wakes a turn.
-- [ ] Measure: no-op heartbeat turns per day, before and after.
+      Prod 2026-10-03..10-09 (#135): first gate run scheduled both wakes with no change message;
+      briefings arrived 2h before class with the WOD; check-ins sent a form that logged
+      correctly; 4 booking changes, one message each, and a dropped class lost its wakes; the
+      gate logged every hour with no failures. Two problems split out: a form plus its ack is
+      sent twice (#145), and change messages read like replies (#146).
+- [x] Measure: no-op heartbeat turns per day, before and after. Prod: 15–17 heartbeat turns a
+      day before, 7–9 on full days after; ticks where only crossfit is due skip the model.
 
 **S4 — Heartbeat stamps into the store, daily log as a task.** Rescoped 2026-10-03, after S1–S3:
 - [x] `heartbeat/state.json` migrated into the trigger store (`last_run`), with a `.migrated`
@@ -101,16 +109,19 @@ ticked.
 - [x] `docs/architecture/HEARTBEAT.md`, `MEMORY.md`, `CLAUDE.md`, `DEVELOPMENT.md` updated.
 - [x] Offline: `scripts/test_triggers.py` (stamp migration, the tick registration, no daily-log
       rule in the tick prompt).
-- [ ] **Deploy step:** add the `daily-log` task (and its notes file) to prod's `HEARTBEAT.md`;
+- [x] **Deploy step:** add the `daily-log` task (and its notes file) to prod's `HEARTBEAT.md`;
       staging's copy is the reference.
-- [ ] **After the prod deploy, once both migrations have run** (prod has
+- [x] **After the prod deploy, once both migrations have run** (prod has
       `scheduling/scheduled_events.json.migrated` and `heartbeat/state.json.migrated`, and
       `triggers.json` holds the reminders and `last_run` stamps): delete the migration code —
       `store._migrate_legacy`, `store._migrate_stamps`, `LEGACY_PATH`, `LEGACY_STAMPS_PATH`, their
       calls in `store._read`, and their harness sections in `scripts/test_triggers.py` — plus the
       migration notes in `docs/architecture/TRIGGERS.md`, `HEARTBEAT.md` and `DEVELOPMENT.md`.
       Staging must have migrated too (it already has, for reminders). Then remove the `.migrated`
-      backups on both instances.
+      backups on both instances. Done 2026-10-09 (closes #135), with one change: staging never
+      migrated its stamps, so `store._read` defaults a missing `last_run` to `{}` and staging's
+      stale `heartbeat/state.json` is to be deleted rather than migrated. Deleting it and the
+      `.migrated` backups are post-deploy owner steps.
 - **Dropped:** moving the due-gate maths out of `heartbeat_state.py` into `triggers/`. The tick
   already runs on the one shared scheduler; the maths (lattice, misfire handling, #114's DST
   note) is prod-hardened, and moving it would be a rewrite with no change in behavior.
@@ -146,7 +157,7 @@ handling. Any new timed behavior would add a third.
 
 Read from fresh shallow clones on 2026-10-03: OpenClaw `e2dd931a`, hermes-agent `2b52acc2`. Paths
 are relative to each repo. Earlier context-focused deep dives are in
-[context/reference/](context/reference/).
+[context/reference/](../context/reference/).
 
 **Both converged on one scheduler for all timed work.** A job is *when* + an optional cheap *gate*
 + a *payload*.
@@ -336,7 +347,7 @@ What existing modules become:
   maths moves to `triggers/scheduler.py`.
 - **`tools/core/scheduling.py`**: folded into `manage_trigger`.
 - **Fitness skill**: the read/sync split (constraint 1). This overlaps
-  [FITNESS_LOGGING_PLAN.md](archive/FITNESS_LOGGING_PLAN.md) and should be sequenced with it.
+  [FITNESS_LOGGING_PLAN.md](FITNESS_LOGGING_PLAN.md) and should be sequenced with it.
 
 ### The daily log
 

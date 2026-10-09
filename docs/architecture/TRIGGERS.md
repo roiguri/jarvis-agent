@@ -4,8 +4,8 @@
 the store, the APScheduler instance, and the code that runs a trigger when it
 fires — plus **gates**, the code checks that decide whether a gated heartbeat
 task has any work. Two trigger kinds exist, both one-shot: a **reminder** sends
-fixed text, and a **wake** runs a background turn. What it grows into (heartbeat
-tasks folded in) is [../plans/TRIGGERS_PLAN.md](../plans/TRIGGERS_PLAN.md).
+fixed text, and a **wake** runs a background turn. The design and its history
+are in [../plans/archive/TRIGGERS_PLAN.md](../plans/archive/TRIGGERS_PLAN.md).
 
 ---
 
@@ -43,7 +43,7 @@ Rows written before these fields existed read as `owner`.
 | Module | Owns |
 |---|---|
 | `model.py` | `Trigger`, `At`, `Send`, `Turn`, origins, and the dict round-trip |
-| `store.py` | `DATA_DIR/triggers/triggers.json`: one lock over every read-modify-write, atomic temp+replace writes, the legacy migration |
+| `store.py` | `DATA_DIR/triggers/triggers.json`: one lock over every read-modify-write, atomic temp+replace writes |
 | `scheduler.py` | The process's one `AsyncIOScheduler` (`init_scheduler`/`get_scheduler`); `arm`/`disarm` a trigger as a `DateTrigger` job (id `trigger_<id>`); `restore_pending()` on startup |
 | `runner.py` | `run(trigger, attempt)`: a send directly; a turn via `heartbeat.run_wake`. `retry()` re-arms a failed send |
 | `gates.py` | The gate and handler registries (`@gate`, `@gate_handler`), `evaluate()` for one gated task, and the one-write commit of its state and keyed create/cancel |
@@ -85,9 +85,6 @@ manage_trigger(create) ── store.add ── scheduler.arm ──► DateTrigg
   warning, but a later write keeps it in the file rather than dropping it. A
   file that isn't valid JSON at all is moved aside to `triggers.json.corrupt-<ts>`
   and the store starts empty, so no write can turn it into an empty file.
-- **Migration.** An instance that still has the pre-triggers
-  `DATA_DIR/scheduling/scheduled_events.json` converts its reminders on the first
-  store read and renames the old file to `scheduled_events.json.migrated`.
 
 ## Self-scheduling limits
 
