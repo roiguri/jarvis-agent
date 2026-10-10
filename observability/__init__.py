@@ -4,14 +4,13 @@ Sits alongside ``gateway/`` (channel layer) and ``tools/`` (agent-callable
 tools). The agent loop calls into the *write* side from `agent.py`; the
 ``/usage`` slash command and ad-hoc REPL queries call the *read* side.
 
-Two modules, one concern:
-- ``telemetry`` writes ``turns.jsonl`` / ``tool_calls.jsonl`` from inside the
-  agent loop (ContextVar-scoped, called by ask_jarvis / _llm_node / _tool_node).
-- ``usage`` reads the same streams back: parameterized rollups for the
-  ``/usage`` slash command and ad-hoc analysis from a Python REPL.
-
-Both should grow together; new helpers (e.g. the deferred ``usage_daily.jsonl``
-rollup writer per the observability plan) belong here.
+Three modules, one concern:
+- ``store`` owns the telemetry SQLite file (schema, connections, retention).
+- ``telemetry`` writes it from inside the agent loop (ContextVar-scoped, called
+  by ask_jarvis / _llm_node / _tool_node), plus ``job()`` for model calls made
+  outside a turn.
+- ``usage`` reads it back: parameterized rollups for the ``/usage`` slash
+  command and ad-hoc analysis from a Python REPL.
 """
 
 from observability.telemetry import (
@@ -23,6 +22,7 @@ from observability.telemetry import (
     record_llm_call,
     record_tool_call,
     record_turn_end,
+    job,
 )
 from observability.usage import (
     MODEL_PRICES,
@@ -44,6 +44,7 @@ __all__ = [
     "record_llm_call",
     "record_tool_call",
     "record_turn_end",
+    "job",
     # Read side (usage).
     "MODEL_PRICES",
     "estimate_usd",

@@ -20,7 +20,6 @@ Must run in a fresh interpreter — it sets JARVIS_ROOT before the app imports.
 """
 import asyncio
 import datetime as dt
-import json
 import os
 import shutil
 import sys
@@ -86,7 +85,7 @@ TURNS_SEED = [
 def _seed(scratch: str) -> None:
     import agent
     import config
-    from observability.telemetry import TURNS_LOG
+    from observability import store as telemetry_store
 
     # SqliteSaver creates its tables lazily on first use; /clear deletes from
     # them directly, so a never-used scratch db would fail there for a reason
@@ -116,11 +115,15 @@ def _seed(scratch: str) -> None:
     store.add(Trigger("rem00001", At(soon), Send("Call the dentist")))
     store.add(Trigger("wake0001", At(soon), Turn("Check whether the download finished"), ORIGIN_JARVIS, "heartbeat"))
 
-    ts = dt.datetime.combine(israel_today, dt.time(9, 0), tzinfo=dt.timezone.utc)
-    os.makedirs(os.path.dirname(TURNS_LOG), exist_ok=True)
-    with open(TURNS_LOG, "w", encoding="utf-8") as f:
-        for rec in TURNS_SEED:
-            f.write(json.dumps({"ts": ts.isoformat(), **rec}) + "\n")
+    ts = dt.datetime.combine(israel_today, dt.time(9, 0), tzinfo=dt.timezone.utc).isoformat()
+    with telemetry_store.write() as con:
+        for n, rec in enumerate(TURNS_SEED):
+            row = {"ts": ts, "turn_id": f"seed{n}", "started_at": ts, "ended_at": ts,
+                   "duration_ms": 0, **rec}
+            con.execute(
+                f"INSERT INTO turns ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
+                tuple(row.values()),
+            )
 
 
 def _run_cases() -> list[str]:

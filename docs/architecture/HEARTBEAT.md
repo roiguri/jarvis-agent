@@ -268,4 +268,4 @@ send under the wake's id and goes through the reminder retry path.
 - [MEMORY.md](MEMORY.md) owns file placement, the sandbox, and per-scope
   prompt composition.
 - [OBSERVABILITY.md](OBSERVABILITY.md) owns the telemetry the gate's impact is
-  measured with (`turns.jsonl`: per-turn tokens, `no_action`, scope).
+  measured with (the telemetry store's `turns` table: per-turn tokens, `no_action`, scope).

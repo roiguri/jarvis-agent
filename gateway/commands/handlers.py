@@ -337,7 +337,7 @@ _USAGE_USAGE = section(
     "Show LLM token / cost rollup. Sub: /usage today|yesterday|week|D[.M[.Y]] [user|heartbeat]",
 )
 async def _usage(inbound: InboundMessage, args: list[str]) -> str:
-    """Rollup of turns.jsonl over a date range, optionally scope-filtered.
+    """Rollup of recorded turns over a date range, optionally scope-filtered.
 
     Trailing 'user' or 'heartbeat' token narrows the rollup to that scope.
     Range token: today (default), yesterday, week (last 7 days incl. today),

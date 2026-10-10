@@ -26,7 +26,7 @@ from tools.core import (
     CHAT_LOG,
     NOTIFICATION_LOG,
 )
-from observability import TURNS_LOG, TOOL_CALLS_LOG
+from observability import TURNS_LOG, TOOL_CALLS_LOG, store as telemetry_store
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -188,9 +188,18 @@ async def main() -> None:
         " (uncommitted)" if provenance["dirty"] else "",
     )
 
+    # TODO(#150): TURNS_LOG / TOOL_CALLS_LOG are no longer written; drop them here with the import.
     for log_path in (CHAT_LOG, NOTIFICATION_LOG, TURNS_LOG, TOOL_CALLS_LOG):
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
+    try:
+        # TODO(#150): one-time import of the JSONL telemetry; remove once both instances ran it.
+        if not telemetry_store.imported():
+            counts = telemetry_store.import_jsonl(TURNS_LOG, TOOL_CALLS_LOG)
+            logger.info("Telemetry: imported JSONL history into the store: %s", counts)
+        logger.info("Telemetry store trimmed: %s", telemetry_store.trim())
+    except Exception:
+        logger.exception("Telemetry store maintenance failed")
 
     async def on_confirmation_outcome(
         system_text: str, thread_id: str, outbox: Outbox

@@ -10,6 +10,7 @@ from uuid import uuid4
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ, owner_tz, owner_tz_name
 from typing import Annotated, Required, NotRequired
 from dotenv import load_dotenv
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.messages import (
     AIMessage, HumanMessage, SystemMessage, ToolMessage, convert_to_messages,
 )
@@ -33,7 +34,7 @@ import turn_budget
 import turn_context
 from gateway.base import OWNER_THREAD_ID
 
-# Per-turn telemetry — ContextVars + recorders for turns.jsonl / tool_calls.jsonl.
+# Per-turn telemetry — ContextVars + recorders for the telemetry store.
 from observability import telemetry
 
 # ---------------------------------------------------------------------------
@@ -134,6 +135,16 @@ def _strip_media_blobs(msg):
     return HumanMessage(content=new_content, id=msg.id)
 
 
+def _turn_starts(messages: list) -> list[int]:
+    """Indices where a turn starts: a HumanMessage not preceded by one (a mirror
+    block and the message it precedes are one turn's input)."""
+    return [
+        i for i, msg in enumerate(messages)
+        if isinstance(msg, HumanMessage)
+        and (i == 0 or not isinstance(messages[i - 1], HumanMessage))
+    ]
+
+
 def _add_and_trim(existing: list, new: list) -> list:
     # Strip blobs from existing messages — they have already been seen by the
     # LLM. New messages keep their blobs so the LLM can process them this turn.
@@ -146,16 +157,11 @@ def _add_and_trim(existing: list, new: list) -> list:
     if not any(isinstance(m, HumanMessage) for m in convert_to_messages(items)):
         return combined
     # Cut only where a turn starts — a raw index slice can land mid-tool-call
-    # sequence, leaving orphaned calls or responses the LLM rejects. A turn
-    # starts at a HumanMessage not preceded by one (a mirror block and the
-    # message it precedes are one turn's input). Keep the earliest start that
-    # fits in the cap, but never drop the previous turn: one long turn would
-    # otherwise leave only the new input, and "continue" would see nothing.
-    starts = [
-        i for i, msg in enumerate(combined)
-        if isinstance(msg, HumanMessage)
-        and (i == 0 or not isinstance(combined[i - 1], HumanMessage))
-    ]
+    # sequence, leaving orphaned calls or responses the LLM rejects. Keep the
+    # earliest start that fits in the cap, but never drop the previous turn:
+    # one long turn would otherwise leave only the new input, and "continue"
+    # would see nothing.
+    starts = _turn_starts(combined)
     cut = next((i for i in starts if len(combined) - i <= MAX_MESSAGES), starts[-1])
     if len(starts) >= 2:
         cut = min(cut, starts[-2])
@@ -506,6 +512,41 @@ def _ai_text(message) -> str:
     return str(content or "")
 
 
+def _message_chars(message) -> int:
+    """A message's size in chars: its text plus any tool calls it carries.
+    Media blocks are left out — their payload is a blob, not prompt text."""
+    content = message.content
+    if isinstance(content, str):
+        chars = len(content)
+    else:
+        chars = sum(
+            len(block.get("text", "")) if isinstance(block, dict) else len(str(block))
+            for block in content or []
+        )
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        chars += len(json.dumps(tool_calls, ensure_ascii=False, default=str))
+    return chars
+
+
+_SCHEMA_CHARS: dict[str, int] = {}
+
+
+def _bound_tools(tools: list) -> list[dict]:
+    """One telemetry entry per bound tool, with its declaration's size. The
+    declarations are fixed for the life of the process, so sizes are cached."""
+    out = []
+    for t in tools:
+        if t.name not in _SCHEMA_CHARS:
+            try:
+                _SCHEMA_CHARS[t.name] = len(json.dumps(convert_to_openai_tool(t), ensure_ascii=False))
+            except Exception:
+                _SCHEMA_CHARS[t.name] = 0
+        out.append({"tool": t.name, "namespace": registry.namespace_of(t.name) or "",
+                    "schema_chars": _SCHEMA_CHARS[t.name]})
+    return out
+
+
 def _llm_node(state: JarvisState) -> dict:
     """Bind the scoped tool set, prepend the system prompt, call the model.
 
@@ -513,14 +554,16 @@ def _llm_node(state: JarvisState) -> dict:
     invocation so a skill activated earlier in this same turn is usable on
     the very next model call.
 
-    Telemetry: on success calls record_llm_call (token usage rolls up to the
-    turn accumulator). An exception propagates to ask_jarvis, which records it
-    and emits the single turn-end record.
+    Telemetry: every call is recorded with its tokens, latency and input
+    composition (system prompt, tool declarations, earlier turns, this turn),
+    a failed one with its error before the exception propagates to ask_jarvis.
     """
     scope = state.get("scope", "user")
     active = set(state.get("active_skills", set()))
     due_tasks = state.get("heartbeat_due_tasks")
     messages = list(state["messages"])
+    starts = _turn_starts(messages)
+    split = starts[-1] if starts else 0
 
     # The turn budget is checked here because every model call passes through
     # this node. Exhaustion makes this the last call — no tools bound, so the
@@ -529,19 +572,43 @@ def _llm_node(state: JarvisState) -> dict:
     # text left in history would be imitated by later turns.
     tracker = turn_budget.TRACKER.get()
     tracker.check()
+    tools = []
     if tracker.exhausted_by:
         runnable = llm
         messages.append(HumanMessage(content=tracker.policy.exhaustion_ask))
     else:
-        runnable = llm.bind_tools(registry.get_tools(scope, active))
+        tools = registry.get_tools(scope, active)
+        runnable = llm.bind_tools(tools)
         if tracker.wrapped_up:
             messages.append(HumanMessage(content=tracker.policy.wrap_up_notice))
-    response = runnable.invoke(
-        [SystemMessage(content=build_system_prompt(scope, active, due_tasks))] + messages,
-        timeout=max(MIN_CALL_TIMEOUT_S, min(LLM_CALL_TIMEOUT_S, tracker.remaining_s())),
-    )
+    prompt = build_system_prompt(scope, active, due_tasks)
+    composition = {
+        "prompt": prompt,
+        "scope": scope,
+        "bound": _bound_tools(tools),
+        "history_chars": sum(_message_chars(m) for m in messages[:split]),
+        "turn_chars": sum(_message_chars(m) for m in messages[split:]),
+        "history_messages": split,
+        "turn_messages": len(messages) - split,
+    }
+    started_at = _dt.datetime.now(_dt.timezone.utc)
+    t0 = time.perf_counter()
+    try:
+        response = runnable.invoke(
+            [SystemMessage(content=prompt)] + messages,
+            timeout=max(MIN_CALL_TIMEOUT_S, min(LLM_CALL_TIMEOUT_S, tracker.remaining_s())),
+        )
+    except Exception as e:
+        telemetry.record_llm_call(
+            None, started_at=started_at, latency_ms=int((time.perf_counter() - t0) * 1000),
+            error=f"{type(e).__name__}: {e}", **composition,
+        )
+        raise
     tracker.record_call(response)
-    telemetry.record_llm_call(response)
+    telemetry.record_llm_call(
+        response, started_at=started_at, latency_ms=int((time.perf_counter() - t0) * 1000),
+        finish_reason=_finish_reason(response), **composition,
+    )
     return {"messages": [response]}
 
 
@@ -596,7 +663,7 @@ def _tool_node(state: JarvisState) -> dict:
                 tool_name=name, namespace=ns, destructive=destructive,
                 duration_ms=int((time.perf_counter() - t0) * 1000),
                 status="not_active", args_size=args_size,
-                error_str=msg, traceback_str=None,
+                error_str=msg, traceback_str=None, result_size=len(msg),
             )
             continue
         try:
@@ -612,7 +679,7 @@ def _tool_node(state: JarvisState) -> dict:
                 duration_ms=int((time.perf_counter() - t0) * 1000),
                 status="error", args_size=args_size,
                 error_str=f"{type(e).__name__}: {e}",
-                traceback_str=tb_str,
+                traceback_str=tb_str, result_size=len(messages[-1].content),
             )
             continue
 
@@ -634,6 +701,7 @@ def _tool_node(state: JarvisState) -> dict:
             duration_ms=int((time.perf_counter() - t0) * 1000),
             status="ok", args_size=args_size,
             error_str=None, traceback_str=None,
+            result_size=len(messages[-1].content),
         )
 
     delta: dict = {"messages": messages}
@@ -722,6 +790,9 @@ def ask_jarvis(
         scope=scope,
         active_skills_start=active_start,
         model=getattr(llm, "model", None),
+        channel=channel,
+        trigger_id=getattr(trigger, "id", None),
+        due_tasks=heartbeat_due_tasks if scope == "heartbeat" else None,
     )
 
     mirror_block = mirror_cursor = None

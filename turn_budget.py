@@ -143,7 +143,7 @@ class TurnTracker:
             self.wrapped_up = True
 
     def record(self) -> dict:
-        """The turn's budget as written to turns.jsonl."""
+        """The turn's budget as written to the telemetry turn row."""
         b = self.policy.budget
         return {
             "limits": {

@@ -22,9 +22,8 @@ CHAT_LOG = os.path.join(_LOG_DIR, "chat_history.jsonl")
 LOG_RETENTION_DAYS = 90
 
 # Serializes appends across all JSONL writers in this process. Append-mode
-# writes are atomic only up to PIPE_BUF (~4 KB); tool_calls.jsonl carries
-# tracebacks that can exceed that, and heartbeat + user turns write
-# concurrently. Same pattern as _WRITE_LOCK in tools/core/memory.py.
+# writes are atomic only up to PIPE_BUF (~4 KB); a row can exceed that, and
+# heartbeat + user turns write concurrently. Same pattern as _WRITE_LOCK in tools/core/memory.py.
 _APPEND_LOCK = threading.Lock()
 
 

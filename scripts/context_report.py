@@ -1,59 +1,75 @@
 #!/usr/bin/env python3
 """The context instrument — one script, ~six numbers, run before and after.
 
-Prints the readings the context plan (docs/plans/archive/CONTEXT_PLAN.md phase 0)
-brackets every phase with: per-scope turn costs and cache ratio from
-turns.jsonl, checkpoint weight per thread from threads.sqlite, and the
-assembled system prompt's section sizes from build_system_prompt itself.
-Everything is read-only; the measurement recipes are context/RESEARCH.md §2.
+Prints the readings the context work brackets every change with: per-scope
+turn costs and cache ratio, what each model call's input is made of (system
+prompt, tool declarations, earlier turns, this turn), heartbeat cost per
+due-task set — all from the telemetry store — plus checkpoint weight per
+thread from threads.sqlite and the assembled system prompt's section sizes from
+build_system_prompt itself. Everything is read-only.
 
     JARVIS_ROOT=/app/jarvis_staging ./venv/bin/python scripts/context_report.py [--days 7]
-
-Parse turns.jsonl tolerantly and say how many lines were skipped — the file is
-known to contain at least one unparseable line, and a silent skip would bias
-the averages invisibly (PROBLEMS.md E-cluster).
 """
 
 import argparse
-import json
-import os
 import pathlib
 import sqlite3
 import sys
-from collections import defaultdict
+import os
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import config
+from observability import store
+from observability.usage import estimate_usd
 
 
-def turn_stats(days: int) -> tuple[dict, int]:
-    """Per-scope rollup over the last `days` of turns.jsonl."""
-    path = os.path.join(config.DATA_DIR, "logs", "turns.jsonl")
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    per_scope: dict[str, dict] = defaultdict(
-        lambda: {"turns": 0, "input": 0, "cache_read": 0, "llm_calls": 0, "tool_calls": 0}
+def turn_stats(since: str) -> list[dict]:
+    """Per-scope rollup of finished turns since `since`."""
+    return store.rows(
+        """
+        SELECT scope, COUNT(*) AS turns, SUM(input_tokens) AS input,
+               SUM(cache_read_tokens) AS cache_read, SUM(llm_calls) AS llm_calls,
+               SUM(tool_calls) AS tool_calls
+        FROM turns WHERE ts >= ? AND ended_at IS NOT NULL
+        GROUP BY scope ORDER BY scope
+        """,
+        (since,),
     )
-    skipped = 0
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-                if datetime.fromisoformat(rec["ts"]) < since:
-                    continue
-                s = per_scope[rec.get("scope", "?")]
-                s["turns"] += 1
-                s["input"] += rec.get("input_tokens", 0)
-                s["cache_read"] += rec.get("cache_read_tokens", 0)
-                s["llm_calls"] += rec.get("llm_calls", 0)
-                s["tool_calls"] += rec.get("tool_calls", 0)
-            except (json.JSONDecodeError, KeyError, ValueError):
-                skipped += 1
-    return dict(per_scope), skipped
+
+
+def composition(since: str) -> list[dict]:
+    """Average input composition per model call, by scope, in chars and tokens.
+    Only calls recorded with composition (not imported history)."""
+    return store.rows(
+        """
+        SELECT t.scope AS scope, COUNT(*) AS calls,
+               AVG(c.prompt_chars) AS prompt, AVG(c.schema_chars) AS schemas,
+               AVG(c.history_chars) AS history, AVG(c.turn_chars) AS turn,
+               AVG(c.bound_tool_count) AS tools, AVG(c.input_tokens) AS input,
+               AVG(c.cache_read_tokens) AS cache_read, AVG(c.latency_ms) AS latency
+        FROM llm_calls c JOIN turns t ON t.turn_id = c.turn_id
+        WHERE c.ts >= ? AND c.prompt_chars IS NOT NULL
+        GROUP BY t.scope ORDER BY t.scope
+        """,
+        (since,),
+    )
+
+
+def due_task_costs(since: str) -> list[dict]:
+    """Heartbeat turns grouped by their due-task set."""
+    return store.rows(
+        """
+        SELECT COALESCE(due_tasks, '(not recorded)') AS due, COUNT(*) AS turns,
+               SUM(input_tokens) AS input, SUM(cache_read_tokens) AS cache_read,
+               SUM(output_tokens) AS output, SUM(no_action) AS no_action,
+               MAX(model) AS model
+        FROM turns WHERE scope = 'heartbeat' AND ts >= ? AND ended_at IS NOT NULL
+        GROUP BY due ORDER BY input DESC
+        """,
+        (since,),
+    )
 
 
 def checkpoint_weights() -> dict[str, int]:
@@ -96,19 +112,37 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=7)
     args = ap.parse_args()
 
-    stats, skipped = turn_stats(args.days)
+    since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
     print(f"# context report — last {args.days} days, {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
-    print(f"\n## turns.jsonl ({skipped} unparseable line(s) skipped)")
-    for scope, s in sorted(stats.items()):
-        if not s["turns"]:
-            continue
+    print("\n## turns")
+    for s in turn_stats(since):
+        input_tokens = s["input"] or 0
         print(
-            f"{scope:>10}: {s['turns']:4d} turns | "
-            f"input/turn {s['input'] // s['turns']:>7,} | "
-            f"cache ratio {s['cache_read'] / s['input']:5.1%} | "
-            f"llm calls/turn {s['llm_calls'] / s['turns']:.2f} | "
-            f"tool calls/turn {s['tool_calls'] / s['turns']:.2f} | "
-            f"input/day {s['input'] // args.days:,}"
+            f"{s['scope']:>10}: {s['turns']:4d} turns | "
+            f"input/turn {input_tokens // s['turns']:>7,} | "
+            f"cache ratio {(s['cache_read'] or 0) / input_tokens if input_tokens else 0:5.1%} | "
+            f"llm calls/turn {(s['llm_calls'] or 0) / s['turns']:.2f} | "
+            f"tool calls/turn {(s['tool_calls'] or 0) / s['turns']:.2f} | "
+            f"input/day {input_tokens // args.days:,}"
+        )
+
+    print("\n## input per model call (avg chars; chars are shares, tokens are cost)")
+    for c in composition(since):
+        parts = {k: c[k] or 0 for k in ("prompt", "schemas", "history", "turn")}
+        total = sum(parts.values()) or 1
+        shares = " · ".join(f"{k} {v:,.0f} ({v / total:.0%})" for k, v in parts.items())
+        print(
+            f"{c['scope']:>10}: {c['calls']:4d} calls | {shares} | "
+            f"{c['tools'] or 0:.0f} tools bound | input {c['input'] or 0:,.0f} tok "
+            f"(cache {c['cache_read'] or 0:,.0f}) | {c['latency'] or 0:,.0f}ms"
+        )
+
+    print("\n## heartbeat cost per due-task set")
+    for d in due_task_costs(since):
+        usd = estimate_usd(d["input"] or 0, d["cache_read"] or 0, d["output"] or 0, d["model"])
+        print(
+            f"  {d['turns']:4d} turns | input/turn {(d['input'] or 0) // d['turns']:>7,} | "
+            f"${usd:.2f} | {d['no_action'] or 0} no-action | {d['due']}"
         )
 
     print("\n## checkpoint weight (latest blob per thread; ~bytes/4 = tokens re-sent per call)")
