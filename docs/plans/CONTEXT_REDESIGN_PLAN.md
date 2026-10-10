@@ -53,9 +53,9 @@ call (§2a). Measurement only: no behaviour change. Goes to `main` early.
       until S2.
 - [ ] Retention: 180 days for every table, applied at startup with the existing log trim.
 - [ ] Backups: the store is copied with SQLite's online backup, not tarred live.
-- [ ] `scripts/measure_context.py`, run by the owner on staging (it needs the API key): real token
+- [x] `scripts/measure_context.py`, run by the owner on staging (it needs the API key): real token
       cost of core tools and of each skill, and the cache test (same request ×3, then one skill
-      added ×3; run twice).
+      added ×3; run twice). Ran 2026-10-10; results in §9 "Staging measurement".
 - [ ] Docs: OBSERVABILITY.md (store, tables, readers), CLAUDE.md data tree.
 - [ ] Tests: each table written with the right links; composition split at the turn start; a job
       row; telemetry failure doesn't fail a turn; import is idempotent; readers return the same
@@ -375,6 +375,22 @@ tool changes) are noted beside each reading.
 | new jobs' LLM spend / day | — | — | — | — | — | | |
 | compaction p95 latency | — | — | — | — | — | | |
 | episode store size / day | — | — | | | | | |
+
+**Staging measurement (2026-10-10, `scripts/measure_context.py`).** About 4.3 chars per token for
+prose and tool declarations alike, so the store's char composition converts by ÷4.3. Tokens per call:
+system prompt (staging memory, no skills) 2,490; core tools 2,571; travel 4,488; fitness 3,881; the
+media family ~2,900 (radarr 1,079, sonarr 1,104, the rest small); collections 1,972; github 1,066;
+google_health 924; web 613; every skill active ~17,900. A staging "what's in memory" turn carried
+five unused skills, ~13.9k tokens per call, more than core and the prompt together.
+
+**Open: does a tool-set change cost the cache?** The script's cache test was inconclusive. Its cost
+pass had already sent the "+skill" request, so that request was warm, and at ~5–9k tokens per
+request Gemini's ~2k-token cache blocks capped even identical repeats at 40–45% cached (a real
+26.7k-token staging call was 91% cached). Settle it from prod telemetry after S0 deploys: calls right
+after a mid-turn `activate_skill` have a changed tool set and the same conversation, so their
+`cache_read_tokens` against the previous call answer it with real traffic. Fall back to a fixed
+script (cache test first with a unique prompt marker, ~20k tokens of conversation after the tools)
+only if a week of prod has too few activations.
 
 **Quality rows**, with the threshold that means the slice failed:
 
