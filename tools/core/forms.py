@@ -140,7 +140,8 @@ def send_form(
     # event tag routes the card's text through the pending-mirror drain so the
     # submission's turn has its antecedent. User-turn sends stay untagged —
     # send and submit already share the thread.
-    event = EVENT_HEARTBEAT if turn_context.current_scope() == "heartbeat" else None
+    background = turn_context.current_scope() == "heartbeat"
+    event = EVENT_HEARTBEAT if background else None
     try:
         outcome = outbox_mod.submit(
             origin_outbox().send_block_to_owner(message_text, form, event=event)
@@ -155,7 +156,14 @@ def send_form(
         )
     if not outcome.ok:
         return f"Error: form could not be sent — {outcome.error}"
-    return (
+    sent = (
         f"Sent form {form.callback_id} ({title}): {form.describe()}. "
         f"The user's submission will arrive as a new message."
     )
+    if background:
+        # The ack's notification is a second, separate send.
+        sent += (
+            " Its message_text has already reached the user — don't repeat it in "
+            "heartbeat_respond's notification_text."
+        )
+    return sent
