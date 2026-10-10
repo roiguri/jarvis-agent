@@ -65,11 +65,16 @@ def golden(request):
 
 @pytest.fixture(autouse=True)
 def clean_logs():
-    """Each test starts with empty activity logs and no mirror cursor."""
+    """Each test starts with empty activity logs, an empty telemetry store and
+    no mirror cursor."""
     import pending_mirrors
+    from observability import store
 
     for name in os.listdir(LOG_DIR):
         os.remove(os.path.join(LOG_DIR, name))
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(store.STORE_PATH + suffix):
+            os.remove(store.STORE_PATH + suffix)
     if os.path.exists(pending_mirrors.CURSOR_PATH):
         os.remove(pending_mirrors.CURSOR_PATH)
 

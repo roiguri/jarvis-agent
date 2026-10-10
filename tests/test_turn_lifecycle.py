@@ -21,7 +21,7 @@ import turn_budget
 from gateway import factory
 from gateway.base import OWNER_THREAD_ID
 from gateway.outbox import Outbox
-from observability import format_usage_table, summarize_usage, telemetry
+from observability import format_usage_table, load_turns, store, summarize_usage
 from tests.conftest import LOG_DIR
 from tests.fakes import FakeChannel, FakeLLM, tool_call
 from tools.core.history import async_append_notification_log
@@ -35,8 +35,7 @@ def thread_messages(thread_id):
 
 
 def last_turn_row():
-    with open(os.path.join(LOG_DIR, "turns.jsonl"), encoding="utf-8") as f:
-        return json.loads(f.readlines()[-1])
+    return load_turns()[-1]
 
 
 def upstream_503():
@@ -148,8 +147,8 @@ def test_upstream_failure_after_committed_call(use_llm):
     assert "Any changes they made are saved" in msgs[-1].content, "note says changes are saved"
     assert isinstance(msgs[-2], ToolMessage), "note keeps tool pairs valid"
     row = last_turn_row()
-    assert row.get("outcome") == "failed", "turns.jsonl outcome"
-    assert bool(row.get("error")), "turns.jsonl error set"
+    assert row.get("outcome") == "failed", "turn row outcome"
+    assert bool(row.get("error")), "turn row error set"
 
     # The next turn on that thread runs cleanly from START.
     use_llm(FakeLLM([AIMessage(content="all good now")]))
@@ -157,7 +156,7 @@ def test_upstream_failure_after_committed_call(use_llm):
     assert out.kind == turn_budget.COMPLETED, "next turn after failure: completed"
     assert out.text == "all good now"
     assert out.committed_calls == (), "committed counter reset"
-    assert last_turn_row().get("outcome") == "completed", "completed: turns.jsonl outcome"
+    assert last_turn_row().get("outcome") == "completed", "completed: turn row outcome"
 
 
 def test_failure_before_any_tool_call(use_llm):
@@ -176,7 +175,7 @@ def test_abnormal_finish_reason(use_llm):
     out = agent.ask_jarvis("do the thing", "t_finish")
     assert out.kind == turn_budget.FAILED
     assert last_turn_row().get("error") == "finish_reason: MALFORMED_FUNCTION_CALL", \
-        "recorded in turns.jsonl"
+        "recorded in the turn row"
     assert "MALFORMED_FUNCTION_CALL" in out.text, "reply names it"
 
 
@@ -280,10 +279,10 @@ def test_describe_error():
 
 
 def test_telemetry_failure_does_not_fail_turn(use_llm, monkeypatch):
-    def full_disk(path, record):
+    def full_disk():
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(telemetry, "_append_line", full_disk)
+    monkeypatch.setattr(store, "write", full_disk)
     use_llm(FakeLLM([
         AIMessage(content="", tool_calls=[tool_call("list_memory", {}, 20)]),
         AIMessage(content="still fine"),
@@ -364,7 +363,7 @@ def test_step_budget(use_llm, set_budget):
     assert has_notice(loop.log[7][1]), "wrap-up notice from 80%"
     assert "Stopped early: it ran out of steps" in out.text, "reply flags it stopped early"
     assert out.cause == "it ran out of steps"
-    assert last_turn_row().get("outcome") == "budget_exhausted", "turns.jsonl outcome"
+    assert last_turn_row().get("outcome") == "budget_exhausted", "turn row outcome"
     msgs = thread_messages("t_steps")
     assert not has_notice(msgs), "notice never persisted"
     assert isinstance(msgs[-1], AIMessage) and not msgs[-1].tool_calls, \
@@ -487,9 +486,8 @@ def test_usage_report_counts_budget_stops(use_llm, set_budget):
 
     rows = summarize_usage(group_by="scope")
     user = next(r for r in rows if r["group"] == "user")
-    with open(os.path.join(LOG_DIR, "turns.jsonl"), encoding="utf-8") as f:
-        failed = sum(1 for r in map(json.loads, f)
-                     if r.get("scope") == "user" and r.get("outcome") == "failed")
+    failed = sum(1 for r in load_turns()
+                 if r.get("scope") == "user" and r.get("outcome") == "failed")
     assert user["errors"] == failed == 1, "budget stops are not counted as errors"
     assert user["exhausted_by"].get("steps", 0) >= 1, "stopped-early turns counted by limit"
     report = format_usage_table(rows, title="**Usage**")

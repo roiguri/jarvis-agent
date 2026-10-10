@@ -10,7 +10,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 - **Single-user**: designed for one owner (no multi-tenant routing)
 - **Runtime**: Python, hand-rolled LangGraph `StateGraph` agent (scoped tool registry + same-turn skill activation), Google Gemini model
-- **Persistence**: SQLite (LangGraph thread state), JSONL logs, Markdown memory files
+- **Persistence**: SQLite (LangGraph thread state, telemetry), JSONL logs, Markdown memory files
 
 ---
 
@@ -67,9 +67,10 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── collections/collections.sqlite  # collections-skill DB (per-collection runtime schemas)
 ├── triggers/triggers.json          # code-owned (triggers/store.py): pending triggers, gate state, task last_run stamps
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
+├── observability/telemetry.sqlite  # telemetry store: turns, llm_calls, tool_calls, bound_tools, prompts;
+│                                   #   180-day, app-only (observability/), agent never reads
 └── logs/
-    ├── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
-    └── turns.jsonl, tool_calls.jsonl            # 90-day JSONL, app-only (observability/), agent never reads
+    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
 
 /app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
                                                  #   absolute paths from gateway/channels/telegram/media_cache.py)

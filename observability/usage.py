@@ -1,4 +1,4 @@
-"""Cost / usage rollups over turns.jsonl.
+"""Cost / usage rollups over the telemetry store's ``turns`` table.
 
 Two query surfaces use this module:
 - ``/usage`` slash command (gateway/commands/handlers.py) — user-facing.
@@ -11,13 +11,11 @@ functions stay pure and easy to test.
 
 from __future__ import annotations
 
-import json
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from timeutils import ISRAEL_TZ as _IL_TZ
 
-from observability.telemetry import TURNS_LOG
+from observability import store
 
 
 GroupBy = Literal["day", "week", "scope", "day+scope"]
@@ -105,36 +103,58 @@ def estimate_usd(
 # ---------------------------------------------------------------------------
 
 
+_JSON_COLUMNS = ("due_tasks", "active_skills_start", "active_skills_end", "budget")
+
+
+def _iso(dt: datetime) -> str:
+    """UTC ISO text, the form every row's ``ts`` is stored in, so the range
+    filter can compare strings."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def load_turns(
     since: datetime | None = None,
     until: datetime | None = None,
+    include_open: bool = False,
 ) -> list[dict]:
-    """Read turns.jsonl, parse each line, filter by [since, until) timestamps.
+    """Finished turns (and jobs) in [since, until), oldest first, as dicts with
+    their JSON columns decoded.
 
-    Missing or unparseable lines are skipped silently — the log is an
-    audit-trail, not a strict format. Returns records in disk order
-    (chronological by append, with no sort applied)."""
-    if not os.path.exists(TURNS_LOG):
-        return []
-    out: list[dict] = []
-    with open(TURNS_LOG, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                r = json.loads(line)
-                ts = datetime.fromisoformat(r["ts"])
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-            except (KeyError, ValueError, json.JSONDecodeError):
-                continue
-            if since is not None and ts < since:
-                continue
-            if until is not None and ts >= until:
-                continue
-            out.append(r)
+    An open row — a turn still running, or one the process never finished —
+    has no totals yet, so it is left out unless ``include_open``."""
+    sql = "SELECT * FROM turns WHERE 1 = 1"
+    params: list = []
+    if since is not None:
+        sql += " AND ts >= ?"
+        params.append(_iso(since))
+    if until is not None:
+        sql += " AND ts < ?"
+        params.append(_iso(until))
+    if not include_open:
+        sql += " AND ended_at IS NOT NULL"
+    out = store.rows(sql + " ORDER BY ts", tuple(params))
+    for r in out:
+        for k in _JSON_COLUMNS:
+            r[k] = store.loads(r[k])
+        r["no_action"] = bool(r["no_action"])
     return out
+
+
+def telemetry_errors(since: datetime | None = None, until: datetime | None = None) -> int:
+    """Model calls in [since, until) whose input could not be measured — a
+    bug in the telemetry itself, surfaced so it is not silently absorbed."""
+    sql = "SELECT COUNT(*) AS n FROM llm_calls WHERE telemetry_error IS NOT NULL"
+    params: list = []
+    if since is not None:
+        sql += " AND ts >= ?"
+        params.append(_iso(since))
+    if until is not None:
+        sql += " AND ts < ?"
+        params.append(_iso(until))
+    found = store.rows(sql, tuple(params))
+    return int(found[0]["n"]) if found else 0
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +232,7 @@ def summarize_usage(
     addition to it, and carries no separate price — do not add it to usd_cost.
     Reads 0 for turns recorded before the field existed.
 
-    Pure: no I/O beyond load_turns; no global state. Suitable for REPL use:
+    No I/O beyond load_turns; no global state. Suitable for REPL use:
         >>> from tools.core.usage import summarize_usage
         >>> rows = summarize_usage(group_by="day+scope")
     """
@@ -365,7 +385,7 @@ def _row_line(r: dict) -> str:
     )
 
 
-def format_usage_table(rows: list[dict], title: str = "") -> str:
+def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int = 0) -> str:
     """Render rollup rows as a markdown summary:
 
         **Title**
@@ -391,6 +411,9 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     rather than with those helpers only to keep observability free of a gateway
     import. scripts/ci/check_command_replies.py validates this output via /usage.
 
+    ``telemetry_errors`` (model calls whose input could not be measured) adds a
+    '⚠ N telemetry errors' line when non-zero, empty periods included.
+
     `extras` carries NO_ACTION / error counts, the turn-budget outcomes (turns
     stopped early by a limit, with the limit, and turns that wrapped up after
     the notice) and, when any model in the period
@@ -401,11 +424,13 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     command and existing callers, though the layout is a vertical summary rather
     than a fixed-width table — readable on mobile, no horizontal scroll.
     """
+    tele_line = (
+        f"- ⚠ {telemetry_errors} telemetry error{'s' if telemetry_errors != 1 else ''} "
+        "(see the journal)"
+    ) if telemetry_errors else ""
     if not rows:
-        return (
-            f"{title}\n\n_No usage records in this period._" if title
-            else "_No usage records in this period._"
-        )
+        body = "_No usage records in this period._" + (f"\n\n{tele_line}" if tele_line else "")
+        return f"{title}\n\n{body}" if title else body
 
     totals_in = sum(r["input_tokens"] for r in rows)
     totals_cache = sum(r["cache_read_tokens"] for r in rows)
@@ -451,6 +476,8 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     out.append(f"- **{_usd(totals_usd)}** total")
     if extras_parts:
         out.append(f"- {' · '.join(extras_parts)}")
+    if tele_line:
+        out.append(tele_line)
     # Single-row tables (one bucket = whole period) are redundant — totals already
     # cover the whole story. Show the per-row breakdown only when there are 2+.
     if len(rows) > 1:

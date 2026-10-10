@@ -337,7 +337,7 @@ _USAGE_USAGE = section(
     "Show LLM token / cost rollup. Sub: /usage today|yesterday|week|D[.M[.Y]] [user|heartbeat]",
 )
 async def _usage(inbound: InboundMessage, args: list[str]) -> str:
-    """Rollup of turns.jsonl over a date range, optionally scope-filtered.
+    """Rollup of recorded turns over a date range, optionally scope-filtered.
 
     Trailing 'user' or 'heartbeat' token narrows the rollup to that scope.
     Range token: today (default), yesterday, week (last 7 days incl. today),
@@ -348,6 +348,7 @@ async def _usage(inbound: InboundMessage, args: list[str]) -> str:
         format_usage_table,
         israel_day_range,
         israel_last_n_days,
+        telemetry_errors,
     )
 
     tokens = [a.lower() for a in args]
@@ -373,7 +374,8 @@ async def _usage(inbound: InboundMessage, args: list[str]) -> str:
         since=since, until=until,
         group_by=group_by, scope_filter=scope_filter,
     )
-    return format_usage_table(rows, title=title)
+    errors = await asyncio.to_thread(telemetry_errors, since, until)
+    return format_usage_table(rows, title=title, telemetry_errors=errors)
 
 
 @command("tz", "Show or set the owner's current timezone (travel mode)")

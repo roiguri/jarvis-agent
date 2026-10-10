@@ -2,21 +2,21 @@
 
 ## Purpose
 
-This layer answers one question: **how much did each agent turn cost, and what did it do?**
+This layer answers one question: **what did each agent turn do, what did it cost, and what did the model see?**
 
-It is the durable record of agent activity: every turn (user or heartbeat) produces a structured row capturing tokens, durations, tool calls, and outcome; every tool invocation produces its own row. Both are append-only JSONL with bounded retention, and queryable from a slash command (headline numbers) or an operator script (per-turn timelines).
+It is the durable record of agent activity, kept in one SQLite file: every turn (user, heartbeat, or a job outside a turn) gets a row with its tokens, duration, outcome and context; every model call gets a row with its tokens, latency and the make-up of its input; every tool call gets a row linked to the model call that issued it; the tool set bound in each turn and every distinct system prompt are kept too. It is queried from a slash command (headline numbers) and operator scripts (timelines, context readings).
 
 The observability layer is responsible for:
 
-- **Recording** every agent turn: input/output/cache-read tokens, LLM and tool call counts, active skills, duration, errors.
-- **Recording** every tool invocation: name, namespace, destructive flag, duration, status, full traceback on error.
-- **Surfacing** that data in two shapes — a `/usage` slash command for headline numbers, and `scripts/trace.py` for per-turn timelines.
-- **Bounding** disk growth via the same 90-day retention that the rest of `/app/jarvis_data/logs/` already uses.
+- **Recording** every turn and job, every model call (including failed ones), every tool invocation, the bound tool set, and each distinct system prompt.
+- **Surfacing** that data — `/usage` for headline numbers, `scripts/trace.py` for per-turn timelines, `scripts/context_report.py` for context readings.
+- **Bounding** disk growth with a 180-day retention applied at startup.
 
 It is **not** responsible for:
 
+- Conversation content. Messages, tool arguments and tool results never land here; the system prompt is the one exception (see `prompts`).
 - Eval / pytest scaffolding — separate concern.
-- Emitting metrics to external systems (LangSmith, OTel, Prometheus, Phoenix) — single-user single-host deployment doesn't warrant the dependency.
+- Emitting to external systems (LangSmith, OTel, Prometheus) — single-user single-host deployment; telemetry stays on the box.
 - Behavior change — telemetry observes the agent loop, it never alters it.
 
 ---
@@ -26,119 +26,99 @@ It is **not** responsible for:
 ```
 /app/jarvis_code/
 ├── observability/                # this layer (sibling to gateway/, tools/)
-│   ├── __init__.py               # re-exports both write side and read side
-│   ├── telemetry.py              # write: ContextVars + record_* recorders
+│   ├── __init__.py               # re-exports the write and read sides
+│   ├── store.py                  # the SQLite file: schema, connections, retention, backup
+│   ├── telemetry.py              # write: ContextVars + record_* recorders + job()
 │   └── usage.py                  # read: load_turns + summarize_usage + format
 ├── scripts/
-│   └── trace.py                  # per-turn timeline (operator tool)
+│   ├── trace.py                  # per-turn timeline (operator tool)
+│   ├── context_report.py         # context readings: per-scope cost, input composition, cost per due-task set
+│   └── measure_context.py        # real token cost of core/skills + prompt-cache test (makes model calls)
 └── gateway/commands/handlers.py  # /usage slash command — thin wrapper
 
-/app/jarvis_data/logs/
-├── turns.jsonl                   # one record per agent turn
-├── tool_calls.jsonl              # one record per tool invocation
-├── chat_history.jsonl            # Jarvis-readable audit log (owned by tools/core/history.py)
-└── notifications.jsonl           # Jarvis-readable audit log (owned by tools/core/history.py)
+/app/jarvis_data/observability/
+└── telemetry.sqlite              # WAL mode; separate from any conversation-content store
 ```
 
 ---
 
-## The Four JSONL Streams
+## The Store
 
-All four live in `/app/jarvis_data/logs/`. All four use the shared `_append_line` (with `_APPEND_LOCK`) and `trim_log` (90-day cutoff) in `tools/core/history.py`.
+`jarvis_data/observability/telemetry.sqlite`. All tables join by `turn_id`; every row has `id` and `ts` (UTC ISO text, which range queries compare as strings).
 
-### `turns.jsonl` — one record per agent turn
+| Table | One row per | Columns (beyond `id`, `ts`) |
+|---|---|---|
+| `turns` | Turn or job | `turn_id`, `thread_id`, `scope` (`user` \| `heartbeat` \| `job`), `job`, `channel`, `trigger_id`, `due_tasks` (JSON list), `started_at`, `ended_at`, `duration_ms`, `llm_calls`, `tool_calls`, token totals (`input_tokens`, `cache_read_tokens`, `output_tokens`, `reasoning_tokens`, `total_tokens`), `model`, `active_skills_start` / `_end` (JSON), `no_action`, `outcome`, `error`, `budget` (JSON) |
+| `llm_calls` | Model call | `turn_id`, `call_index` (1-based), `started_at`, `latency_ms`, input / cache-read / output / reasoning tokens, `finish_reason`, `model`, `prompt_hash`, `prompt_chars`, `schema_chars`, `bound_tool_count`, `history_chars`, `turn_chars`, `history_messages`, `turn_messages`, `error`, `telemetry_error` |
+| `tool_calls` | Tool call | `turn_id`, `llm_call_index` (the call that issued it), `tool`, `namespace`, `destructive`, `duration_ms`, `status` (`ok` \| `error` \| `not_active`), `args_size`, `result_size`, `error`, `traceback` |
+| `bound_tools` | Turn × tool | `turn_id`, `tool`, `namespace`, `schema_chars`, `first_call_index` |
+| `prompts` | Distinct system prompt | `prompt_hash` (SHA-256), `scope`, `chars`, `text`, `first_seen`, `last_seen` |
 
-```json
-{
-  "ts": "2026-05-21T08:01:22.103Z",
-  "turn_id": "f8e2…",
-  "thread_id": "telegram_12345",
-  "scope": "user" | "heartbeat",
-  "started_at": "...", "ended_at": "...", "duration_ms": 4123,
-  "llm_calls": 2, "tool_calls": 3,
-  "input_tokens": 4501,
-  "cache_read_tokens": 0,
-  "output_tokens": 312,
-  "reasoning_tokens": 240,
-  "total_tokens": 4813,
-  "model": "gemini-3-flash-preview",
-  "active_skills_start": [],
-  "active_skills_end": ["media/radarr"],
-  "no_action": false,
-  "error": null,
-  "outcome": "completed",
-  "budget": {
-    "limits": {"deadline_s": 300, "max_llm_calls": 30, "max_input_tokens": 1500000},
-    "exhausted_by": null,
-    "wrapped_up": false
-  }
-}
-```
+### `turns`
 
-Source: built up across a turn by `observability.telemetry.record_turn_start` (at entry) / `record_llm_call` (per LLM invocation) and flushed by `record_turn_end` (at exit).
+Inserted when the turn starts and updated when it ends, so a turn the process never finished stays visible as an **open row** (`ended_at` null). `load_turns` leaves open rows out of rollups (they have no totals); `trace.py` shows them as OPEN.
 
-`cache_read_tokens` is the count of input tokens served from the provider's prompt cache. It is the signal for evaluating prompt-cache effectiveness — `cache_read_tokens / input_tokens` is the cache hit rate. Reads 0 when caching is not enabled or no cached prefix matched. Sourced from `response.usage_metadata.input_token_details.cache_read` for the langchain-google-genai backend; the field is `None`-safe at every level for providers that don't expose it.
+- `channel` is the origin channel, `trigger_id` the trigger whose firing started a wake, `due_tasks` the heartbeat's due-task set — so heartbeat cost can be read per task set.
+- `cache_read_tokens` is the input served from the provider's prompt cache; `cache_read_tokens / input_tokens` is the hit rate. From `usage_metadata.input_token_details.cache_read`, `None`-safe.
+- `reasoning_tokens` is the thinking slice **of** `output_tokens` — a subset, billed as output, so it is a diagnostic and never enters `estimate_usd`. It is the only observable `thinking_level` moves.
+- `llm_calls` counts every call, including a final one that raised (the turn budget does not count that one, so a failed row can read one above its budget's step count).
+- `no_action` is `true` iff `scope == "heartbeat"` and the tick sent the owner no message (`not ack.notify`; no ack counts as a no-op).
+- `outcome` is how the turn ended, from `turn_budget.py`: `completed`, `wrapped_up`, `budget_exhausted` or `failed` (`error` carries the detail). A job is `completed` or `failed`.
+- `budget` is the turn budget as it stood: the scope's `limits`, which limit ended it (`exhausted_by`: `time` / `steps` / `tokens`) and whether the wrap-up notice fired. Usage against each limit is the row's own `duration_ms`, `llm_calls`, `input_tokens` (see the `llm_calls` note above), so every row explains itself across limit changes. A `budget_exhausted` row is censored: it shows the limit, not what the turn wanted.
 
-`reasoning_tokens` is the thinking-token slice **of** `output_tokens` — a subset, not an addition, so `input + output` still reconciles with `total_tokens`. Sourced from `response.usage_metadata.output_token_details.reasoning`; `None`-safe at every level, and reads 0 both for non-thinking models and for turns recorded before the field existed (2026-07-30).
+### `llm_calls` — composition
 
-It is a **diagnostic, not a billing field**, and this is the one way it differs from `cache_read_tokens`. Cache reads are *input* billed at a discount, so `estimate_usd` subtracts them out of the billable-input bucket. Reasoning tokens are *output* billed at the ordinary output rate and are already counted in `output_tokens` — adding them anywhere in `estimate_usd` would double-count. They are recorded because `thinking_level` (Gemini 3.x) is the largest cost/quality dial available and this is the only observable it moves: without it, a successful `thinking_level` tuning cannot be distinguished from a quality regression, and a model whose reasoning appetite is eating the budget is invisible until the invoice arrives.
+Each call records what its input was made of, in chars, split at the current turn's start (the same boundary the window trim uses, `agent._turn_starts`):
 
-`no_action` is `true` iff `scope == "heartbeat"` and the tick sent the user no message. It mirrors delivery: `no_action = not ack.notify`, and a tick with no ack delivers nothing, so it counts as a no-op. Computed in `ask_jarvis`'s `finally`.
+- `prompt_chars` — the system prompt (its text is in `prompts` under `prompt_hash`);
+- `schema_chars` — the bound tool declarations (`bound_tool_count` of them);
+- `history_chars` / `history_messages` — messages from earlier turns, replayed on every call;
+- `turn_chars` / `turn_messages` — this turn's messages so far, which grow with each tool round.
 
-`outcome` is how the turn ended, from the vocabulary in `turn_budget.py`: `completed`,
-`wrapped_up` (finished after the budget's wrap-up notice), `budget_exhausted` (stopped by the turn
-budget, answered with a tool-free summary) or `failed` (an exception or an abnormal model stop;
-`error` carries the detail). `null` on rows written before the field existed.
+Chars are shares; tokens are cost. Together they split a call's input into prompt, schemas, replayed history and the growing tool-result tail. Message chars count text and tool-call JSON; media blobs are left out. A call that raised is recorded with its `error`, latency and composition before the exception propagates.
 
-`budget` is the turn budget as it stood for that turn: the scope's `limits`, which limit ended it
-(`exhausted_by`: `time` / `steps` / `tokens`, else `null`) and whether the wrap-up notice fired
-(`wrapped_up` — true on a turn that later ran out, too). Usage against each limit is the row's own
-`duration_ms`, `llm_calls` and `input_tokens`, so every row says what it used, what it was allowed
-and whether it hit the ceiling — readable across limit changes without deploy dates. A
-`budget_exhausted` row is censored: it shows the limit, not what the turn wanted. `null` on rows
-written before the field existed.
+If measuring the composition itself fails (a telemetry bug, e.g. an unexpected message shape), the turn carries on: the traceback goes to the journal, the call's row has `telemetry_error` set and no composition, and `/usage` shows `⚠ N telemetry errors` for the period.
 
-### `tool_calls.jsonl` — one record per tool invocation
+### `tool_calls`
 
-```json
-{
-  "ts": "...", "turn_id": "f8e2…",
-  "tool": "search_sonarr", "namespace": "media/sonarr",
-  "destructive": false,
-  "duration_ms": 412,
-  "status": "ok" | "error" | "not_active",
-  "args_size": 87,
-  "error": null,
-  "traceback": null
-}
-```
+Written as each call returns (`ts` is the return time; start is `ts - duration_ms`), so a crashing turn keeps its tool history. **Arguments and results are not stored** — they routinely contain the owner's personal data; `args_size` / `result_size` are enough to debug "this tool was hammered" or "this result was huge". Tracebacks are truncated to 3 KB; the `ToolMessage` the model sees stays the short `Error: …` string.
 
-Source: `observability.telemetry.record_tool_call` from inside `_tool_node` in `agent.py`. Written immediately (independent of when the turn ends), so even a crashing turn preserves its tool history.
+### `bound_tools` and `prompts`
 
-**Args are deliberately not stored** — they routinely contain Roi's personal data. `args_size` (length of the JSON-encoded args) is enough to debug "this tool was hammered with huge args".
+`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: today's daily log (user scope) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
 
-**Tracebacks are file-only.** The `ToolMessage` returned to the LLM remains the short `f"Error: {e}"` string the agent has always seen. Tracebacks are truncated to 3 KB before write as defence-in-depth alongside the lock.
+### Writes
 
-### `chat_history.jsonl` and `notifications.jsonl`
-
-Append-only audit logs owned by `tools/core/history.py`, not this layer. Both are *Jarvis-readable*: the agent reads them back via `get_chat_history` / `get_notification_history`, and they are injected into prompts as live-slice context (see [MEMORY.md](MEMORY.md) "Per-scope content"). They deliberately do not carry `turn_id` — adding one would change a schema the model already reads.
-
-`scripts/trace.py` correlates these to a turn by `(thread_id, ts within [started_at - 2s, ended_at + 2s])` instead.
+One short transaction per event, on a short-lived connection (user and heartbeat turns run on different threads), with `synchronous=NORMAL` (safe under WAL: a power cut can lose the last commits, not corrupt the file). A failed write is logged and dropped, never raised into a turn — a locked file or a full disk must not fail a turn after its work has landed.
 
 ---
 
 ## The `turn_id` Contract
 
-A `uuid4().hex` minted at the **top of every turn** and propagated through every record written during that turn.
+A `uuid4().hex` minted at the **top of every turn** and stamped on every row written during it.
 
-- **Where it's minted.** `ask_jarvis` (the single entry point used by both user and heartbeat). If a caller passes one in via the `turn_id` kwarg, that wins; otherwise `ask_jarvis` generates its own.
-- **How it's propagated.** Through a `contextvars.ContextVar` named `TURN_ID`. **Not** through `JarvisState` — `turn_id` is per-invocation by design and should not survive a checkpoint write.
-- **Why `ContextVar`.** Each `asyncio.to_thread(ask_jarvis, ...)` call gets its own copy of the parent context, so a heartbeat tick and a user turn running concurrently never see each other's id. LangGraph's sync `.invoke()` / `.stream()` inherits whatever context `ask_jarvis` set.
-- **Join semantics.** `turns.jsonl ↔ tool_calls.jsonl` join by `turn_id` exactly. `chat_history.jsonl` / `notifications.jsonl` join by time window because they don't carry the id (by design — see above).
+- **Where it's minted.** `ask_jarvis` (the single entry point used by both user and heartbeat), or `telemetry.job()` for work outside a turn.
+- **How it's propagated.** Through a `contextvars.ContextVar` named `TURN_ID`. **Not** through `JarvisState` — it is per-invocation and must not survive a checkpoint write.
+- **Why `ContextVar`.** Each `asyncio.to_thread(ask_jarvis, ...)` gets its own copy of the parent context, so a heartbeat tick and a user turn running concurrently never see each other's id.
+- **Join semantics.** Store tables join by `turn_id` exactly. `chat_history.jsonl` / `notifications.jsonl` carry no id (the model reads that schema), so `trace.py` matches them by thread and time window.
 
 ---
 
-## The Two Query Surfaces
+## Jobs
+
+Model calls made outside a turn (a nightly job, a compaction) are recorded under `telemetry.job(name)`:
+
+```python
+with telemetry.job("compaction"):
+    response = llm.invoke(...)
+    telemetry.record_llm_call(response, latency_ms=...)
+```
+
+The job gets a `turns` row with `scope = "job"` and `job = name`; an exception marks it `failed` and propagates. A call recorded outside any turn or job is dropped.
+
+---
+
+## Query Surfaces
 
 ### `/usage` — slash command
 
@@ -146,97 +126,80 @@ Lives in `gateway/commands/handlers.py`. Thin wrapper around `observability.summ
 
 ```
 /usage                  → today, per-scope rollup
-/usage today            → same
 /usage yesterday        → yesterday, per-scope rollup
 /usage week             → last 7 calendar days, per-day-per-scope
 /usage week user        → last 7 days, user scope only
-/usage week heartbeat   → last 7 days, heartbeat scope only
-/usage 21.5             → specific day (D.M, current year)
-/usage 21.5.2026        → specific day, full ISO
+/usage 21.5             → specific day (D.M, current year; D.M.Y also works)
 ```
 
-Trailing `user` or `heartbeat` always narrows the rollup; combine freely with any date token. The handler reuses `_parse_log_date` from `/logs` for date parsing.
-
-Turn outcomes show alongside the counts: `N errors` (failed turns), `N stopped early (2 steps, 1 time)`
-(budget stops, by limit) and `N wrapped up` — a budget stop is not counted as an error.
-
-Rendering is a compact summary (totals line + per-bucket bullets when ≥ 2 buckets) — readable on mobile, no horizontal scroll, no fixed-width tables. It follows the slash-command reply contract (bold header, blank line, real `- ` items) so it survives both the Telegram and CommonMark renderers — see [GATEWAY.md](GATEWAY.md) § Reply formatting.
+Jobs appear as their own `job` scope; `⚠ N telemetry errors` appears when any model call's input could not be measured. Turn outcomes show alongside the counts: `N errors`, `N stopped early (2 steps, 1 time)`, `N wrapped up` — a budget stop is not counted as an error. Rendering follows the slash-command reply contract ([GATEWAY.md](GATEWAY.md) § Reply formatting).
 
 ### `observability` Python module — REPL / scripts
 
-Same functions the slash command calls. Pure (no implicit `now()` defaults):
-
 ```python
-from datetime import datetime, timedelta, timezone
-from observability import summarize_usage, format_usage_table, israel_last_n_days
+from observability import summarize_usage, format_usage_table, israel_last_n_days, load_turns
+from observability import store
 
 since, until = israel_last_n_days(7)
-rows = summarize_usage(since=since, until=until, group_by="day+scope")
-print(format_usage_table(rows, title="Usage — last 7 days"))
+print(format_usage_table(summarize_usage(since=since, until=until, group_by="day+scope")))
+store.rows("SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool ORDER BY n DESC")
 ```
 
-Use cases: ad-hoc analysis from a REPL, one-off analysis scripts, Jupyter cells. `load_turns(since, until)` returns the raw records if you want to compute something the rollup doesn't expose.
-
-### `scripts/trace.py` — per-turn timeline (operator)
+### `scripts/trace.py` — per-turn timeline
 
 ```
 venv/bin/python3 scripts/trace.py                # last 5 turns
-venv/bin/python3 scripts/trace.py --last 10
 venv/bin/python3 scripts/trace.py --turn 1e42c3  # prefix-match a turn_id
 ```
 
-Joins all four JSONLs (turn_id where available, time-window elsewhere) into an ms-offset timeline. Used for diagnosing "what did Jarvis actually do at X?" — slow turns, errored tools, heartbeat behavior verification.
+Model calls (with measured latency, tokens and input composition) and tool calls (with the call that issued them) in one ms-offset timeline, plus chat and notification rows matched by time window. Turns imported from the old JSONL streams have no model-call rows and show tool calls only.
 
-LLM call durations are *inferred* from gaps around tool calls. Exact when each LLM call produces 0–1 tool calls (the common case). Approximate when the model fires parallel tools in one response (multiple tool rows from one LLM call), since per-LLM timing is not recorded today.
+### `scripts/context_report.py` — context readings
+
+Per-scope turn cost and cache ratio, average input composition per model call, heartbeat cost per due-task set, checkpoint weight per thread, and the assembled prompt's section sizes. Run before and after any context change.
+
+### `scripts/measure_context.py` — real token costs
+
+Makes real model calls (needs the API key; run by hand on staging, never in CI): the token cost of the system prompt, of the core tools and of each skill, and a prompt-cache test (same request ×3, then one skill added ×3, run twice) showing whether a tool-set change costs the cache. Saves JSON next to the store.
 
 ---
 
 ## Pricing
 
-`observability.MODEL_PRICES` maps model names → `{input_per_m, cache_read_per_m, output_per_m}` (USD per million tokens). `estimate_usd()` subtracts `cache_read_tokens` from the billable-input bucket before applying rates — providers that expose a cache-hit discount bill those tokens separately at the discounted rate.
+`observability.MODEL_PRICES` maps model names → `{input_per_m, cache_read_per_m, output_per_m}` (USD per million tokens). `estimate_usd()` subtracts `cache_read_tokens` from the billable-input bucket before applying rates.
 
-The table must be kept in lockstep with the provider's published rates for whatever model the agent is configured with. A model name missing from `MODEL_PRICES` falls back to zero rates, which silently zeros out the USD column in rollups — so a sudden drop to `$0.0000` in `/usage` is a signal that the model was changed without updating the table, not that costs vanished.
-
----
-
-## Retention
-
-`turns.jsonl` and `tool_calls.jsonl` are in the startup `trim_log` loop in `main.py`. They share the 90-day `LOG_RETENTION_DAYS` cutoff (`tools/core/history.py`) with `chat_history.jsonl` and `notifications.jsonl`.
-
-Records never go through in-place edits — they age out whole-line via `trim_log` (timestamp filter, temp-file + rename). Audit invariant maintained.
-
-For trend visibility past 90 days, a daily rollup file (`usage_daily.jsonl`: one record per `(date, scope)` with totals, written by a small heartbeat task) is the natural extension. `summarize_usage` is shaped so that merging in older summarized data is purely additive when that file exists.
+A model missing from `MODEL_PRICES` falls back to zero rates; rollups flag it with `⚠ unpriced`, so a sudden `$0.00` reads as a stale table, not free usage.
 
 ---
 
-## Concurrency
+## Retention and Backups
 
-Three sources of concurrent writes share the four log files in the same process:
+Every table keeps 180 days (`store.RETENTION_DAYS`); `store.trim()` runs at startup (`main.py`). `prompts` age out by `last_seen`. Rows never change after a turn ends.
 
-1. The user's `ask_jarvis(...)` call (Telegram inbound, on an `asyncio.to_thread`).
-2. The heartbeat's `ask_jarvis(...)` call (hourly APScheduler tick, also `to_thread`).
-3. The gateway webhook notifier appending to `notifications.jsonl`.
+`deploy/backup_state.sh` copies the store with SQLite's online backup (consistent while the service runs) instead of tarring the live file. `python -m observability.store --backup DEST` does the same by hand.
 
-`_append_line` (`tools/core/history.py`) takes a process-wide `threading.Lock` (`_APPEND_LOCK`) around every write. Append-mode writes are atomic only up to `PIPE_BUF` (~4 KB) on Linux; tool tracebacks can easily exceed that, so the lock is required, not aspirational.
+### Transition from JSONL
 
-This mirrors the pattern `tools/core/memory.py` uses for its `_WRITE_LOCK`. If heartbeat ever splits into a separate process, both locks must upgrade to `fcntl.flock`.
+Telemetry was previously written to `logs/turns.jsonl` and `logs/tool_calls.jsonl`. Those files are no longer written. At startup, before the 90-day log trim, `store.import_jsonl` copies their last 180 days into the store once (idempotent; recorded in the `meta` table), and the trim keeps aging the files out. That code is temporary and marked `TODO(#150)`.
+
+**`TODO(#N)` convention.** Code that exists only until a follow-up lands carries `TODO(#N)`, naming the issue that tracks its removal. The `todo-issues` workflow (`.github/workflows/todo-issues.yml`) reopens issue N if it is closed while any marker remains on `main`, so the issue can only stay closed once the code is gone.
 
 ---
 
 ## Schema Evolution
 
-Single-writer schemas. New fields:
+Single writer (`observability/telemetry.py`). New columns:
 
-- **Default `None` / `0`** on old records (every reader uses `r.get(...)`).
-- **Add to the record builder** in `observability.telemetry.record_turn_start` / `record_turn_end` / `record_tool_call`. Old records gain the new field as `None` when re-read.
-- **Document here.** Update this file's schema sections at the same commit.
+- Add to `_SCHEMA` in `store.py` **and** an `ALTER TABLE … ADD COLUMN` for existing files (`CREATE TABLE IF NOT EXISTS` does not add columns to a table that already exists).
+- Readers treat a missing value as `None` / `0`.
+- Document here in the same commit.
 
-There is no schema version field today. If/when one becomes necessary (a breaking field rename or semantic change), prefer a new column (`v2_<name>`) over editing an existing one — readers can fall back gracefully and the old data stays parseable.
+Prefer a new column over changing an existing one's meaning, so old rows stay readable.
 
 ---
 
 ## Relationship to Other Architecture Docs
 
-- [MEMORY.md](MEMORY.md) owns the `chat_history.jsonl` and `notifications.jsonl` schemas (live-slice prompt injection) — this layer reads them for `scripts/trace.py` but does not modify them.
+- [MEMORY.md](MEMORY.md) owns the `chat_history.jsonl` and `notifications.jsonl` schemas — this layer reads them for `trace.py` but does not modify them.
 - [RUNTIME.md](RUNTIME.md) owns the agent loop and tool registry. This layer hooks into the chokepoints (`_llm_node`, `_tool_node`, `ask_jarvis`) but does not change the loop's behavior.
-- [GATEWAY.md](GATEWAY.md) owns the Telegram channel. `/usage` is a gateway-layer slash command that delegates to this layer; no other gateway concerns apply.
+- [GATEWAY.md](GATEWAY.md) owns the channels. `/usage` is a gateway-layer slash command that delegates to this layer.

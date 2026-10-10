@@ -1,0 +1,40 @@
+name: TODO issues
+
+# Code that exists only until some follow-up is done carries `TODO(#N)`, naming
+# the issue that tracks its removal. Closing that issue while a marker remains on
+# main reopens it, with the markers listed — so the issue can only stay closed
+# once the code it tracks is gone. A PR that removes the markers and says
+# "Closes #N" closes it cleanly: by the time the issue closes, main has the merge.
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  markers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Reopen if TODO markers remain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          N: ${{ github.event.issue.number }}
+        run: |
+          hits="$(git grep -n -F "TODO(#${N})" -- . ':!.github/workflows/todo-issues.yml' || true)"
+          if [ -z "$hits" ]; then
+            echo "No TODO(#${N}) markers on main."
+            exit 0
+          fi
+          fence='```'
+          body="Reopened: main still has TODO(#${N}) markers. Remove them, then close this issue (or close it from the PR that removes them).
+
+          ${fence}
+          ${hits}
+          ${fence}"
+          gh issue reopen "$N" --repo "$GITHUB_REPOSITORY"
+          gh issue comment "$N" --repo "$GITHUB_REPOSITORY" --body "$body"

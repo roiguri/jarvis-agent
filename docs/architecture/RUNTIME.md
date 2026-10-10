@@ -213,7 +213,7 @@ without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
   model does not credit the stop to the owner; `failed` (exception or abnormal
   finish reason — `ask_jarvis` does not raise). A failed turn writes a note into its thread
   naming the tool calls that completed, so the next turn checks state before repeating a write.
-  The kind is recorded as `outcome` in `turns.jsonl` ([OBSERVABILITY.md](OBSERVABILITY.md)).
+  The kind is recorded as `outcome` in the telemetry store's `turns` table ([OBSERVABILITY.md](OBSERVABILITY.md)).
 
 ## Contracts
 

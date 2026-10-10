@@ -13,7 +13,9 @@
 #
 # For a clean checkpointer copy take the snapshot with the service stopped; a live
 # snapshot may capture threads.sqlite-wal mid-write, which is fine for restore-to-a-point
-# but not a guaranteed-consistent live copy.
+# but not a guaranteed-consistent live copy. The telemetry store is the exception: it is
+# written on every model call, so it goes in as an SQLite online-backup copy (consistent
+# while the service runs) in place of the live file.
 #
 # Convention: all progress goes to stderr; the single stdout line of a <label> run is the
 # tarball path, so callers can capture it — TARBALL="$(backup_state.sh <label>)".
@@ -57,7 +59,30 @@ cmd_backup() {
     # -C "$ROOT" so archived paths are jarvis_memory/... and jarvis_data/... (root-relative),
     # which is exactly what --restore unpacks back into $ROOT.
     log "archiving $MEMORY_DIR + $DATA_DIR"
-    tar -czf "$out" -C "$ROOT" jarvis_memory jarvis_data
+    local telemetry_rel="jarvis_data/observability/telemetry.sqlite"
+    if [[ -f "$ROOT/$telemetry_rel" ]]; then
+        # Global, not local: the EXIT trap must still see it when set -e aborts.
+        BACKUP_TMP="$(mktemp -d)"
+        trap 'rm -rf "$BACKUP_TMP"' EXIT
+        local tmp="$BACKUP_TMP"
+        mkdir -p "$tmp/copy/$(dirname "$telemetry_rel")"
+        if command -v sqlite3 >/dev/null; then
+            sqlite3 "$ROOT/$telemetry_rel" ".backup '$tmp/copy/$telemetry_rel'"
+        else
+            python3 -c 'import sqlite3, sys
+src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
+src.backup(dst)' "$ROOT/$telemetry_rel" "$tmp/copy/$telemetry_rel"
+        fi
+        # Excluded from the live pass, appended as the copy: an uncompressed tar is
+        # appendable, so the exclude never sees the copy's identical name.
+        tar -cf "$tmp/state.tar" -C "$ROOT" \
+            --exclude="$telemetry_rel" --exclude="$telemetry_rel-wal" --exclude="$telemetry_rel-shm" \
+            jarvis_memory jarvis_data
+        tar -rf "$tmp/state.tar" -C "$tmp/copy" "$telemetry_rel"
+        gzip -c "$tmp/state.tar" > "$out"
+    else
+        tar -czf "$out" -C "$ROOT" jarvis_memory jarvis_data
+    fi
     log "wrote $out ($(du -h "$out" | cut -f1))"
     log "top entries:"
     tar -tzf "$out" | sed -n '1,15p' | sed 's/^/  /' >&2
