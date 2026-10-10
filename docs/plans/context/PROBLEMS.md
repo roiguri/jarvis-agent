@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-06. **Re-read:** 2026-10-03 (second reading in §0, tags re-checked).
 **Companion:** [RESEARCH.md](RESEARCH.md) — reference-system comparison, measurement method, and the
-code-level findings retained alongside this inventory.
+code-level findings retained alongside this inventory. The 2026-10-06 research for the whole-system
+redesign is in [reports/](reports/) (layered memory, compaction and dreaming, tool and skill context),
+with source notes in [research_notes/](research_notes/).
 **Sources:** `CONTEXT_HANDLING_PLAN.md` and `TEST_HARNESS_PLAN.md`, both **deleted 2026-08-06** and
 recoverable from git history; the unmerged WS2 rewrite on PR #70 (`docs/ws2-time-grounding`); and a
 fresh telemetry reading taken for this document (§0).
@@ -174,8 +176,10 @@ range.** `ASSERTED`
 `get_chat_history(since=…)` is the only door, and it requires knowing roughly when.
 
 **C4 — Nothing pushes back on memory-file growth.** `ASSERTED`
-USER.md and MEMORY.md are injected into every prompt in both scopes, so every line added is a
-permanent per-turn tax, with no pressure to curate between weekly audit passes.
+USER.md is injected into every prompt in both scopes, so every line added is a permanent per-turn
+tax, with no pressure to curate between weekly audit passes. MEMORY.md is **not** injected (corrected
+2026-10-06 against `build_system_prompt`); it is read on demand, so its growth costs a tool round-trip
+rather than a per-turn tax.
 User input per turn grew 47k → 79k → 110k across the three readings (§0). That is consistent with
 C1/C4 but not attributed to them: skills, mirrored history and longer turns all moved in the same
 window.
@@ -237,8 +241,9 @@ The gating work's headline cost claim — "most hours: no LLM call at all" — w
 was wrong. Deploys are manual, so every "after" reading lands hours or days after the commit, which
 is exactly when recall substitutes itself.
 
-**E4 — There is no test suite.** `MEASURED`
-`pytest` is not in `requirements.txt`; no `tests/` tree exists. *(The related half of this — no way
+**E4 — There is no test suite.** `RESOLVED`
+`pytest` is not in `requirements.txt`; no `tests/` tree exists. Resolved 2026-10-04: a `tests/` suite
+(with golden prompt and tool-schema snapshots) runs as a required CI gate. *(The related half of this — no way
 to point the agent at a throwaway state tree — is `RESOLVED`: `JARVIS_ROOT` shipped with the staging
 work, and `scripts/ci/check_paths.py` enforces it on every PR.)*
 

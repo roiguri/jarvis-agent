@@ -97,7 +97,7 @@ Restriction is **opt-in per tool** (`scopes` tuple), used when a tool is meaning
 
 ### Awareness is shared; behavior is scoped
 
-The two scopes run on **separate threads** with separate checkpoints (`heartbeat` vs `telegram_<id>`), so heartbeat's terse, machine-flavored turns never pollute the conversational sliding window. But the chat agent must still **know what the heartbeat did** — if the heartbeat queued a download or sent a reminder, "did you grab that show?" has to work. The split that makes both true:
+The two scopes run on **separate threads** with separate checkpoints (`heartbeat` vs the one `owner` thread every channel shares), so heartbeat's terse, machine-flavored turns never pollute the conversational sliding window. But the chat agent must still **know what the heartbeat did** — if the heartbeat queued a download or sent a reminder, "did you grab that show?" has to work. The split that makes both true:
 
 | Layer | Scoped or shared | Mechanism |
 |---|---|---|
@@ -305,7 +305,7 @@ Core-tool schemas are injected by LangGraph from `bind_tools`, not enumerated in
 
 ## Concurrency
 
-`active_skills` lives in the SQLite checkpoint. The only race is **a heartbeat tick mutating a checkpoint while a user turn for the same thread is mid-flight**. The threads are distinct (`heartbeat` vs `telegram_<id>`), so cross-thread checkpoint contention is not a concern; intra-thread concurrency is serialized by running one turn per thread at a time (the existing `asyncio.to_thread(ask_jarvis, ...)` call sites in [main.py](../../main.py) and [heartbeat.py](../../heartbeat.py) already do this). The broader heartbeat ↔ user concurrency model (skip/defer/interrupt, checkpoint injection for heartbeat-initiated conversations) is specified in [ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md) "Concurrency Model" and is not re-derived here.
+`active_skills` lives in the SQLite checkpoint. The only race is **a heartbeat tick mutating a checkpoint while a user turn for the same thread is mid-flight**. The threads are distinct (`heartbeat` vs `owner`), so cross-thread checkpoint contention is not a concern; intra-thread concurrency is serialized by running one turn per thread at a time (the owner-turn lock in [main.py](../../main.py) and `TURN_LOCK` in [heartbeat.py](../../heartbeat.py)). The broader heartbeat ↔ user concurrency model (skip/defer/interrupt, checkpoint injection for heartbeat-initiated conversations) is specified in [ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md) "Concurrency Model" and is not re-derived here.
 
 ---
 
