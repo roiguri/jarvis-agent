@@ -327,3 +327,21 @@ def test_heartbeat_form_send_is_logged(host):
     finally:
         turn_context.CURRENT_CHANNEL.reset(tok)
     assert logged == [], "user form send stays unlogged"
+
+
+def test_heartbeat_form_result_says_text_was_sent(host):
+    """In a background turn the result tells the model the card's text already
+    reached the user, so the ack doesn't send it again; a user turn's doesn't."""
+    scope_tok = turn_context.CURRENT_SCOPE.set("heartbeat")
+    try:
+        out = send_form.func(**ARGS)
+    finally:
+        turn_context.CURRENT_SCOPE.reset(scope_tok)
+    assert out.startswith("Sent form") and "don't repeat it in heartbeat_respond" in out
+
+    tok = on_channel("jarvis-app")
+    try:
+        out = send_form.func(**ARGS)
+    finally:
+        turn_context.CURRENT_CHANNEL.reset(tok)
+    assert out.startswith("Sent form") and "heartbeat_respond" not in out
