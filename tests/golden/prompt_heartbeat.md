@@ -66,6 +66,7 @@ To add, change or remove a recurring task, use `manage_heartbeat_task` — never
 Scheduled wakes:
 - A turn whose message is a "Scheduled wake [id]" is not a tick: it was scheduled with `manage_trigger` to do one thing. Work only its instruction. The HEARTBEAT.md task list does not apply, no notes files are due, and you do not update the daily log.
 - If the wake names a task, that task's block is shown in HEARTBEAT.md: follow what it says for this kind of wake, and read or update its notes file as it says. It is still one wake, not a tick — never list the task in `acted_tasks`.
+- The wake's message comes from the scheduler, not from Roi — he hasn't said anything. Write `notification_text` as a message you are starting, never as a reply to the instruction (no "Got it", "Sure", "I've updated…"), and never claim you did what the instruction only reports.
 - End it by calling `heartbeat_respond` exactly once, with `acted_tasks` set to `[]`, and `notify`/`notification_text` as for a tick.
 
 --- HEARTBEAT.md ---

@@ -37,6 +37,10 @@ def _label(c: dict) -> str:
     return f"{_start(c).astimezone(ISRAEL_TZ).strftime('%a %d.%m %H:%M')} {c['category']}"
 
 
+def _hhmm(t: datetime) -> str:
+    return t.astimezone(ISRAEL_TZ).strftime("%H:%M")
+
+
 @gate(GATE)
 def check(state: dict | None) -> GateResult:
     known = (state or {}).get("classes", {})
@@ -76,19 +80,25 @@ def apply(result: GateResult) -> list:
     _apply_registered(result.data["registered"])
     now = datetime.now(timezone.utc)
     current = result.data["current"]
-    followups = []
+    followups, scheduled = [], []
     for i in result.data["changed"]:
         c, start = current[i], _start(current[i])
-        followups.append(Upsert(f"arbox:{i}:brief", max(start - BRIEFING_LEAD, now),
-                                Turn(f"Pre-class briefing: {_label(c)}.")))
-        followups.append(Upsert(f"arbox:{i}:checkin", start + CLASS_LENGTH,
-                                Turn(f"End-of-class check-in: {_label(c)}.")))
+        brief, checkin = max(start - BRIEFING_LEAD, now), start + CLASS_LENGTH
+        followups.append(Upsert(f"arbox:{i}:brief", brief, Turn(f"Pre-class briefing: {_label(c)}.")))
+        followups.append(Upsert(f"arbox:{i}:checkin", checkin, Turn(f"End-of-class check-in: {_label(c)}.")))
+        # So the change wake states the real times instead of guessing them.
+        scheduled.append(f"{_label(c)} — briefing {'now' if brief == now else _hhmm(brief)}, "
+                         f"check-in {_hhmm(checkin)}")
     for i in result.data["dropped"]:
         followups.append(Cancel(f"arbox:{i}:"))
     if not result.data["first_run"]:
         # Keyed by the change itself: a retried tick re-applies the same wake
         # instead of adding a second one.
         digest = hashlib.sha1(result.message.encode()).hexdigest()[:10]
-        followups.append(Upsert(f"arbox:change:{digest}", now,
-                                Turn(f"Workout schedule changed — {result.message}.")))
+        # Facts only: the gate saw the bookings change but not who changed them
+        # (the gym can cancel a class too), and Jarvis changed nothing itself.
+        instruction = f"The hourly Arbox check found the bookings changed — {result.message}."
+        if scheduled:
+            instruction += f" Scheduled: {'; '.join(scheduled)}."
+        followups.append(Upsert(f"arbox:change:{digest}", now, Turn(instruction)))
     return followups
