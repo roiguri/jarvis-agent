@@ -66,12 +66,13 @@ def main() -> int:
         runnable = agent.llm.bind_tools(bound) if bound else agent.llm
         t0 = time.perf_counter()
         response = runnable.invoke([SystemMessage(content=prompt), HumanMessage(content=REQUEST)])
+        latency_ms = int((time.perf_counter() - t0) * 1000)
         usage = response.usage_metadata or {}
         time.sleep(args.pause)
         return {
             "input": int(usage.get("input_tokens") or 0),
             "cache_read": int((usage.get("input_token_details") or {}).get("cache_read") or 0),
-            "latency_ms": int((time.perf_counter() - t0) * 1000),
+            "latency_ms": latency_ms,
             "prompt_chars": len(prompt),
             "schema_chars": sum(b["schema_chars"] for b in agent._bound_tools(bound)),
             "tools": len(bound),
@@ -87,13 +88,17 @@ def main() -> int:
     print(f"  core tools         : {core['input'] - bare['input']:>7,} tok  "
           f"({core['schema_chars']:,} chars, {core['tools']} tools)")
     result["skills"] = {}
+    # Sorted, so a parent is measured before its sub-skills; a sub-skill's cost
+    # is measured against its parent being active, since it needs the parent.
     for ns in skills:
         r = call(active_for(ns), tools=True)
-        r["delta_input"] = r["input"] - core["input"]
-        r["delta_chars"] = (r["prompt_chars"] - core["prompt_chars"]) + (r["schema_chars"] - core["schema_chars"])
+        parent = registry._parent_of(ns)
+        base = result["skills"][parent] if parent in result["skills"] else core
+        r["delta_input"] = r["input"] - base["input"]
+        r["delta_chars"] = (r["prompt_chars"] - base["prompt_chars"]) + (r["schema_chars"] - base["schema_chars"])
         result["skills"][ns] = r
         print(f"  + {ns:<22}: {r['delta_input']:>7,} tok  ({r['delta_chars']:,} chars, "
-              f"{r['tools'] - core['tools']} tools)")
+              f"{r['tools'] - base['tools']} tools)" + (f"  [over {parent}]" if parent else ""))
 
     print(f"\n## cache (core ×3, then + {args.cache_skill} ×3; twice)")
     result["cache"] = []

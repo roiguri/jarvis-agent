@@ -49,7 +49,7 @@ It is **not** responsible for:
 | Table | One row per | Columns (beyond `id`, `ts`) |
 |---|---|---|
 | `turns` | Turn or job | `turn_id`, `thread_id`, `scope` (`user` \| `heartbeat` \| `job`), `job`, `channel`, `trigger_id`, `due_tasks` (JSON list), `started_at`, `ended_at`, `duration_ms`, `llm_calls`, `tool_calls`, token totals (`input_tokens`, `cache_read_tokens`, `output_tokens`, `reasoning_tokens`, `total_tokens`), `model`, `active_skills_start` / `_end` (JSON), `no_action`, `outcome`, `error`, `budget` (JSON) |
-| `llm_calls` | Model call | `turn_id`, `call_index` (1-based), `started_at`, `latency_ms`, input / cache-read / output / reasoning tokens, `finish_reason`, `model`, `prompt_hash`, `prompt_chars`, `schema_chars`, `bound_tool_count`, `history_chars`, `turn_chars`, `history_messages`, `turn_messages`, `error` |
+| `llm_calls` | Model call | `turn_id`, `call_index` (1-based), `started_at`, `latency_ms`, input / cache-read / output / reasoning tokens, `finish_reason`, `model`, `prompt_hash`, `prompt_chars`, `schema_chars`, `bound_tool_count`, `history_chars`, `turn_chars`, `history_messages`, `turn_messages`, `error`, `telemetry_error` |
 | `tool_calls` | Tool call | `turn_id`, `llm_call_index` (the call that issued it), `tool`, `namespace`, `destructive`, `duration_ms`, `status` (`ok` \| `error` \| `not_active`), `args_size`, `result_size`, `error`, `traceback` |
 | `bound_tools` | Turn × tool | `turn_id`, `tool`, `namespace`, `schema_chars`, `first_call_index` |
 | `prompts` | Distinct system prompt | `prompt_hash` (SHA-256), `scope`, `chars`, `text`, `first_seen`, `last_seen` |
@@ -61,10 +61,10 @@ Inserted when the turn starts and updated when it ends, so a turn the process ne
 - `channel` is the origin channel, `trigger_id` the trigger whose firing started a wake, `due_tasks` the heartbeat's due-task set — so heartbeat cost can be read per task set.
 - `cache_read_tokens` is the input served from the provider's prompt cache; `cache_read_tokens / input_tokens` is the hit rate. From `usage_metadata.input_token_details.cache_read`, `None`-safe.
 - `reasoning_tokens` is the thinking slice **of** `output_tokens` — a subset, billed as output, so it is a diagnostic and never enters `estimate_usd`. It is the only observable `thinking_level` moves.
-- `llm_calls` counts every call, including a final one that raised.
+- `llm_calls` counts every call, including a final one that raised (the turn budget does not count that one, so a failed row can read one above its budget's step count).
 - `no_action` is `true` iff `scope == "heartbeat"` and the tick sent the owner no message (`not ack.notify`; no ack counts as a no-op).
 - `outcome` is how the turn ended, from `turn_budget.py`: `completed`, `wrapped_up`, `budget_exhausted` or `failed` (`error` carries the detail). A job is `completed` or `failed`.
-- `budget` is the turn budget as it stood: the scope's `limits`, which limit ended it (`exhausted_by`: `time` / `steps` / `tokens`) and whether the wrap-up notice fired. Usage against each limit is the row's own `duration_ms`, `llm_calls`, `input_tokens`, so every row explains itself across limit changes. A `budget_exhausted` row is censored: it shows the limit, not what the turn wanted.
+- `budget` is the turn budget as it stood: the scope's `limits`, which limit ended it (`exhausted_by`: `time` / `steps` / `tokens`) and whether the wrap-up notice fired. Usage against each limit is the row's own `duration_ms`, `llm_calls`, `input_tokens` (see the `llm_calls` note above), so every row explains itself across limit changes. A `budget_exhausted` row is censored: it shows the limit, not what the turn wanted.
 
 ### `llm_calls` — composition
 
@@ -77,17 +77,19 @@ Each call records what its input was made of, in chars, split at the current tur
 
 Chars are shares; tokens are cost. Together they split a call's input into prompt, schemas, replayed history and the growing tool-result tail. Message chars count text and tool-call JSON; media blobs are left out. A call that raised is recorded with its `error`, latency and composition before the exception propagates.
 
+If measuring the composition itself fails (a telemetry bug, e.g. an unexpected message shape), the turn carries on: the traceback goes to the journal, the call's row has `telemetry_error` set and no composition, and `/usage` shows `⚠ N telemetry errors` for the period.
+
 ### `tool_calls`
 
 Written as each call returns (`ts` is the return time; start is `ts - duration_ms`), so a crashing turn keeps its tool history. **Arguments and results are not stored** — they routinely contain the owner's personal data; `args_size` / `result_size` are enough to debug "this tool was hammered" or "this result was huge". Tracebacks are truncated to 3 KB; the `ToolMessage` the model sees stays the short `Error: …` string.
 
 ### `bound_tools` and `prompts`
 
-`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`.
+`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: today's daily log (user scope) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
 
 ### Writes
 
-One short transaction per event, on a short-lived connection (user and heartbeat turns run on different threads). A failed write is logged and dropped, never raised into a turn — a locked file or a full disk must not fail a turn after its work has landed.
+One short transaction per event, on a short-lived connection (user and heartbeat turns run on different threads), with `synchronous=NORMAL` (safe under WAL: a power cut can lose the last commits, not corrupt the file). A failed write is logged and dropped, never raised into a turn — a locked file or a full disk must not fail a turn after its work has landed.
 
 ---
 
@@ -130,7 +132,7 @@ Lives in `gateway/commands/handlers.py`. Thin wrapper around `observability.summ
 /usage 21.5             → specific day (D.M, current year; D.M.Y also works)
 ```
 
-Jobs appear as their own `job` scope. Turn outcomes show alongside the counts: `N errors`, `N stopped early (2 steps, 1 time)`, `N wrapped up` — a budget stop is not counted as an error. Rendering follows the slash-command reply contract ([GATEWAY.md](GATEWAY.md) § Reply formatting).
+Jobs appear as their own `job` scope; `⚠ N telemetry errors` appears when any model call's input could not be measured. Turn outcomes show alongside the counts: `N errors`, `N stopped early (2 steps, 1 time)`, `N wrapped up` — a budget stop is not counted as an error. Rendering follows the slash-command reply contract ([GATEWAY.md](GATEWAY.md) § Reply formatting).
 
 ### `observability` Python module — REPL / scripts
 
@@ -178,7 +180,7 @@ Every table keeps 180 days (`store.RETENTION_DAYS`); `store.trim()` runs at star
 
 ### Transition from JSONL
 
-Telemetry was previously written to `logs/turns.jsonl` and `logs/tool_calls.jsonl`. Those files are no longer written. At startup, `store.import_jsonl` copies their last 180 days into the store once (idempotent; recorded in the `meta` table), and the startup trim keeps aging the files out. That code is temporary and marked `TODO(#150)`.
+Telemetry was previously written to `logs/turns.jsonl` and `logs/tool_calls.jsonl`. Those files are no longer written. At startup, before the 90-day log trim, `store.import_jsonl` copies their last 180 days into the store once (idempotent; recorded in the `meta` table), and the trim keeps aging the files out. That code is temporary and marked `TODO(#150)`.
 
 **`TODO(#N)` convention.** Code that exists only until a follow-up lands carries `TODO(#N)`, naming the issue that tracks its removal. The `todo-issues` workflow (`.github/workflows/todo-issues.yml`) reopens issue N if it is closed while any marker remains on `main`, so the issue can only stay closed once the code is gone.
 

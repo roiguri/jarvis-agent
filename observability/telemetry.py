@@ -221,6 +221,7 @@ def record_llm_call(
     history_messages: int | None = None,
     turn_messages: int | None = None,
     error: str | None = None,
+    telemetry_error: str | None = None,
 ) -> None:
     """Record one model call: roll its tokens into the turn and write its row.
 
@@ -228,8 +229,9 @@ def record_llm_call(
     composition arguments are chars, split at the current turn's start:
     ``prompt`` (the system prompt text, stored once by hash), ``bound`` (one
     ``{"tool", "namespace", "schema_chars"}`` per bound tool), history from
-    earlier turns, and this turn's messages so far. A call outside any turn
-    or job is not recorded.
+    earlier turns, and this turn's messages so far. ``telemetry_error`` says
+    why the composition is missing when measuring it failed. A call outside
+    any turn or job is not recorded.
     """
     acc = TURN_ACC.get()
     if acc is None:
@@ -267,6 +269,7 @@ def record_llm_call(
         "history_messages": history_messages,
         "turn_messages": turn_messages,
         "error": error,
+        "telemetry_error": telemetry_error,
     }
     call.pop("total_tokens")
     _guarded("llm call", _write_llm_call, call, prompt_rec, bound)
@@ -306,7 +309,7 @@ def record_tool_call(
     def write(rec):
         with store.write() as con:
             con.execute(
-                f"INSERT OR IGNORE INTO tool_calls ({', '.join(rec)}) "
+                f"INSERT INTO tool_calls ({', '.join(rec)}) "
                 f"VALUES ({', '.join('?' for _ in rec)})",
                 tuple(rec.values()),
             )

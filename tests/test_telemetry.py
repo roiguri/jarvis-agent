@@ -238,10 +238,13 @@ def test_import_is_idempotent_and_skips_old_and_bad_lines():
         {"ts": turns[0]["ts"], "turn_id": "legacy0", "tool": "list_memory", "namespace": "core",
          "destructive": False, "duration_ms": 5, "status": "ok", "args_size": 2,
          "error": None, "traceback": None},
+        # Very old rows carry no turn_id; a re-run must not duplicate them either.
+        {"ts": turns[1]["ts"], "tool": "read_memory", "namespace": "core", "destructive": False,
+         "duration_ms": 3, "status": "ok", "args_size": 9, "error": None, "traceback": None},
     ])
     paths = (telemetry.TURNS_LOG, telemetry.TOOL_CALLS_LOG)
     first = store.import_jsonl(*paths)
-    assert first == {"turns": 5, "tool_calls": 1, "skipped_lines": 1}
+    assert first == {"turns": 5, "tool_calls": 2, "skipped_lines": 1}
     assert store.imported()
     again = store.import_jsonl(*paths)
     assert (again["turns"], again["tool_calls"]) == (0, 0), "a re-run adds nothing"
@@ -253,8 +256,61 @@ def test_readers_match_the_jsonl_path_on_imported_data(monkeypatch):
     _write_jsonl("turns.jsonl", turns)
     store.import_jsonl(telemetry.TURNS_LOG, telemetry.TOOL_CALLS_LOG)
 
-    from_store = {g: summarize_usage(group_by=g) for g in ("day", "scope", "day+scope", "week")}
-    # The old path: the same rollup over the raw JSONL records.
-    monkeypatch.setattr(usage, "load_turns", lambda since=None, until=None: list(turns))
-    from_jsonl = {g: summarize_usage(group_by=g) for g in from_store}
+    ranges = {"all": (None, None), "2 days": usage.israel_last_n_days(2),
+              "one day": usage.israel_day_range(
+                  datetime.fromisoformat(turns[1]["ts"]).astimezone(usage._IL_TZ).date().isoformat())}
+    groups = ("day", "scope", "day+scope", "week")
+    from_store = {(r, g): summarize_usage(*ranges[r], group_by=g) for r in ranges for g in groups}
+
+    # The old path: the same rollup over the raw JSONL records, filtered by ts.
+    def jsonl_load_turns(since=None, until=None):
+        def inside(rec):
+            ts = datetime.fromisoformat(rec["ts"])
+            return (since is None or ts >= since) and (until is None or ts < until)
+        return [rec for rec in turns if inside(rec)]
+
+    monkeypatch.setattr(usage, "load_turns", jsonl_load_turns)
+    from_jsonl = {(r, g): summarize_usage(*ranges[r], group_by=g) for r in ranges for g in groups}
     assert from_store == from_jsonl
+    assert from_store[("one day", "scope")], "the one-day window is not empty"
+
+
+# --- Measurement failures and message shapes ------------------------------------
+
+def test_measurement_failure_is_recorded_not_raised(use_llm, monkeypatch):
+    def broken(message):
+        raise TypeError("unexpected content shape")
+
+    monkeypatch.setattr(agent, "_message_chars", broken)
+    use_llm(FakeLLM([ai("still answered")]))
+    out = agent.ask_jarvis("hi", "t_measure")
+    assert out.text == "still answered", "the turn is unaffected"
+    [turn] = turn_rows()
+    [call] = calls_of(turn["turn_id"])
+    assert "unexpected content shape" in call["telemetry_error"]
+    assert call["prompt_chars"] is None, "no composition rather than a wrong one"
+    assert call["input_tokens"] == 100, "tokens still recorded"
+    n = usage.telemetry_errors()
+    assert n == 1
+    assert "⚠ 1 telemetry error" in usage.format_usage_table(summarize_usage(), telemetry_errors=n)
+    assert "⚠ 1 telemetry error" in usage.format_usage_table([], telemetry_errors=n), \
+        "shown even when the period has no finished turns"
+
+
+def test_message_chars_tolerates_empty_text_blocks():
+    msg = types.SimpleNamespace(content=[{"type": "text", "text": None}, {"type": "media", "data": "x" * 50}],
+                                tool_calls=None)
+    assert agent._message_chars(msg) == 0, "empty text counts 0; media blobs are not prompt text"
+
+
+def test_mirror_block_counts_as_this_turns_input(use_llm):
+    from gateway.base import OWNER_THREAD_ID
+
+    sent = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    _write_jsonl("notifications.jsonl", [{"ts": sent, "event": "heartbeat", "message": "Morning briefing"}])
+    use_llm(FakeLLM([ai("answer")]))
+    agent.ask_jarvis("about that briefing", OWNER_THREAD_ID)
+    [turn] = turn_rows()
+    [call] = calls_of(turn["turn_id"])
+    assert (call["history_messages"], call["turn_messages"]) == (0, 2), \
+        "the mirror block and the message it precedes are one turn's input"

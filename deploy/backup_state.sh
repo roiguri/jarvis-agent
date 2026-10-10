@@ -61,10 +61,18 @@ cmd_backup() {
     log "archiving $MEMORY_DIR + $DATA_DIR"
     local telemetry_rel="jarvis_data/observability/telemetry.sqlite"
     if [[ -f "$ROOT/$telemetry_rel" ]]; then
-        local tmp; tmp="$(mktemp -d)"
-        trap 'rm -rf "$tmp"' RETURN
+        # Global, not local: the EXIT trap must still see it when set -e aborts.
+        BACKUP_TMP="$(mktemp -d)"
+        trap 'rm -rf "$BACKUP_TMP"' EXIT
+        local tmp="$BACKUP_TMP"
         mkdir -p "$tmp/copy/$(dirname "$telemetry_rel")"
-        sqlite3 "$ROOT/$telemetry_rel" ".backup '$tmp/copy/$telemetry_rel'"
+        if command -v sqlite3 >/dev/null; then
+            sqlite3 "$ROOT/$telemetry_rel" ".backup '$tmp/copy/$telemetry_rel'"
+        else
+            python3 -c 'import sqlite3, sys
+src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
+src.backup(dst)' "$ROOT/$telemetry_rel" "$tmp/copy/$telemetry_rel"
+        fi
         # Excluded from the live pass, appended as the copy: an uncompressed tar is
         # appendable, so the exclude never sees the copy's identical name.
         tar -cf "$tmp/state.tar" -C "$ROOT" \

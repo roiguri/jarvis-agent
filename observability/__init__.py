@@ -32,6 +32,7 @@ from observability.usage import (
     format_usage_table,
     israel_day_range,
     israel_last_n_days,
+    telemetry_errors,
 )
 
 __all__ = [
@@ -53,4 +54,5 @@ __all__ = [
     "format_usage_table",
     "israel_day_range",
     "israel_last_n_days",
+    "telemetry_errors",
 ]

@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     turn_chars INTEGER,
     history_messages INTEGER,
     turn_messages INTEGER,
-    error TEXT
+    error TEXT,
+    telemetry_error TEXT
 );
 CREATE INDEX IF NOT EXISTS llm_calls_turn ON llm_calls(turn_id);
 CREATE INDEX IF NOT EXISTS llm_calls_ts ON llm_calls(ts);
@@ -103,8 +104,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS tool_calls_turn ON tool_calls(turn_id);
 CREATE INDEX IF NOT EXISTS tool_calls_ts ON tool_calls(ts);
--- The natural key that makes the legacy import re-runnable.
-CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_key ON tool_calls(turn_id, ts, tool);
+-- The natural key that makes the JSONL import re-runnable (COALESCE: NULLs
+-- are distinct in a unique index, so rows without a turn_id would repeat).
+CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_key ON tool_calls(COALESCE(turn_id, ''), ts, tool);
 
 CREATE TABLE IF NOT EXISTS bound_tools (
     id INTEGER PRIMARY KEY,
@@ -141,6 +143,8 @@ def _open(path: str) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=5)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout = 5000")
+    # Safe with WAL: a power cut can lose the last commits, never corrupt the file.
+    con.execute("PRAGMA synchronous = NORMAL")
     return con
 
 

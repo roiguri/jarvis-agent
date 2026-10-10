@@ -520,7 +520,7 @@ def _message_chars(message) -> int:
         chars = len(content)
     else:
         chars = sum(
-            len(block.get("text", "")) if isinstance(block, dict) else len(str(block))
+            len(block.get("text") or "") if isinstance(block, dict) else len(str(block))
             for block in content or []
         )
     tool_calls = getattr(message, "tool_calls", None)
@@ -582,15 +582,20 @@ def _llm_node(state: JarvisState) -> dict:
         if tracker.wrapped_up:
             messages.append(HumanMessage(content=tracker.policy.wrap_up_notice))
     prompt = build_system_prompt(scope, active, due_tasks)
-    composition = {
-        "prompt": prompt,
-        "scope": scope,
-        "bound": _bound_tools(tools),
-        "history_chars": sum(_message_chars(m) for m in messages[:split]),
-        "turn_chars": sum(_message_chars(m) for m in messages[split:]),
-        "history_messages": split,
-        "turn_messages": len(messages) - split,
-    }
+    try:
+        composition = {
+            "prompt": prompt,
+            "scope": scope,
+            "bound": _bound_tools(tools),
+            "history_chars": sum(_message_chars(m) for m in messages[:split]),
+            "turn_chars": sum(_message_chars(m) for m in messages[split:]),
+            "history_messages": split,
+            "turn_messages": len(messages) - split,
+        }
+    except Exception as e:
+        # A measuring bug must not stop the turn; the row and /usage show it.
+        logger.exception("Telemetry: measuring the call's input failed")
+        composition = {"telemetry_error": f"{type(e).__name__}: {e}"}
     started_at = _dt.datetime.now(_dt.timezone.utc)
     t0 = time.perf_counter()
     try:

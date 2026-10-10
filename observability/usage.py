@@ -142,6 +142,21 @@ def load_turns(
     return out
 
 
+def telemetry_errors(since: datetime | None = None, until: datetime | None = None) -> int:
+    """Model calls in [since, until) whose input could not be measured — a
+    bug in the telemetry itself, surfaced so it is not silently absorbed."""
+    sql = "SELECT COUNT(*) AS n FROM llm_calls WHERE telemetry_error IS NOT NULL"
+    params: list = []
+    if since is not None:
+        sql += " AND ts >= ?"
+        params.append(_iso(since))
+    if until is not None:
+        sql += " AND ts < ?"
+        params.append(_iso(until))
+    found = store.rows(sql, tuple(params))
+    return int(found[0]["n"]) if found else 0
+
+
 # ---------------------------------------------------------------------------
 # Rollups
 # ---------------------------------------------------------------------------
@@ -370,7 +385,7 @@ def _row_line(r: dict) -> str:
     )
 
 
-def format_usage_table(rows: list[dict], title: str = "") -> str:
+def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int = 0) -> str:
     """Render rollup rows as a markdown summary:
 
         **Title**
@@ -396,6 +411,9 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     rather than with those helpers only to keep observability free of a gateway
     import. scripts/ci/check_command_replies.py validates this output via /usage.
 
+    ``telemetry_errors`` (model calls whose input could not be measured) adds a
+    '⚠ N telemetry errors' line when non-zero, empty periods included.
+
     `extras` carries NO_ACTION / error counts, the turn-budget outcomes (turns
     stopped early by a limit, with the limit, and turns that wrapped up after
     the notice) and, when any model in the period
@@ -406,11 +424,13 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     command and existing callers, though the layout is a vertical summary rather
     than a fixed-width table — readable on mobile, no horizontal scroll.
     """
+    tele_line = (
+        f"- ⚠ {telemetry_errors} telemetry error{'s' if telemetry_errors != 1 else ''} "
+        "(see the journal)"
+    ) if telemetry_errors else ""
     if not rows:
-        return (
-            f"{title}\n\n_No usage records in this period._" if title
-            else "_No usage records in this period._"
-        )
+        body = "_No usage records in this period._" + (f"\n\n{tele_line}" if tele_line else "")
+        return f"{title}\n\n{body}" if title else body
 
     totals_in = sum(r["input_tokens"] for r in rows)
     totals_cache = sum(r["cache_read_tokens"] for r in rows)
@@ -456,6 +476,8 @@ def format_usage_table(rows: list[dict], title: str = "") -> str:
     out.append(f"- **{_usd(totals_usd)}** total")
     if extras_parts:
         out.append(f"- {' · '.join(extras_parts)}")
+    if tele_line:
+        out.append(tele_line)
     # Single-row tables (one bucket = whole period) are redundant — totals already
     # cover the whole story. Show the per-row breakdown only when there are 2+.
     if len(rows) > 1:

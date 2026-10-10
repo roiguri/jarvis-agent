@@ -61,7 +61,7 @@ def due_task_costs(since: str) -> list[dict]:
     """Heartbeat turns grouped by their due-task set."""
     return store.rows(
         """
-        SELECT COALESCE(due_tasks, '(not recorded)') AS due, COUNT(*) AS turns,
+        SELECT COALESCE(due_tasks, '(all tasks, or not recorded)') AS due, COUNT(*) AS turns,
                SUM(input_tokens) AS input, SUM(cache_read_tokens) AS cache_read,
                SUM(output_tokens) AS output, SUM(no_action) AS no_action,
                MAX(model) AS model
