@@ -194,85 +194,10 @@ def test_trim_drops_rows_past_retention():
     assert [r["turn_id"] for r in turn_rows()] == ["new"]
 
 
-# --- JSONL import ---------------------------------------------------------------
-# TODO(#150): remove these tests with the import.
-
 def _write_jsonl(name, records):
     with open(os.path.join(LOG_DIR, name), "w", encoding="utf-8") as f:
         for r in records:
-            f.write((r if isinstance(r, str) else json.dumps(r)) + "\n")
-
-
-def _legacy_turns():
-    now = datetime.now(timezone.utc)
-    rows = []
-    for i, (scope, model, outcome, error) in enumerate([
-        ("user", "gemini-3-flash-preview", "completed", None),
-        ("heartbeat", "gemini-3-flash-preview", "completed", None),
-        ("user", "gemini-3-flash-preview", "budget_exhausted", "budget exhausted: steps"),
-        ("user", "gemini-9-unpriced", "failed", "RuntimeError: x"),
-        ("heartbeat", "gemini-3-flash-preview", None, None),
-    ]):
-        ts = (now - timedelta(days=i, hours=1)).isoformat()
-        rows.append({
-            "ts": ts, "turn_id": f"legacy{i}", "thread_id": "owner", "scope": scope,
-            "started_at": ts, "ended_at": ts, "duration_ms": 1000 + i,
-            "llm_calls": 2 + i, "tool_calls": i, "input_tokens": 10000 * (i + 1),
-            "cache_read_tokens": 1000 * i, "output_tokens": 100 + i, "reasoning_tokens": i,
-            "total_tokens": 10000 * (i + 1) + 100 + i, "model": model,
-            "active_skills_start": [], "active_skills_end": ["fitness"],
-            "no_action": scope == "heartbeat", "error": error, "outcome": outcome,
-            "budget": {"limits": {"max_llm_calls": 30},
-                       "exhausted_by": "steps" if outcome == "budget_exhausted" else None,
-                       "wrapped_up": False},
-        })
-    return rows
-
-
-def test_import_is_idempotent_and_skips_old_and_bad_lines():
-    turns = _legacy_turns()
-    too_old = dict(turns[0], turn_id="ancient",
-                   ts=(datetime.now(timezone.utc) - timedelta(days=400)).isoformat())
-    _write_jsonl("turns.jsonl", turns + [too_old, "{not json"])
-    _write_jsonl("tool_calls.jsonl", [
-        {"ts": turns[0]["ts"], "turn_id": "legacy0", "tool": "list_memory", "namespace": "core",
-         "destructive": False, "duration_ms": 5, "status": "ok", "args_size": 2,
-         "error": None, "traceback": None},
-        # Very old rows carry no turn_id; a re-run must not duplicate them either.
-        {"ts": turns[1]["ts"], "tool": "read_memory", "namespace": "core", "destructive": False,
-         "duration_ms": 3, "status": "ok", "args_size": 9, "error": None, "traceback": None},
-    ])
-    paths = (telemetry.TURNS_LOG, telemetry.TOOL_CALLS_LOG)
-    first = store.import_jsonl(*paths)
-    assert first == {"turns": 5, "tool_calls": 2, "skipped_lines": 1}
-    assert store.imported()
-    again = store.import_jsonl(*paths)
-    assert (again["turns"], again["tool_calls"]) == (0, 0), "a re-run adds nothing"
-    assert len(turn_rows()) == 5
-
-
-def test_readers_match_the_jsonl_path_on_imported_data(monkeypatch):
-    turns = _legacy_turns()
-    _write_jsonl("turns.jsonl", turns)
-    store.import_jsonl(telemetry.TURNS_LOG, telemetry.TOOL_CALLS_LOG)
-
-    ranges = {"all": (None, None), "2 days": usage.israel_last_n_days(2),
-              "one day": usage.israel_day_range(
-                  datetime.fromisoformat(turns[1]["ts"]).astimezone(usage._IL_TZ).date().isoformat())}
-    groups = ("day", "scope", "day+scope", "week")
-    from_store = {(r, g): summarize_usage(*ranges[r], group_by=g) for r in ranges for g in groups}
-
-    # The old path: the same rollup over the raw JSONL records, filtered by ts.
-    def jsonl_load_turns(since=None, until=None):
-        def inside(rec):
-            ts = datetime.fromisoformat(rec["ts"])
-            return (since is None or ts >= since) and (until is None or ts < until)
-        return [rec for rec in turns if inside(rec)]
-
-    monkeypatch.setattr(usage, "load_turns", jsonl_load_turns)
-    from_jsonl = {(r, g): summarize_usage(*ranges[r], group_by=g) for r in ranges for g in groups}
-    assert from_store == from_jsonl
-    assert from_store[("one day", "scope")], "the one-day window is not empty"
+            f.write(json.dumps(r) + "\n")
 
 
 # --- Measurement failures and message shapes ------------------------------------

@@ -104,8 +104,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS tool_calls_turn ON tool_calls(turn_id);
 CREATE INDEX IF NOT EXISTS tool_calls_ts ON tool_calls(ts);
--- The natural key that makes the JSONL import re-runnable (COALESCE: NULLs
--- are distinct in a unique index, so rows without a turn_id would repeat).
+-- One row per tool call: a duplicate write fails, and the recorder logs it.
 CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_key ON tool_calls(COALESCE(turn_id, ''), ts, tool);
 
 CREATE TABLE IF NOT EXISTS bound_tools (
@@ -127,11 +126,6 @@ CREATE TABLE IF NOT EXISTS prompts (
     text TEXT,
     first_seen TEXT,
     last_seen TEXT
-);
-
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
 );
 """
 
@@ -207,92 +201,6 @@ def trim(days: int = RETENTION_DAYS) -> dict[str, int]:
             "DELETE FROM prompts WHERE last_seen < ?", (cutoff,)
         ).rowcount
     return deleted
-
-
-# ---------------------------------------------------------------------------
-# One-time import of the JSONL streams this store replaced
-# TODO(#150): remove this section once both instances have imported.
-# ---------------------------------------------------------------------------
-
-_TURN_COLUMNS = (
-    "ts", "turn_id", "thread_id", "scope", "started_at", "ended_at", "duration_ms",
-    "llm_calls", "tool_calls", "input_tokens", "cache_read_tokens", "output_tokens",
-    "reasoning_tokens", "total_tokens", "model", "outcome", "error",
-)
-_TOOL_COLUMNS = (
-    "ts", "turn_id", "tool", "namespace", "duration_ms", "status", "args_size",
-    "error", "traceback",
-)
-
-
-def _read_jsonl(path: str, cutoff: datetime) -> tuple[list[dict], int]:
-    out, skipped = [], 0
-    if not os.path.exists(path):
-        return out, skipped
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-                ts = datetime.fromisoformat(rec["ts"])
-            except (KeyError, ValueError, TypeError):
-                skipped += 1
-                continue
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            if ts >= cutoff:
-                # Range queries compare ts as text, so every row is UTC ISO.
-                rec["ts"] = ts.astimezone(timezone.utc).isoformat()
-                out.append(rec)
-    return out, skipped
-
-
-def import_jsonl(turns_path: str, tool_calls_path: str,
-                 days: int = RETENTION_DAYS) -> dict[str, int]:
-    """Copy the last ``days`` of turns.jsonl / tool_calls.jsonl into the store.
-
-    Idempotent: turns are keyed by turn_id and tool calls by (turn_id, ts,
-    tool), so a re-run inserts nothing new. Rows without a turn_id (very old
-    records) get a synthetic one so they still count in rollups.
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    turns, bad_turns = _read_jsonl(turns_path, cutoff)
-    tools, bad_tools = _read_jsonl(tool_calls_path, cutoff)
-    added_turns = added_tools = 0
-    with write() as con:
-        for rec in turns:
-            values = {c: rec.get(c) for c in _TURN_COLUMNS}
-            values["turn_id"] = values["turn_id"] or f"legacy-{rec['ts']}"
-            values["no_action"] = int(bool(rec.get("no_action")))
-            values["active_skills_start"] = dumps(rec.get("active_skills_start"))
-            values["active_skills_end"] = dumps(rec.get("active_skills_end"))
-            values["budget"] = dumps(rec.get("budget"))
-            cols = ", ".join(values)
-            marks = ", ".join("?" for _ in values)
-            added_turns += con.execute(
-                f"INSERT OR IGNORE INTO turns ({cols}) VALUES ({marks})", tuple(values.values())
-            ).rowcount
-        for rec in tools:
-            values = {c: rec.get(c) for c in _TOOL_COLUMNS}
-            values["destructive"] = int(bool(rec.get("destructive")))
-            cols = ", ".join(values)
-            marks = ", ".join("?" for _ in values)
-            added_tools += con.execute(
-                f"INSERT OR IGNORE INTO tool_calls ({cols}) VALUES ({marks})", tuple(values.values())
-            ).rowcount
-        con.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('jsonl_import', ?)",
-            (datetime.now(timezone.utc).isoformat(),),
-        )
-    return {"turns": added_turns, "tool_calls": added_tools,
-            "skipped_lines": bad_turns + bad_tools}
-
-
-def imported() -> bool:
-    """Whether the JSONL import has run against this store."""
-    return bool(rows("SELECT 1 FROM meta WHERE key = 'jsonl_import'"))
 
 
 # ---------------------------------------------------------------------------

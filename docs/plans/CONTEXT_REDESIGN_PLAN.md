@@ -1,7 +1,7 @@
 # Context Redesign — Plan
 
-**Date:** 2026-10-07 · **Status:** decisions made, reviewed, S0 spec approved; #135 and #129
-closed 2026-10-09/10, so S0 can start.
+**Date:** 2026-10-07 · **Status:** S0 in prod since 2026-10-10 (#151); before-readings due
+~2026-10-15; S1 next.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -37,32 +37,35 @@ largest remaining cost (the heartbeat), then the two pieces that change behaviou
 recorded (S2).
 
 **S0 — Instrument.** Telemetry moves from JSONL to its own SQLite store and records every LLM
-call (§2a). Measurement only: no behaviour change. Goes to `main` early.
-- [ ] `jarvis_data/observability/telemetry.sqlite` with the tables in §2a; one writer module
+call (§2a). Measurement only: no behaviour change. Goes to `main` early. **Shipped:** #151, in prod
+since 2026-10-10 (`deploy-2026-10-10-3`).
+- [x] `jarvis_data/observability/telemetry.sqlite` with the tables in §2a; one writer module
       (`observability/telemetry.py`), never raising into a turn.
-- [ ] `_llm_node` records each call: tokens, latency, finish reason, composition in chars, the
+- [x] `_llm_node` records each call: tokens, latency, finish reason, composition in chars, the
       prompt's hash; the bound tool set per turn. Tool calls link to the LLM call that issued them.
-- [ ] Heartbeat turns record their due tasks; wakes their trigger.
-- [ ] `telemetry.job(name)` records LLM calls made outside a turn (used from S5/S6).
-- [ ] One-time import of the last 180 days of `turns.jsonl` and `tool_calls.jsonl` (idempotent).
-- [ ] Readers moved to the store: `/usage` (`observability/usage.py`), `scripts/trace.py`,
+- [x] Heartbeat turns record their due tasks; wakes their trigger.
+- [x] `telemetry.job(name)` records LLM calls made outside a turn (used from S5/S6).
+- [x] One-time import of the last 180 days of `turns.jsonl` and `tool_calls.jsonl` (idempotent);
+      ran on both instances, then removed (#150).
+- [x] Readers moved to the store: `/usage` (`observability/usage.py`), `scripts/trace.py`,
       `scripts/context_report.py` (rewritten as queries; adds per-call composition and cost per
       due-task set), `scripts/ci/check_command_replies.py`, tests that read `turns.jsonl`.
-- [ ] Writing `turns.jsonl` and `tool_calls.jsonl` stops; the files stay on disk until they age
+- [x] Writing `turns.jsonl` and `tool_calls.jsonl` stops; the files stay on disk until they age
       out. `chat_history.jsonl` and `notifications.jsonl` are content, not telemetry: unchanged
       until S2.
-- [ ] Retention: 180 days for every table, applied at startup with the existing log trim.
-- [ ] Backups: the store is copied with SQLite's online backup, not tarred live.
+- [x] Retention: 180 days for every table, applied at startup with the existing log trim.
+- [x] Backups: the store is copied with SQLite's online backup, not tarred live.
 - [x] `scripts/measure_context.py`, run by the owner on staging (it needs the API key): real token
       cost of core tools and of each skill, and the cache test (same request ×3, then one skill
       added ×3; run twice). Ran 2026-10-10; results in §9 "Staging measurement".
-- [ ] Docs: OBSERVABILITY.md (store, tables, readers), CLAUDE.md data tree.
-- [ ] Tests: each table written with the right links; composition split at the turn start; a job
+- [x] Docs: OBSERVABILITY.md (store, tables, readers), CLAUDE.md data tree.
+- [x] Tests: each table written with the right links; composition split at the turn start; a job
       row; telemetry failure doesn't fail a turn; import is idempotent; readers return the same
       numbers as the old JSONL path on imported data.
-- [ ] Verify (staging, then prod): `/usage` matches the pre-change numbers for the imported window;
-      a staging turn and tick produce complete rows; before-reading recorded in §9 after ~5 full
-      days in prod.
+- [x] Verify (staging, then prod): `/usage` matches the pre-change numbers for the imported window;
+      a staging turn and a prod turn produce complete rows.
+- [ ] Before-reading recorded in §9 after ~5 full days in prod (~2026-10-15), including the cache
+      question.
 
 **S1 — Quick wins.** No new subsystems.
 - [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
