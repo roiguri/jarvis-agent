@@ -503,8 +503,11 @@ async def test_arbox_gate(sched, fake_outbox, arbox_fake):
     assert abs((brief - datetime.now(timezone.utc)).total_seconds()) < 10, "a class under 2h away is briefed now"
     change = [t for x, t in k.items() if x.startswith("arbox:change:")]
     assert len(change) == 1, "a new booking wakes Jarvis now, once"
-    assert change[0].action.instruction.startswith("Workout schedule changed — new: ") \
+    assert change[0].action.instruction.startswith("The hourly Arbox check found the bookings changed — new: ") \
         and (change[0].when.instant - datetime.now(timezone.utc)).total_seconds() < 10, "...naming the change"
+    checkin = k["arbox:102:checkin"].when.instant.astimezone(ISRAEL_TZ).strftime("%H:%M")
+    assert f"— briefing now, check-in {checkin}." in change[0].action.instruction, \
+        "...and the times its wakes were scheduled for"
     for t in change:
         store.remove(t.id)
         scheduler.disarm(t.id)
@@ -514,7 +517,8 @@ async def test_arbox_gate(sched, fake_outbox, arbox_fake):
     k = by_key()
     assert [x for x in k if x.startswith("arbox:101:")] == [], "a dropped class loses its wakes"
     change = [t for x, t in k.items() if x.startswith("arbox:change:")]
-    assert len(change) == 1 and "dropped: " in change[0].action.instruction, "...and wakes Jarvis now about it"
+    assert len(change) == 1 and "dropped: " in change[0].action.instruction \
+        and "Scheduled:" not in change[0].action.instruction, "...and wakes Jarvis now about it"
     for t in change:
         store.remove(t.id)
         scheduler.disarm(t.id)
