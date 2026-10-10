@@ -1,7 +1,7 @@
 # Context Redesign — Plan
 
-**Date:** 2026-10-07 · **Status:** decisions made, reviewed, S0 spec approved; implementation
-starts once #135 and #129 are closed (see "Timing" below).
+**Date:** 2026-10-07 · **Status:** decisions made, reviewed, S0 spec approved; #135 and #129
+closed 2026-10-09/10, so S0 can start.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -27,11 +27,8 @@ it goes to `main` early and gives real prod baselines; `main` is then merged bac
 branch. Later slices are verified on staging and with dry runs, and read in prod after the final
 merge.
 
-**Timing (owner, 2026-10-07):** S0 implementation starts after #135 (triggers validation, ~10-10)
-and #129 (turn-budget readings, ~10-17) are closed. #129 reads `/usage` and `turns.jsonl` over a
-14-day window, and S0 replaces that instrument, so S0 must not reach prod inside that window. The
-R4 `HEARTBEAT.md` edit (`daily-log` once a night) also waits for #135, whose checks include the
-3-hourly daily log and heartbeat turns/day against the 09-30..10-02 baseline.
+**Timing (owner, 2026-10-07):** S0 waited for #135 (triggers validation) and #129 (turn-budget
+readings), because S0 replaces the `/usage` instrument #129 read. Both closed on 2026-10-09/10.
 
 Each slice ships and is verified on its own, with a before/after reading (§9). Design
 detail is in §3–§8. Order: cheap wins first, then the store everything else depends on, then the
@@ -71,12 +68,12 @@ call (§2a). Measurement only: no behaviour change. Goes to `main` early.
 - [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
       hits after a 60-minute gap, so the reset costs no cache. RUNTIME.md's deferral note and the
       AGENTS.md "deactivate when no longer needed" line updated.
-- [ ] Fitness writer tools scoped to user turns (they are bound on every tick and never called there).
-- [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4), after #135 closes. Until S2's "today" view,
-      the chat side doesn't see silent heartbeat actions during the day; delivered messages still
-      arrive through the mirror.
 - [ ] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
-      within one round-trip; ticks/day drop by ~5.
+      within one round-trip.
+
+Dropped from S1 (owner, 2026-10-10): scoping the fitness writer tools to user turns. Ticks do call
+them (`manage_fitness_plan` as recently as 10-07), and it would restrict the heartbeat's tools,
+which decision 1 rules out. The R4 `daily-log` change moved to S5 (see there).
 
 **S2 — Episode store.** Every message of every turn, recorded by code (§3). Three steps, each
 reversible (R5):
@@ -91,7 +88,7 @@ reversible (R5):
 - [ ] The store gets its own rotating backup; `backup_state.sh --prune` stops keeping every deploy
       tarball forever.
 - [ ] "Today" view in the user-scope prompt, built by code from the store: today's tick outcomes and
-      sends (replaces the injected daily log during the day; closes the R4 gap).
+      sends. Replaces the daily log's heartbeat-activity section for the chat side.
 - [ ] **S2b, tool swap.** FTS5 index; `search_history` replaces `get_chat_history` and
       `get_notification_history`, which stay as aliases until S6 (the prod `daily-log` task calls
       `get_notification_history`). Golden snapshots updated.
@@ -139,6 +136,10 @@ reversible (R5):
 - [ ] The backstop trim keeps the summary message (it is pinned, not the first thing evicted).
 - [ ] Code validation, one corrective retry, deterministic fallback record, thrash guard.
 - [ ] Skills unused in the kept tail and for ~24h deactivated at compaction too.
+- [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4). Until this slice the 3-hourly
+      log is the chat side's only record of silent heartbeat actions (closed by S2's "today" view)
+      and of conversation that fell out of the window (closed by this slice's summary). Saves ~5
+      ticks/day.
 - [ ] Golden test on the summary framing prefix; staging probe that the model doesn't read the
       summary as owner speech.
 - [ ] Verify (dry-run harness + staging): a long travel day compacts and Jarvis still answers about
@@ -346,7 +347,7 @@ the review summary.
 | 7 | Search and history | FTS5 first, embeddings last; git for memory postponed (2026-10-07) |
 | 8 | Caps | USER.md 4,000 chars; MEMORY.md 200 lines; SOUL.md uncapped; over-cap writes rejected |
 | 9 | Episode store | Replaces `chat_history.jsonl` in three steps (R5); forever; full tool results; all ticks |
-| 10 | Daily logs | Kept; once a night now (R4), by the nightly job from S6 |
+| 10 | Daily logs | Kept; every 3h until S5, then once a night (R4), by the nightly job from S6 |
 | 11 | Consolidator visibility | Note every morning, "promoted 0 because …" when nothing changed |
 | R2 | Skill unloading | After ~3h of owner silence, plus at compaction |
 | R6 | Weekly replay | Only if nightly runs miss cross-day patterns |
