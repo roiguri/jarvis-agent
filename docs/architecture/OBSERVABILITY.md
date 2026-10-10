@@ -178,11 +178,13 @@ Every table keeps 180 days (`store.RETENTION_DAYS`); `store.trim()` runs at star
 
 `deploy/backup_state.sh` copies the store with SQLite's online backup (consistent while the service runs) instead of tarring the live file. `python -m observability.store --backup DEST` does the same by hand.
 
-### Transition from JSONL
+### History before the store
 
-Telemetry was previously written to `logs/turns.jsonl` and `logs/tool_calls.jsonl`. Those files are no longer written. At startup, before the 90-day log trim, `store.import_jsonl` copies their last 180 days into the store once (idempotent; recorded in the `meta` table), and the trim keeps aging the files out. That code is temporary and marked `TODO(#150)`.
+Telemetry was written to `logs/turns.jsonl` and `logs/tool_calls.jsonl` until 2026-10-10. What they held (about 90 days) was imported into the store once on each instance, so `/usage` and the readers cover that period too; imported turns carry no `llm_calls`, `bound_tools` or composition.
 
-**`TODO(#N)` convention.** Code that exists only until a follow-up lands carries `TODO(#N)`, naming the issue that tracks its removal. The `todo-issues` workflow (`.github/workflows/todo-issues.yml`) reopens issue N if it is closed while any marker remains on `main`, so the issue can only stay closed once the code is gone.
+### `TODO(#N)` convention
+
+Code that exists only until a follow-up lands carries `TODO(#N)`, naming the issue that tracks its removal. The `todo-issues` workflow (`.github/workflows/todo-issues.yml`) reopens issue N if it is closed while any marker remains on `main`, so the issue can only stay closed once the code is gone.
 
 ---
 

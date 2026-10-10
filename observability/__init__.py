@@ -16,8 +16,6 @@ Three modules, one concern:
 from observability.telemetry import (
     TURN_ID,
     TURN_ACC,
-    TURNS_LOG,
-    TOOL_CALLS_LOG,
     record_turn_start,
     record_llm_call,
     record_tool_call,
@@ -39,8 +37,6 @@ __all__ = [
     # Write side (telemetry).
     "TURN_ID",
     "TURN_ACC",
-    "TURNS_LOG",
-    "TOOL_CALLS_LOG",
     "record_turn_start",
     "record_llm_call",
     "record_tool_call",

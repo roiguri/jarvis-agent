@@ -16,7 +16,6 @@ a turn. See docs/architecture/OBSERVABILITY.md for the schema.
 import contextvars
 import hashlib
 import logging
-import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,13 +23,6 @@ from typing import Any
 from uuid import uuid4
 
 from observability import store
-from tools.core.history import _LOG_DIR
-
-# The JSONL streams this store replaced: no longer written, kept only so the
-# startup trim ages them out and the one-time import can read them.
-# TODO(#150): remove with the import.
-TURNS_LOG = os.path.join(_LOG_DIR, "turns.jsonl")
-TOOL_CALLS_LOG = os.path.join(_LOG_DIR, "tool_calls.jsonl")
 
 TURN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "turn_id", default=None
