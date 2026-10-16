@@ -89,3 +89,21 @@ def test_needed_skill_comes_back_in_the_same_turn(use_llm):
         "SELECT tool, first_call_index FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
     assert bound["query_fitness_db"] == 2, "the first call ran without fitness; it rejoined after activation"
     assert (turn["active_skills_start"], turn["active_skills_end"]) == ([], ["fitness"])
+
+
+def test_calling_an_inactive_skills_tool_activates_it_without_running(use_llm):
+    use_llm(FakeLLM([
+        AIMessage(content="", tool_calls=[tool_call("query_fitness_db", {"sql": "select 1"}, 4)]),
+        AIMessage(content="", tool_calls=[tool_call("query_fitness_db", {"sql": "select 1"}, 5)]),
+        AIMessage(content="here are your lifts"),
+    ]))
+    agent.ask_jarvis("what did I lift last week?", "t_direct")
+    turn = load_turns()[-1]
+    calls = store.rows("SELECT llm_call_index, status FROM tool_calls WHERE turn_id = ? ORDER BY id",
+                       (turn["turn_id"],))
+    assert [(c["llm_call_index"], c["status"]) for c in calls] == [(1, "not_active"), (2, "ok")], \
+        "refused first, ran once the skill's rules were in the prompt"
+    bound = {r["tool"]: r["first_call_index"] for r in store.rows(
+        "SELECT tool, first_call_index FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
+    assert bound["query_fitness_db"] == 2
+    assert turn["active_skills_end"] == ["fitness"]
