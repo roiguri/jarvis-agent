@@ -160,7 +160,7 @@ Per-scope turn cost and cache ratio, average input composition per model call, h
 
 ### `scripts/measure_context.py` — real token costs
 
-Makes real model calls (needs the API key; run by hand on staging, never in CI): the token cost of the system prompt, of the core tools and of each skill, and a prompt-cache test (same request ×3, then one skill added ×3, run twice) showing whether a tool-set change costs the cache. Saves JSON next to the store.
+Makes real model calls (needs the API key; run by hand on staging, never in CI). By default: the token cost of the system prompt, of the core tools and of each skill. With `--cache`: a realistic request (unique marker, ~20k tokens of filler conversation) warmed ×3, then changed one way at a time (tools removed, tools and rules removed, a skill added), showing whether each change keeps the cached conversation. Saves JSON next to the store. The 2026-10-16 run found that any tool-set change costs the whole cache for one call (Gemini caches tool declarations ahead of the system prompt).
 
 ---
 

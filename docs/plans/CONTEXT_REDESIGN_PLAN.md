@@ -1,7 +1,7 @@
 # Context Redesign — Plan
 
 **Date:** 2026-10-07 · **Status:** S0 in prod since 2026-10-10 (#151); before-readings recorded
-2026-10-16 (§9); cache test, then S1.
+2026-10-16 (§9); cache question answered; S1 next.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -65,7 +65,7 @@ since 2026-10-10 (`deploy-2026-10-10-3`).
 - [x] Verify (staging, then prod): `/usage` matches the pre-change numbers for the imported window;
       a staging turn and a prod turn produce complete rows.
 - [x] Before-reading recorded in §9 (2026-10-11..15).
-- [ ] The cache question (§9 "Open"): no prod data, so a fixed `measure_context.py` cache test.
+- [x] The cache question: answered by `measure_context.py --cache` (§9, 2026-10-16).
 
 **S1 — Quick wins.** No new subsystems.
 - [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
@@ -401,12 +401,25 @@ media family ~2,900 (radarr 1,079, sonarr 1,104, the rest small); collections 1,
 google_health 924; web 613; every skill active ~17,900. A staging "what's in memory" turn carried
 five unused skills, ~13.9k tokens per call, more than core and the prompt together.
 
-**Open: does a tool-set change cost the cache?** The script's cache test was inconclusive. Its cost
-pass had already sent the "+skill" request, so that request was warm, and at ~5–9k tokens per
-request Gemini's ~2k-token cache blocks capped even identical repeats at 40–45% cached (a real
-26.7k-token staging call was 91% cached). Prod telemetry could not settle it: in
-2026-10-11..15 no call changed its tool set mid-turn (every skill stayed active). So: a fixed
-script (cache test first with a unique prompt marker, ~20k tokens of conversation after the tools).
+**Answered: a tool-set change costs the whole cache for one call (2026-10-16).** The first cache
+test was inconclusive (its cost pass pre-warmed the request; at ~5–9k tokens Gemini's ~2k-token cache
+blocks capped even identical repeats at 40–45%), and prod could not settle it (no mid-turn tool-set
+change in 2026-10-11..15). `measure_context.py --cache` then sent a ~22k-token request (unique
+marker, ~20k tokens of filler conversation) three times to warm it (91% cached), and changed it one
+way at a time, twice over:
+
+- tools removed, prompt unchanged: 0 cached, both rounds. Gemini's cached prefix puts the tool
+  declarations before the system prompt, so a tool change invalidates everything.
+- tools and the skill's rules removed: 0 cached.
+- a skill added: 0 and 8k cached (the unchanged declarations ahead of the new ones can survive;
+  the conversation never does).
+
+Cost: one cache break makes the next call full price, ~1.3 cents for a typical user call (47.5k
+input, 62% cached). Dropping ~15k tokens of unused declarations saves ~0.3 cents a call, so a reset
+pays back in ~4 calls. Consequences: the S1 idle reset is free (the cache has expired after ~3h
+anyway); S5's reset at compaction is free (compaction rewrites the window); a mid-turn activation
+costs one full-price call; what to avoid is churn, skills going off and on within an active
+conversation.
 
 **Quality rows**, with the threshold that means the slice failed:
 
