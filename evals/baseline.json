@@ -4,10 +4,6 @@
       "passed": 3,
       "runs": 3
     },
-    "daily_log_written_quietly": {
-      "passed": 3,
-      "runs": 3
-    },
     "finished_task_not_revived": {
       "passed": 3,
       "runs": 3
@@ -57,7 +53,7 @@
       "runs": 3
     },
     "tick_cannot_create_tasks": {
-      "passed": 1,
+      "passed": 3,
       "runs": 3
     },
     "tools_used_after_compaction": {

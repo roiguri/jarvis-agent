@@ -85,7 +85,7 @@ Written as each call returns (`ts` is the return time; start is `ts - duration_m
 
 ### `bound_tools` and `prompts`
 
-`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: today's daily log (user scope) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
+`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: the today view (both scopes) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
 
 ### Writes
 

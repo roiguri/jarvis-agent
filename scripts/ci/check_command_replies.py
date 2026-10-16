@@ -43,7 +43,7 @@ CASES: list[tuple[str, str]] = [
     ("/heartbeat", "strict"),      # header + HEARTBEAT.md body — the header is ours
     ("/heartbeat list", "strict"),
     ("/heartbeat morning", "raw"), # per-task notes verbatim
-    ("/logs", "raw"),              # daily log verbatim
+    ("/logs", "strict"),
     ("/logs 32.13", "strict"),     # invalid date → usage help
     ("/usage", "strict"),
     ("/usage week", "strict"),
@@ -103,10 +103,6 @@ def _seed(scratch: str) -> None:
     israel_today = dt.datetime.now(dt.timezone.utc).astimezone(
         ZoneInfo("Asia/Jerusalem")
     ).date()
-    daily = os.path.join(config.MEMORY_DIR, "daily", f"daily_{israel_today}.md")
-    os.makedirs(os.path.dirname(daily), exist_ok=True)
-    with open(daily, "w", encoding="utf-8") as f:
-        f.write(f"# {israel_today}\n\n- seeded by check_command_replies\n")
 
     # Mid-day UTC so the record lands on the same Israel day the rollup asks for
     # regardless of when CI runs.

@@ -17,7 +17,7 @@ TURN_LOCK = asyncio.Lock()
 
 
 async def run_heartbeat() -> None:
-    """Periodic agent turn. HEARTBEAT.md + recent daily logs + tick rules are
+    """Periodic agent turn. HEARTBEAT.md + yesterday's day view + tick rules are
     injected by the agent's build_system_prompt (scope='heartbeat'); this
     issues the imperative and delivers per the heartbeat_respond ack.
 
@@ -78,13 +78,11 @@ async def _run_tick(now_utc: datetime.datetime, due_names: list[str] | None) -> 
     from agent import ask_jarvis
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
-    today = now_israel.strftime("%Y-%m-%d")
 
     prompt = (
         "Run the scheduled heartbeat check now. Work the due tasks shown in "
         "the HEARTBEAT.md section of your context, following the heartbeat "
-        "rules above it.\n\n"
-        f"Today's daily log file: daily/daily_{today}.md."
+        "rules above it."
     )
 
     logger.info("Heartbeat: running agent turn")
