@@ -44,7 +44,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── MEMORY.md              # agent-maintained master index of memory files
 ├── HEARTBEAT.md           # recurring task list (edited via manage_heartbeat_task)
 ├── heartbeat/*.md         # per-task NOTES files (narrative state; machine last_run lives in jarvis_data)
-├── daily/daily_YYYY-MM-DD.md   # episodic daily logs (written by the daily-log heartbeat task, every 3h)
+├── daily/daily_YYYY-MM-DD.md   # older daily logs, no longer written (the day view replaced them)
 ├── *.txt / *.md           # long-term memory the agent writes freely
 └── threads.sqlite(+-wal,-shm)  # deny-listed exception (LangGraph owns the path)
 
@@ -98,7 +98,6 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `AGENTS.md` | **jarvis_code/prompts** | every turn | **no** (outside sandbox) | **no** (deploy only) | n/a |
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
 | `MEMORY.md` | jarvis_memory | every turn (both scopes, after USER.md) | yes | yes | no (delete blocked) |
-| `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | no (the episode store holds the same messages) | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | no (the episode store holds the same sends) | append-only (heartbeat + gateway writers) | n/a |
@@ -121,7 +120,7 @@ prompts/AGENTS.md  (code — operating rules; outside the sandbox)
 USER.md            (jarvis_memory — durable user profile)
 MEMORY.md          (jarvis_memory — index of memory files)
 ─ scope == "user" ─────────────────────────────────────────────
-   _USER_FRAMING (conversational)  +  today's daily log
+   _USER_FRAMING (conversational)
    + today view (what the heartbeat did today, from the episode store)
    (proactive sends reach the thread as mirrored history, not the prompt)
 ─ scope == "heartbeat" ────────────────────────────────────────
@@ -129,7 +128,7 @@ MEMORY.md          (jarvis_memory — index of memory files)
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
      (non-due tasks collapse to a one-line note; None = every task but gated ones)
    + today's user chat (live slice of chat_history.jsonl)
-   + yesterday's daily log
+   + today view + yesterday's day view (both from the episode store)
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
 ```
 
@@ -147,10 +146,10 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
-- **`user`** — conversational framing + **today's daily log**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent. The daily log carries the richer narrative (still useful, but lagging: its own `daily-log` heartbeat task rewrites it every 3h).
-- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl`, every thread except `heartbeat` and `*_test`) + **yesterday's daily log** (older days are reachable via `read_memory` on demand). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
+- **`user`** — conversational framing + the **today view**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent.
+- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl`, every thread except `heartbeat` and `*_test`) + the today view + **yesterday's day view** (code-built from the episode store: background activity, the owner's messages, what was sent; older days via `search_history`). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
-Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. They sit alongside the daily log rather than replacing it: live for freshness, daily log for narrative.
+Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. The today and day views come from the episode store the same way.
 
 ### The skill block is RUNTIME's
 
@@ -254,7 +253,7 @@ Decisions that intentionally diverge from earlier plan sketches; recorded so the
 
 ## Concurrency — `write_memory`
 
-`write_memory` must survive a heartbeat tick and a user turn writing concurrently (distinct threads, but the daily log and a user-written memory can collide). `_exec_write_memory` (`tools/core/memory.py`):
+`write_memory` must survive a heartbeat tick and a user turn writing concurrently (distinct threads, but a tick's notes file and a user-written memory can collide). `_exec_write_memory` (`tools/core/memory.py`):
 
 1. takes a process-wide `threading.Lock` (`_WRITE_LOCK`);
 2. writes to a `tempfile.NamedTemporaryFile` in the **same directory**;

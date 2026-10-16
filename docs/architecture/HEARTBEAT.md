@@ -240,15 +240,14 @@ Guards:
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
 
-## The daily log
+## Yesterday: the day view
 
-`daily/daily_YYYY-MM-DD.md` is written by an ordinary task, `daily-log` in
-HEARTBEAT.md (every 3h, 05:00–23:30 Israel time), whose prose folds in today's
-chat, today's proactive sends (`search_history`, `kind="notifications"`) and the day's
-heartbeat activity. It used to be a rule in `prompts/heartbeat.md` that every
-tick reaching the model followed, which only kept it fresh while an hourly task
-kept waking the model; once crossfit moved behind a gate, that stopped. Chat
-after the last run of the day (23:00) is not captured.
+A tick sees yesterday as the day view (`episodes/today.yesterday`), built by code
+from the episode store: what the heartbeat did (acting ticks, wakes, failures),
+the owner's messages, and what was sent to him. It replaced the model-written
+daily log (`daily/daily_YYYY-MM-DD.md`, a 3-hourly `daily-log` task), which was
+lagging, cost a tick every three hours, and missed chat after its last run of
+the day. Old daily files stay on disk; `/logs` shows any day's view.
 
 ## Scheduled wakes (`run_wake`)
 
@@ -257,7 +256,7 @@ When it fires, `run_wake` runs it on the heartbeat thread, under the same
 `TURN_LOCK` as ticks: `ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[],
 trigger=...)`, so every task collapses to the not-due note and the
 "Scheduled wakes" rules in `prompts/heartbeat.md` apply (work only the
-instruction; no task list, no daily log; ack with `acted_tasks=[]`). The ack is
+instruction; no task list; ack with `acted_tasks=[]`). The ack is
 delivered by the same `_deliver` helper as a tick, as a `heartbeat` event whose
 metadata names the trigger. Nothing is stamped.
 

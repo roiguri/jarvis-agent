@@ -252,3 +252,37 @@ def test_import_copies_logs_once():
                                                          ("jarvis_sent", "import")]
     assert got[0]["content"] == "hi\n[attached: media/a.jpg]"
     assert json.loads(got[2]["meta"]) == {"trigger": "r1", "event": "reminder"}
+
+
+# --- Day view --------------------------------------------------------------------
+
+def test_yesterday_view_shows_background_and_the_conversation():
+    now = datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)
+    ack("2026-10-15T06:00:00+00:00", "y", ["step-check"], True, "sent a step nudge")
+    ack("2026-10-15T07:00:00+00:00", "n", [], False, "nothing due")
+    with store.write() as con:
+        store.insert(con, ts="2026-10-15T06:00:01+00:00", role="jarvis_sent", source="outbox",
+                     content="You're at 3,000 steps.")
+        store.insert(con, ts="2026-10-15T09:00:00+00:00", turn_id="t", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="chat", content="walked to work " + "x" * 300)
+        store.insert(con, ts="2026-10-15T09:00:02+00:00", turn_id="t", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="jarvis", source="chat", content="a reply")
+        store.insert(con, ts="2026-10-15T10:00:00+00:00", turn_id="s", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="slash_command", content="/usage")
+        store.insert(con, ts="2026-10-16T09:00:00+00:00", turn_id="d", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="chat", content="today, not yesterday")
+    lines = today.yesterday(now).splitlines()
+    assert lines[:4] == [
+        "--- Yesterday, Thursday 2026-10-15 ---",
+        "In the background:",
+        "- 09:00 step-check: sent a step nudge [messaged you]",
+        "Conversation (Roi's messages and what was sent to him):",
+    ]
+    assert lines[4] == "- 09:00 sent: You're at 3,000 steps."
+    assert lines[5].startswith("- 12:00 Roi: walked to work x") and lines[5].endswith("…")
+    assert len(lines[5]) - len("- 12:00 Roi: ") == today.DAY_TEXT_CAP
+    assert len(lines) == 6, "no replies, slash commands, quiet ticks or other days"
+
+
+def test_yesterday_view_is_empty_on_a_quiet_day():
+    assert today.yesterday(datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)) == ""

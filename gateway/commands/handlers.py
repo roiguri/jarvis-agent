@@ -191,7 +191,7 @@ async def _status(inbound: InboundMessage, args: list[str]) -> str:
 
 
 def _memory_list_top_level() -> str:
-    """Top-level memory files only — excludes daily/ (use /logs) and heartbeat/
+    """Top-level memory files only — excludes daily/ (older logs) and heartbeat/
     (use /heartbeat list) subdirs, which have their own surfaces."""
     import os
     import config
@@ -330,10 +330,12 @@ _LOGS_USAGE = section(
 
 @command(
     "logs",
-    "Show today's daily log. Sub: /logs today|yesterday|D[.M[.Y]]",
+    "Show a day: background activity and conversation. Sub: /logs today|yesterday|D[.M[.Y]]",
 )
 async def _logs(inbound: InboundMessage, args: list[str]) -> str:
-    from tools.core.memory import read_memory
+    import datetime as _dt
+
+    from episodes import today as episodes_today
 
     if not args:
         iso = _parse_log_date("today")
@@ -342,8 +344,12 @@ async def _logs(inbound: InboundMessage, args: list[str]) -> str:
         if iso is None:
             return join("Invalid date.", _LOGS_USAGE)
 
-    return await asyncio.to_thread(
-        read_memory.invoke, {"filename": f"daily/daily_{iso}.md"}
+    day = _dt.date.fromisoformat(iso)
+    background, conversation = await asyncio.to_thread(episodes_today.day_view, day)
+    return join(
+        f"**{day:%A %Y-%m-%d}**",
+        section("In the background", background),
+        section("Conversation", conversation),
     )
 
 

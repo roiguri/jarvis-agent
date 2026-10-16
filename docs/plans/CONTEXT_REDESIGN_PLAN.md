@@ -241,16 +241,21 @@ after a week of suggestions the owner likes.
       report. Jarvis's own sends are context, and say something about the owner only where he
       responded to them.
 - [ ] Evals: synthetic cases on the suggestions (report §6, adapted to suggestions).
-- [ ] The daily log becomes code-only: the heartbeat gets a code-built "yesterday" view from the
+- [x] The daily log becomes code-only: the heartbeat gets a code-built "yesterday" view from the
       episode store instead of yesterday's daily file; the user scope stops injecting today's daily
       log (the today view covers it); no daily files are written (existing ones stay); `/logs`
-      reads the store; the weekly memory audit stops writing its report into the log.
-- [ ] AGENTS.md's daily-log line updated: it names the chat- and notification-history tools S2
-      replaced with `search_history`.
+      reads the store; the weekly memory audit stops writing its report into the log (deploy step
+      below). The `daily_log_written_quietly` eval is removed with the task.
+- [x] AGENTS.md's daily-log line removed (it named the chat- and notification-history tools S2
+      replaced with `search_history`, whose own description covers it); its "sliding window of the
+      last 50 messages" line, wrong since S5, now says older conversation arrives as a summary; the
+      core-tool list says "history search".
 - [ ] Jarvis keeps writing memory during conversations (owner, 2026-10-16); suggestions may point at
       those writes.
-- [ ] **Deploy step:** remove the `daily-log` task from prod `HEARTBEAT.md` (replaces R4's "once a
-      night").
+- [ ] **Deploy step:** in prod `HEARTBEAT.md`, remove the `daily-log` task (replaces R4's "once a
+      night"), and change `memory-index-audit`'s step 7 from "Log a "System Integrity Report" in the
+      daily log AND send the report" to sending it only. Same edits on staging, with the owner's
+      go-ahead.
 - [ ] Verify: on staging, a seeded day produces sensible suggestions in the morning note; a day with
       no conversation sends "nothing new".
 - *Later, in prod, after a week of suggestions the owner likes:* give the job the memory tools and

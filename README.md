@@ -55,7 +55,7 @@ marketplace, Jarvis has none of that. Two properties are enforced by design:
   keeping the prompt small and the tool surface relevant. Skills self-describe via
   a `SKILL.md` file; the registry auto-discovers them.
 - **File-based, sandboxed memory.** Identity (`SOUL.md`), rules (`AGENTS.md`),
-  user profile (`USER.md`), and daily logs are plain Markdown, read fresh every
+  user profile (`USER.md`), and topic files are plain Markdown, read fresh every
   turn (hot-reload) and assembled into the system prompt. A path sandbox confines
   what the agent can read/write.
 - **Bounded state + observability.** Conversation state is pruned to O(1) per
