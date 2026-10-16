@@ -1,0 +1,10 @@
+description: A fact from this morning, long out of the window, is still answered correctly.
+kind: chat
+time: "17:00"
+conversation:
+  - {time: "08:10", owner: "my sister Dana lands tonight at 18:40, flight LY318 from Rome", jarvis: "Noted — Dana lands at 18:40 on LY318 from Rome."}
+filler: 20
+compact: true
+message: "what time does Dana land again?"
+expect:
+  reply_contains: ["18:40"]

@@ -2,6 +2,7 @@
 
     venv/bin/python -m evals.run                    # every case, 3 attempts each
     venv/bin/python -m evals.run --case 'step*' -k 1
+    venv/bin/python -m evals.run --case 'chat/*'     # one folder
     venv/bin/python -m evals.run --update-baseline  # record this run as the baseline
 
 Real model calls (about $0.03 per attempt): run by hand, before merging a change
@@ -44,14 +45,15 @@ def load_cases(pattern: str) -> list[dict]:
             with open(os.path.join(dirpath, name), encoding="utf-8") as f:
                 case = yaml.safe_load(f)
             case.setdefault("name", name[:-5])
-            if fnmatch.fnmatch(case["name"], pattern):
+            folder = os.path.relpath(dirpath, root)
+            if fnmatch.fnmatch(case["name"], pattern) or fnmatch.fnmatch(f"{folder}/{case['name']}", pattern):
                 cases.append(case)
     return sorted(cases, key=lambda c: c["name"])
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run eval cases against the real model.")
-    ap.add_argument("--case", default="*", help="glob over case names (default: all)")
+    ap.add_argument("--case", default="*", help="glob over case names or folder/name (default: all)")
     ap.add_argument("-k", type=int, default=3, help="attempts per case (default 3)")
     ap.add_argument("--update-baseline", action="store_true", help="write this run as the baseline")
     ap.add_argument("--list", action="store_true", help="list the cases and exit")

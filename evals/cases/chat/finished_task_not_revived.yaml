@@ -1,0 +1,17 @@
+description: A task finished in the morning isn't redone after the conversation is compacted.
+kind: chat
+time: "21:30"
+conversation:
+  - time: "09:00"
+    owner: "add The Overstory to my book list"
+    tools:
+      - {name: read_memory, args: {filename: book_list.md}, result: "# Book List\n- [x] Project Hail Mary — Andy Weir"}
+      - {name: write_memory, args: {filename: book_list.md, content: "# Book List\n- [ ] The Overstory — Richard Powers\n- [x] Project Hail Mary — Andy Weir"}, result: "Successfully saved memory to book_list.md"}
+    jarvis: "Added The Overstory to your book list."
+filler: 20
+compact: true
+message: "good night"
+expect:
+  not_called: [write_memory]
+  not_called_with:
+    - {tool: manage_trigger, args: {action: create}}

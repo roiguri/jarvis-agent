@@ -7,12 +7,17 @@ Checks:
     not_called:   [tool names] — none of them called
     called_with:  [{tool, args}] — some call of that tool whose args contain these
                   (strings match case-insensitively as substrings; others exactly)
+    not_called_with: [{tool, args}] — no call of that tool with args containing these
     sends:        int — how many messages reached the owner through the Outbox
     message_contains / message_not_contains: [strings] — over the text of every
                   message sent to the owner, case-insensitive
+    reply_contains / reply_not_contains: [strings] — a chat case's reply, case-insensitive
+    reply_matches / reply_not_matches: [regexes] — a chat case's reply
 """
 
 from __future__ import annotations
+
+import re
 
 
 def _args_match(want: dict, got: dict) -> bool:
@@ -54,6 +59,9 @@ def grade(expect: dict, result) -> list[tuple[str, bool, str]]:
         hits = [c for c in result.calls if c["tool"] == spec["tool"] and _args_match(spec["args"], c["args"])]
         seen = [c["args"] for c in result.calls if c["tool"] == spec["tool"]]
         checks.append((f"called {spec['tool']} with {spec['args']}", bool(hits), f"got {seen}"))
+    for spec in expect.get("not_called_with") or []:
+        hits = [c["args"] for c in result.calls if c["tool"] == spec["tool"] and _args_match(spec["args"], c["args"])]
+        checks.append((f"did not call {spec['tool']} with {spec['args']}", not hits, f"got {hits}"))
     if "sends" in expect:
         checks.append((f"sends == {expect['sends']}", len(result.sends) == expect["sends"],
                        f"got {len(result.sends)}: {[s['text'][:80] for s in result.sends]}"))
@@ -62,4 +70,13 @@ def grade(expect: dict, result) -> list[tuple[str, bool, str]]:
         checks.append((f"message contains {s!r}", s.lower() in text, text[:200]))
     for s in expect.get("message_not_contains") or []:
         checks.append((f"message does not contain {s!r}", s.lower() not in text, text[:200]))
+    reply = (result.reply or "")
+    for s in expect.get("reply_contains") or []:
+        checks.append((f"reply contains {s!r}", s.lower() in reply.lower(), reply[:200]))
+    for s in expect.get("reply_not_contains") or []:
+        checks.append((f"reply does not contain {s!r}", s.lower() not in reply.lower(), reply[:200]))
+    for p in expect.get("reply_matches") or []:
+        checks.append((f"reply matches /{p}/", bool(re.search(p, reply)), reply[:200]))
+    for p in expect.get("reply_not_matches") or []:
+        checks.append((f"reply does not match /{p}/", not re.search(p, reply), reply[:200]))
     return checks

@@ -1,0 +1,12 @@
+description: A nudge Jarvis sent on its own is not later listed as something the owner asked for.
+kind: chat
+time: "19:00"
+conversation:
+  - {time: "08:15", owner: "remind me at 18:00 to call the plumber", tools: [{name: manage_trigger, args: {action: create, when: "18:00", text: "Call the plumber"}, result: "Reminder set for 18:00: Call the plumber"}], jarvis: "Reminder set for 18:00 to call the plumber."}
+  - {time: "13:00", sent: "Step nudge: you're at 2,100 steps — a 20-minute walk after lunch would help.", event: heartbeat}
+filler: 20
+compact: true
+message: "what did I ask you to do for me today?"
+expect:
+  reply_contains: ["plumber"]
+  reply_not_contains: ["20-minute walk", "walk after lunch"]
