@@ -343,6 +343,7 @@ def run_case(case: dict) -> Result:
                 except ImportError:
                     compaction = None  # code from before compaction existed: plain trim only
                 if compaction is not None:
+                    patches.set(compaction, "datetime", frozen.datetime)
                     compaction.compact_thread(OWNER_THREAD_ID, force=True)
             outcome = agent.ask_jarvis(case["message"], OWNER_THREAD_ID, channel="telegram")
             result.reply = outcome.text

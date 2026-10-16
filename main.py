@@ -110,7 +110,40 @@ async def run_owner_turn(
         )
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
+    _schedule_compaction(thread_id)
     return outcome.text
+
+
+_compacting: set[str] = set()
+
+
+def _schedule_compaction(thread_id: str) -> None:
+    """After a turn, compact the thread in the background if it has grown past
+    the limit. Prepared (with its model call) outside the owner lock, applied
+    under it, and only if no turn changed the thread in between."""
+    if thread_id in _compacting:
+        return
+
+    async def run() -> None:
+        import compaction
+        from observability import telemetry
+
+        def prepare():
+            with telemetry.job("compaction"):
+                return compaction.prepare(thread_id)
+
+        _compacting.add(thread_id)
+        try:
+            plan = await asyncio.to_thread(prepare)
+            if plan is not None:
+                async with _owner_turn_lock:
+                    await asyncio.to_thread(compaction.apply, plan)
+        except Exception:
+            logger.exception("Background compaction failed for %s", thread_id)
+        finally:
+            _compacting.discard(thread_id)
+
+    asyncio.get_running_loop().create_task(run())
 
 
 def _running_provenance() -> dict:

@@ -52,6 +52,8 @@ CASES: list[tuple[str, str]] = [
     ("/tz", "strict"),
     ("/tz home", "strict"),
     ("/tz Nowhere/Nope", "strict"),  # invalid zone → usage help
+    ("/context", "strict"),            # empty branch on a fresh root; the record itself is raw
+    ("/compact", "strict"),
     ("/triggers", "strict"),
     ("/triggers cancel nope", "strict"),  # unknown id
     ("/triggers cancel", "strict"),       # missing id → usage help

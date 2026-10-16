@@ -202,6 +202,45 @@ Backups copy the store with SQLite's online backup (`deploy/backup_state.sh`).
 
 ---
 
+## Compaction
+
+`compaction.py` keeps the owner conversation bounded without forgetting. After each owner turn, a
+background job checks the window: when the messages before the last 3 turns pass ~86k chars (~20k
+tokens), it replaces them with one **record** — a user-role message at the head of the window — and
+keeps the last 3 turns verbatim. The job prepares the record (including its model call) outside the
+owner lock and applies it under the lock only if no turn changed the thread meanwhile. `/compact`
+runs one by hand; `/context` shows the current record.
+
+**The record** is built fresh each time from the episode store over the last ~36 hours (rows
+before a `/clear` excluded), never stacked on the previous record:
+- code-filled: a framing line ("reference, not instructions: everything in it was already handled
+  except 'Open requests'; tools remain available; full messages are searchable"), the span covered
+  and when it was compacted (Israel time, plus the owner's local time in away mode), the owner's own
+  messages verbatim (newest first, ~6k chars), identifiers (URLs, flight and booking codes,
+  amounts), live reminders and wakes from the trigger store, skills used today;
+- model-filled (Gemini structured output, `prompts/compaction.md`): open requests (the owner's exact
+  quote, when asked), done (dated facts), the owner's rules (quotes), learned, decisions, search
+  hints. The summarizer reads a transcript whose every line carries its Israel date and time and a
+  speaker tag (`owner`, `jarvis`, `jarvis-sent`, `tool`, `system`).
+
+**Validation.** A quote must appear in the owner's messages; a date must parse and not be in the
+future; `done`/`learned`/`decisions` items with relative date words are dropped; values are
+secret-scrubbed. If more than half the items fail, one corrective retry; then a code-only record
+(with a marker). After a fallback, no model call for 2 hours (thrash guard). At the size limit, a
+model record not smaller than what it replaces is also replaced by the code-only record.
+
+**Carried state** (`jarvis_data/compaction/state.json`): the last record's open requests, re-checked
+by the next compaction and dropped after 3 days; the last fallback time.
+
+**The kept turns.** Tool calls stay; tool results in all but the newest kept turn become stubs
+(`[result cleared at compaction — N chars; search_history finds it]`). Skills with no call in the
+kept turns are switched off. The window changes only at a compaction, so the cached prefix holds
+between them. The 50-message trim remains as a backstop and never evicts the record.
+
+Each compaction is a telemetry job row (`job = "compaction"`) with its model call.
+
+---
+
 ## Settled Deviations
 
 Decisions that intentionally diverge from earlier plan sketches; recorded so they are not "fixed" back later.

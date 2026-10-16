@@ -68,11 +68,13 @@ since 2026-10-10 (`deploy-2026-10-10-3`).
 - [x] The cache question: answered by `measure_context.py --cache` (§9, 2026-10-16).
 
 **S1 — Quick wins.** No new subsystems.
-- [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
+- [x] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
       hits after a 60-minute gap, so the reset costs no cache. RUNTIME.md's deferral note and the
       AGENTS.md "deactivate when no longer needed" line updated.
-- [ ] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
-      within one round-trip.
+- [x] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
+      within one round-trip. Staging 2026-10-16: no reset within 3h; after a 4h50m gap the turn
+      started with no skills ("Skills reset after idle on owner: ['google_health']") and switched
+      `google_health` back on in the same turn.
 
 Dropped from S1 (owner, 2026-10-10): scoping the fitness writer tools to user turns. Ticks do call
 them (`manage_fitness_plan` as recently as 10-07), and it would restrict the heartbeat's tools,
@@ -163,11 +165,11 @@ evals first (S5a), then compaction (S5b).
       `evals/cases/chat/`. Baseline on pre-S5 code (plain trim): morning fact 3/3 and open request
       3/3 (both found by `search_history`), finished task not revived 3/3, tools used 3/3; a chat
       rule followed 0/3 and the morning's request remembered 0/3 — what compaction targets.
-- [ ] **Trigger:** a post-turn job compacts when the earlier conversation in the window passes about
+- [x] **Trigger:** a post-turn job compacts when the earlier conversation in the window passes about
       20k tokens; the last 3 turns stay verbatim. The 50-message cap stays as a backstop only and
       keeps the summary (pinned). The job runs outside the owner lock and applies under it only if
       the checkpoint is unchanged.
-- [ ] **Summary:** one user-role message at the head of the window, framed as reference ("everything
+- [x] **Summary:** one user-role message at the head of the window, framed as reference ("everything
       was handled except 'Open requests'; tools remain available; full messages are searchable").
       Code fills: header (span covered, when compacted), the owner's own messages verbatim (newest
       first, size budget), identifiers (URLs, codes, amounts), live reminders and wakes from the
@@ -176,32 +178,38 @@ evals first (S5a), then compaction (S5b).
       decisions, lookup hints. Built fresh each time from the episode store over the last ~36h
       (later: since the last nightly run) — not stacked on the previous summary. Carried open
       requests are re-checked against the store and expire after ~3 days.
-- [ ] **Timestamps:** every transcript line the summarizer reads is tagged with its Israel date and
+- [x] **Timestamps:** every transcript line the summarizer reads is tagged with its Israel date and
       time; the header states the covered span; items carry absolute dates; an item with a relative
       date word ("today", "tomorrow", "yesterday", "last week") is dropped by code. Israel time
       throughout, plus the owner's local time in `/tz` away mode, as the turn stamp does.
-- [ ] **Validation:** every quote must be a substring of an owner row in the span; dates parse and
+- [x] **Validation:** every quote must be a substring of an owner row in the span; dates parse and
       are not in the future; secret scrub; the summary is smaller than what it replaces. A failing
       item is dropped; a failing record gets one corrective retry, then a deterministic code-only
       record. A thrash guard after a fallback.
-- [ ] In the kept turns, calls stay and older results become stubs pointing at the store
+- [x] In the kept turns, calls stay and older results become stubs pointing at the store
       (`[result cleared — 14 KB, searchable]`); the newest results stay in full. Only at a
       compaction, never per turn (cache).
-- [ ] Skills with no call in the kept turns are switched off at the compaction.
-- [ ] Model: Flash (~2–4 cents per compaction); upgrade only if the evals show bad summaries.
-- [ ] Silent to the owner; a telemetry job row per compaction (`telemetry.job("compaction")`: sizes
+- [x] Skills with no call in the kept turns are switched off at the compaction.
+- [x] Model: Flash (~2–4 cents per compaction); upgrade only if the evals show bad summaries. Its own
+      settings: 180s limit (36h of transcript outlasts a turn's 60s), temperature 0, and an 8k
+      output-token cap, so a degenerate repeating answer (seen on a corrective retry) ends in
+      seconds and falls back instead of running to the limit.
+- [x] Silent to the owner; a telemetry job row per compaction (`telemetry.job("compaction")`: sizes
       before/after, outcome ok/retried/fallback/skipped_stale, latency). Slash commands: `/context`
       shows the current summary; `/compact` runs one by hand (also the live test on staging).
-- [ ] `/clear` respected: rows before a clear are never re-derived; `/clear` runs under the owner
-      lock.
-- [ ] No nightly compaction (owner, 2026-10-16): the summary's items are dated, so it stays correct
+- [x] `/clear` respected: rows before a clear are never re-derived; a compaction prepared before a
+      `/clear` finds the thread changed and is skipped (`skipped_stale`), so `/clear` needs no lock.
+- [x] No nightly compaction (owner, 2026-10-16): the summary's items are dated, so it stays correct
       across days; revisit with S6 if mornings feel cluttered.
 - [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4). Until this slice the 3-hourly
       log is the chat side's only record of conversation that fell out of the window (closed by
       this slice's summary). Saves ~5 ticks/day.
-- [ ] Golden test on the summary framing; tests for each part.
-- [ ] Verify: evals vs the S5a baseline; on staging, `/compact` then a question about something
-      only in the summary, and `/context` shows it.
+- [x] Golden test on the summary framing; tests for each part (`tests/test_compaction.py`).
+- [x] Verify, evals (2026-10-16, real summaries): all 6 chat cases 3/3 — a chat rule followed 0→3
+      and the morning's request remembered 0→3; the morning fact and the open request now come from
+      the summary with no `search_history` call (before: found by searching). Baseline updated.
+- [ ] Verify, staging: `/compact` then a question about something only in the summary, and
+      `/context` shows it.
 
 **S6 — Nightly consolidator** (§5, R3).
 - [ ] Its own cron entry (~03:00 Israel) with a misfire grace that survives a restart.

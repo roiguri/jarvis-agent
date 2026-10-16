@@ -172,6 +172,10 @@ def _add_and_trim(existing: list, new: list) -> list:
     cut = next((i for i in starts if len(combined) - i <= MAX_MESSAGES), starts[-1])
     if len(starts) >= 2:
         cut = min(cut, starts[-2])
+    # A compaction record at the head is pinned: the trim never evicts it.
+    head = combined[0]
+    if cut > 0 and isinstance(head, HumanMessage) and (head.id or "").startswith("compaction-summary"):
+        return [head] + combined[cut:]
     return combined[cut:]
 
 def _merge_skills(existing, new):

@@ -80,6 +80,10 @@ def clean_logs():
                 os.remove(path + suffix)
     if os.path.exists(pending_mirrors.CURSOR_PATH):
         os.remove(pending_mirrors.CURSOR_PATH)
+    import compaction
+
+    if os.path.exists(compaction.STATE_PATH):
+        os.remove(compaction.STATE_PATH)
 
 
 @pytest.fixture
