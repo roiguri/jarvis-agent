@@ -1,0 +1,10 @@
+description: "#145: a check-in wake that sends a form must not repeat the form's text in its ack."
+kind: wake
+time: "20:00"
+wake:
+  instruction: "Class check-in: ask Roi how today's 19:00 WOD went. Send a form (send_form) to log his result."
+stubs:
+  send_form: "Sent form f123 (WOD check-in): fields score, notes. The user's submission will arrive as a new message. Its message_text has already reached the user — don't repeat it in heartbeat_respond's notification_text."
+expect:
+  called: [send_form]
+  sends: 0

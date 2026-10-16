@@ -1,0 +1,10 @@
+description: Morning, steps are fine and it's too early for a nudge — update notes quietly, no message.
+kind: tick
+time: "11:00"
+due: [step-challenge-tracker]
+stubs:
+  health_status: "Steps today: 4,800."
+expect:
+  ack: {notify: false, acted_tasks: [step-challenge-tracker]}
+  called: [health_status]
+  sends: 0

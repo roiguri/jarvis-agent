@@ -131,20 +131,25 @@ under target is the nightly job's work.
 - [ ] Verify on staging: "what memory files do I have?" is answered from the injected index, with
       no `read_memory("MEMORY.md")` call.
 
-**S4 — Stateless heartbeat** (§6).
-- [ ] Dry-run entry points (CLI) for a tick, and later a compaction and a consolidator run, against a
-      scratch copy of a prod backup with side-effecting tools stubbed (moved from S0: S4 is the
-      first slice that can use them).
-- [ ] A small set of heartbeat evals (TESTING_AND_EVALS_PLAN T4) replaying recorded ticks,
-      so behaviour before and after can be compared.
-- [ ] A second graph compiled without a checkpointer for ticks and wakes; the ack and failure notes
-      returned in `TurnOutcome` instead of read back from a checkpoint.
-- [ ] A tick sees: core memory, the due task blocks, the due tasks' notes files, today's user chat
-      slice, tick rules. A wake also sees the note of the turn that scheduled it.
-- [ ] Skills warm-start from the task's last run (stored with its `last_run` stamp); never a limit.
-- [ ] Ticks write only their notes files, notifications, triggers and confirmations; no core memory.
-- [ ] Verify: evals pass; a week of acks matches the old pattern (same tasks act on the same days);
-      input per tick and per day drop; the owner reads a week of sends for quality.
+**S4 — Stateless heartbeat** (§6). Two parts (owner, 2026-10-16): evals first, then the change.
+- [x] **S4a, evals** (TESTING_AND_EVALS_PLAN T4): `evals/` runner, harness (scratch root,
+      default-deny tool stubs, pinned clock), yes/no grading on the ack, tool calls and sends;
+      12 synthetic heartbeat cases from three sources — the tick rules, past incidents (#145,
+      #146), and what statelessness puts at risk (no repeated nudge, notes state, a wake acting
+      on its task). Run by hand, never in CI; Claude Code may run them (key from staging's
+      secrets). Baseline recorded on the pre-S4 heartbeat.
+- [ ] **S4b**: a second graph compiled without a checkpointer for ticks and wakes; the ack and
+      the outcome returned in `TurnOutcome` instead of read back from a checkpoint.
+- [ ] A tick sees: core memory, the due task blocks, the due tasks' notes files (injected), today's
+      user chat slice, tick rules, and the today view (earlier ticks and wakes today, failed ones
+      included) in place of replayed history.
+- [ ] Skills warm-start from each task's last run (code-owned, next to its `last_run` stamp);
+      never a limit.
+- [ ] Dropped (owner, 2026-10-16): "ticks write only their notes files, never core memory" — the
+      memory audit and daily-log tasks write core files, and the heartbeat is never restricted.
+- [ ] Verify: evals match the baseline within noise; after the final merge, a week of acks matches
+      the old pattern (same tasks act on the same days), input per tick and per day drop, and the
+      owner reads a week of sends for quality.
 
 **S5 — Compaction** (§4, R1).
 - [ ] The window budget counts turns and tokens, not messages.

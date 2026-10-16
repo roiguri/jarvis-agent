@@ -1,0 +1,11 @@
+description: A wake whose condition isn't met sends nothing and does no unrelated work.
+kind: wake
+time: "21:00"
+wake:
+  instruction: "Check whether Roi's step count is above 7,500. If it is, do nothing."
+stubs:
+  health_status: "Steps today: 9,400."
+expect:
+  ack: {notify: false}
+  not_called: [manage_trigger, write_memory]
+  sends: 0

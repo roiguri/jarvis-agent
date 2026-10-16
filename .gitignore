@@ -7,3 +7,4 @@ __pycache__/
 .rollback-marker
 # Channel-owned inbound media caches (any channel, any nesting: gateway/.../media_cache/)
 gateway/channels/*/media_cache/
+evals/results/

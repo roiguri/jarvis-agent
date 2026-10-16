@@ -50,6 +50,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
 │                          #   golden/ snapshots the prompt and tool schemas (fixtures/ stands in for memory)
+├── evals/                 # real-model behaviour scenarios, run by hand (python -m evals.run); cases/ hold
+│                          #   synthetic data only (public repo); baseline.json = committed pass rates
 └── DEVELOPMENT.md         # Operational/dev runbook (env, constants, systemd, firewall, local testing)
 
 /app/jarvis_memory/        # ONLY genuine memory: markdown the agent both reads AND writes via memory tools

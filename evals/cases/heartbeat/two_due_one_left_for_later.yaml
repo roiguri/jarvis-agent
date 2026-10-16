@@ -1,0 +1,14 @@
+description: Two tasks due; the weekly summary is Sunday-only and today isn't Sunday, so only the step check is marked done.
+kind: tick
+time: "19:00"
+due: [step-challenge-tracker, weekly-summary]
+files:
+  heartbeat/weekly_summary.md: |
+    # weekly-summary notes
+    - Last summary: last Sunday. Today is not Sunday unless the date says so — check the current date.
+stubs:
+  health_status: "Steps today: 8,200."
+weekday_not: sunday
+expect:
+  ack: {notify: false, acted_tasks: [step-challenge-tracker]}
+  sends: 0

@@ -489,7 +489,7 @@ def build_system_prompt(
         today = _load_today_daily_log()
         if today:
             parts.append(today)
-        parts.append(episodes_today.background_today())
+        parts.append(episodes_today.background_today(_dt.datetime.now(_dt.timezone.utc)))
 
 
     parts.append(registry.compact_skill_list(scope, active_skills))
