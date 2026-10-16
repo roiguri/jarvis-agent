@@ -120,8 +120,8 @@ waits for the final merge.
 - [ ] Prod `HEARTBEAT.md`, **before the restart onto the redesign**: in the `daily-log` task, replace
       `(get_notification_history(limit=30), keeping today's)` with
       `(search_history(kind="notifications", since=<today's date>))` — the old tool no longer
-      exists after S2. Skip only if S6 has already removed the task (daily log moved into the
-      nightly job). Staging's `HEARTBEAT.md` was changed this way on 2026-10-16.
+      exists after S2. Skip if the task is removed in the same deploy (S6 makes the daily log
+      code-only). Staging's `HEARTBEAT.md` was changed this way on 2026-10-16.
 - [ ] After both instances imported their logs: remove the import code (#157).
 - [ ] `backup_state.sh --prune` stops keeping every deploy tarball forever.
 - [ ] First live look at the today view (staging runs without a heartbeat, so S2's today view was
@@ -210,9 +210,8 @@ evals first (S5a), then compaction (S5b).
       `/clear` finds the thread changed and is skipped (`skipped_stale`), so `/clear` needs no lock.
 - [x] No nightly compaction (owner, 2026-10-16): the summary's items are dated, so it stays correct
       across days; revisit with S6 if mornings feel cluttered.
-- [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4). Until this slice the 3-hourly
-      log is the chat side's only record of conversation that fell out of the window (closed by
-      this slice's summary). Saves ~5 ticks/day.
+- [x] ~~**Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4).~~ Superseded by S6: the
+      daily log becomes code-only and the task is removed at deploy.
 - [x] Golden test on the summary framing; tests for each part (`tests/test_compaction.py`).
 - [x] Verify, evals (2026-10-16, real summaries): all 6 chat cases 3/3 — a chat rule followed 0→3
       and the morning's request remembered 0→3; the morning fact and the open request now come from
@@ -223,36 +222,44 @@ evals first (S5a), then compaction (S5b).
       from the record (nothing this morning; first exchange 15:15, then steps and the reading list),
       though only after ~16 confirming tool calls.
 
-**S6 — Nightly consolidator** (§5, R3).
-- [ ] Its own cron entry (~03:00 Israel) with a misfire grace that survives a restart.
-- [ ] Size management: when USER.md or MEMORY.md is over its target (`CORE_FILE_TARGETS`), propose
-      moving detail into topic files with a pointer left behind (shadow mode, then auto-apply like
-      every op). Both files' sizes in the morning note's health footer. Moved from S3.
-- [ ] **Shadow mode first:** ops computed and validated, sent as a proposed diff in the morning
-      note, nothing committed. The owner approves (all, or by number). Switches to auto-apply after
-      ~2 weeks of good proposals.
-- [ ] Seeding pass over the backfilled history as a dry run the owner approves before applying.
-- [ ] Validation as designed, plus the review fixes: the expiry rule reads dates inside the entry
-      text, not the "(observed …)" suffix; owner quotes must meet a minimum length and contain the
-      entry's substance; USER.md ops need `kind: stated` backed by such a quote; ops dropped for a
-      concurrent edit or a limit are retried next night; a forget request is exempt from the loss
-      limit; the loss limit also applies per week.
-- [ ] "Remember this" writes from the day are candidates like any other: validated, not exempt.
-- [ ] Before applying, each file it changes is copied to `jarvis_data/memory_snapshots/<night>/`;
-      `/dream undo [night]` restores a chosen night (the existing `/memory` command keeps its
-      meaning). "Changed since read" is a content-hash check; the day's "remember this" writes come
-      from the episode store's `write_memory` calls.
-- [ ] A dead-man's-switch note queued before each run, cancelled by a successful one; a health
-      footer in the morning note (store rows vs turns, compaction outcomes, free disk).
-- [ ] No model call on a night with nothing new; the note says so. The note lists the previous
-      day's "remember this" writes.
-- [ ] Daily log written by the nightly job as a separate call (never promotion evidence).
-- [ ] Hot-path writes narrowed: AGENTS.md "write to memory proactively" → "write when the owner
-      asks you to remember something".
-- [ ] **Deploy step:** a `pre-s6` backup of `jarvis_memory/`; a written multi-night revert procedure.
-- [ ] Verify: in shadow mode, a stated preference appears as a proposed op with an observed date; a
-      changed preference proposes a supersede; a forced invalid run writes nothing and says why; a
-      killed run leaves no partial state.
+**S6 — Nightly suggestions** (§5). Redesigned with the owner on 2026-10-16 after the prompt research
+(context/reports/DREAMING_PROMPT.md): start with suggestions only; the job gets write tools only
+after a week of suggestions the owner likes.
+- [ ] A nightly job (~03:00 Israel, its own cron entry, a misfire grace that survives a restart): one
+      model call over yesterday's conversation plus every memory file (~20 KB in prod, injected; no
+      tools). The conversation comes from compaction's transcript builder: the owner's messages,
+      Jarvis's replies, and Jarvis's own sends tagged `[jarvis-sent]`; heartbeat runs' inner work is
+      left out. SOUL.md is context only.
+- [ ] Output: plain-text suggestions — facts to add or update, entries a change or a passed date made
+      stale, the same thing in two files, a file grown too wide or better merged with another,
+      USER.md or MEMORY.md past its size target. Organization and size are the model's judgement;
+      no code rules.
+- [ ] Delivered in a morning note (~08:30, a one-off trigger) through the Outbox; memory is not
+      changed. No model call on a day with no conversation; the note says so.
+- [ ] Prompt in `prompts/` with generic examples (public repo). Goals: carry forward what the owner
+      said once, follow his preferences, stay current as time passes; the keep/drop rules in the
+      report. Jarvis's own sends are context, and say something about the owner only where he
+      responded to them.
+- [ ] Evals: synthetic cases on the suggestions (report §6, adapted to suggestions).
+- [ ] The daily log becomes code-only: the heartbeat gets a code-built "yesterday" view from the
+      episode store instead of yesterday's daily file; the user scope stops injecting today's daily
+      log (the today view covers it); no daily files are written (existing ones stay); `/logs`
+      reads the store; the weekly memory audit stops writing its report into the log.
+- [ ] AGENTS.md's daily-log line updated: it names the chat- and notification-history tools S2
+      replaced with `search_history`.
+- [ ] Jarvis keeps writing memory during conversations (owner, 2026-10-16); suggestions may point at
+      those writes.
+- [ ] **Deploy step:** remove the `daily-log` task from prod `HEARTBEAT.md` (replaces R4's "once a
+      night").
+- [ ] Verify: on staging, a seeded day produces sensible suggestions in the morning note; a day with
+      no conversation sends "nothing new".
+- *Later, in prod, after a week of suggestions the owner likes:* give the job the memory tools and
+  let it apply them, running `backup_state.sh` before each run as the restore point. Decided then,
+  on the evidence.
+- *Dropped (owner, 2026-10-16):* typed ops and their code validation (quotes, loss limits, entry
+  handles), shadow-mode approval with `/dream apply` and `/dream undo`, a memory copy and diff, the
+  missed-run warning, the health footer, separate size-management and reorganize steps,
+  `valid_until`, a seeding pass over old history, and a simulation on prod data.
 
 **S7 — Last, and gated.**
 - [ ] Embeddings over the episode store (sqlite-vec, fused with FTS5); keyword results still
@@ -296,7 +303,7 @@ machinery around that storage:
 | **L2 Episode store** | Every message of every thread | Code, as turns happen | `search_history`; the "today" view |
 | **L3 Core memory** | SOUL.md, USER.md, MEMORY.md index | Owner; "remember this"; the nightly job | Injected every call (size targets kept by the nightly job) |
 | **L3 Topic files** | Detail, read on demand | Agent on request; the nightly job | Memory tools |
-| **L4 Consolidation** | Ops against L3; the daily log | One nightly job | Never directly |
+| **L4 Consolidation** | Suggestions for L3 (later: edits) | One nightly job | Never directly |
 | **L5 Background work** | Ticks and wakes | Their own notes files only | Fresh context per run |
 
 Kept as is: per-call prompt rebuild (hot reload), the owner thread spine, the user-role pending
@@ -370,27 +377,22 @@ does both, at one event:
   rule survives the night.
 - **Failure:** a deterministic record built by code plus a marker; a thrash guard.
 
-## 5. Nightly consolidator (S6)
+## 5. Nightly suggestions (S6)
 
-Design, prompt skeleton, op schema and validation: COMPACTION_AND_DREAMING.md "A consolidator design
-for Jarvis". It is not a summarizer: it proposes specific edits to long-term memory, each quoting the
-owner, and code validates them.
+Research and draft prompt: context/reports/DREAMING_PROMPT.md (2026-10-16), building on
+COMPACTION_AND_DREAMING.md. The first design (typed ops, code validation, shadow mode, auto-apply
+with snapshots) was replaced by the owner on 2026-10-16 with a staged one:
 
-- **Inputs:** owner and Jarvis rows from interactive threads since the cursor (heartbeat turns, tool
-  results, mirrors, compaction records and daily logs are not evidence); USER.md, the index and
-  agent-written topic files with per-run handles; the day's "remember this" writes; expiry
-  candidates. SOUL.md read-only.
-- **Output:** ops (`add | update | merge | supersede | remove | index_upsert | index_remove |
-  flag`); entry text ≤ 240 chars ending "(observed YYYY-MM-DD)".
-- **Scope:** USER.md, the index, existing agent-written topic files. Never creates files (flags
-  them); never touches SOUL.md, HEARTBEAT.md, daily logs or skill-owned data.
-- **Inferences:** never written to USER.md; asked as questions in the morning note.
-- **Application:** shadow mode first (R3). Then: invalid ops dropped and retried next night; a file
-  that would break a hard limit has its ops rejected; no append fallback; old values replaced in
-  place, with the night's snapshot and the store keeping history; the cursor advances after the
-  write completes.
-- **Note:** composed by code, sent in the morning window through the Outbox, with a health footer.
-- **Model:** Flash; upgrade only if readings show missed or wrong proposals.
+- **Phase 1, suggestions:** each night one call reads yesterday's conversation and all memory
+  files and writes suggestions into a morning note. Nothing in memory changes; the owner reads them.
+- **Phase 2, after a week the owner likes:** the job gets the memory tools and applies its changes
+  directly, with `backup_state.sh` before each run as the restore point.
+
+What the job may judge (organization, duplicates across files, size, staleness) is left to the
+model and the prompt; code decides only which rows it reads: the owner's messages, Jarvis's
+replies and Jarvis's own sends (tagged), never heartbeat runs' inner work (OpenClaw promoted such
+residue, issue #108559). The daily log no longer needs a model: the heartbeat's "yesterday" is
+built by code from the episode store.
 
 ## 6. Stateless heartbeat (S4)
 
@@ -421,18 +423,18 @@ the review summary.
 | 1 | Heartbeat context | Stateless ticks; skills warm-start, never restricted |
 | 2 | Pending mirror | Keep user-role (checked clean in prod) |
 | 3 | MEMORY.md | Injected (S3); size target 8,000 chars kept by the nightly job |
-| 4 | Who writes core memory | Hybrid: "remember this" immediately, everything else nightly; shadow mode, then auto-apply with snapshots, morning note, undo (R3) |
+| 4 | Who writes core memory | Jarvis during conversations, as today; the nightly job suggests (phase 1) and may later apply (phase 2) (owner, 2026-10-16; replaced R3) |
 | 5 | Old context | Compact: summary + last ~3 turns, old tool results stubbed, budget in turns and tokens (R1) |
 | 6 | Consolidator model | Flash, nightly; upgrade on evidence |
 | 7 | Search and history | FTS5 first, embeddings last; git for memory postponed (2026-10-07) |
 | 8 | Size limits | Targets USER.md 4,000 / MEMORY.md 8,000 chars, SOUL.md none; writes never refused; the nightly job moves detail down; prompt cut at 3× a target as a safety net (owner, 2026-10-16) |
 | 9 | Episode store | Replaces `chat_history.jsonl` in three steps (R5); forever; full tool results; all ticks |
-| 10 | Daily logs | Kept; every 3h until S5, then once a night (R4), by the nightly job from S6 |
-| 11 | Consolidator visibility | Note every morning, "promoted 0 because …" when nothing changed |
+| 10 | Daily logs | Code-only from S6: the heartbeat's "yesterday" comes from the episode store; no daily files written (owner, 2026-10-16; replaced R4) |
+| 11 | Consolidator visibility | The suggestions arrive in a morning note; "nothing new" on a quiet day |
 | R2 | Skill unloading | After ~3h of owner silence, plus at compaction |
 | R6 | Weekly replay | Only if nightly runs miss cross-day patterns |
 | C1–C8 | Compaction | Recommendations in COMPACTION_AND_DREAMING.md, as amended in §4 |
-| D1–D9 | Consolidation | Recommendations in COMPACTION_AND_DREAMING.md, as amended in §5 |
+| D1–D9 | Consolidation | Superseded by the staged design in §5 (owner, 2026-10-16) |
 | T1–T6 | Tools | Decay; warm start; measure first; one home per rule; schema budget; consolidate outliers |
 
 **Settled by measurement, not by asking:** the compaction thresholds, Flash vs Pro for the
