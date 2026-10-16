@@ -38,7 +38,7 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 | Module (`tools/core/`) | Tools | Notes |
 |---|---|---|
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
-| `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
+| `history.py` | `search_history` | Read-only recall over the episode store: conversation, tool results, sent notifications, heartbeat activity ([MEMORY.md](MEMORY.md) "Episode store"). |
 | `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
 | `activate_skill.py` | `activate_skill` | The meta-tool that exposes Tier 2. Skills leave by the idle reset, not by a tool. |
 
@@ -74,7 +74,7 @@ This is the first intentional extension *beyond* OpenClaw's flat skill model (Op
 
 "Notifications" looks like a candidate namespace but is deliberately **not** one, because the concern is split across two layers that already have homes:
 
-1. **Querying past notifications** — `get_notification_history` is read-only recall, the same shape as `get_chat_history`. It belongs in **Tier 1 core (`history.py`)**, available every turn, not gated behind an activation.
+1. **Querying past notifications** — read-only recall through `search_history` (`kind="notifications"`). It belongs in **Tier 1 core (`history.py`)**, available every turn, not gated behind an activation.
 2. **Delivering notifications** — media "download ready / failed / upgraded" pushes are produced by the **gateway webhook notifier** (`gateway/webhook/notifier.py`) and recorded via `append_notification_log`. These are *not agent tools at all*; they are a gateway **Plane 2 (proactive send)** concern ([GATEWAY.md](GATEWAY.md)).
 
 So the queryable half is core and the push half is gateway. There is nothing left to put in a `notifications` skill, and creating one would falsely imply the agent activates a skill to receive notifications. It doesn't.
@@ -101,7 +101,7 @@ The two scopes run on **separate threads** with separate checkpoints (`heartbeat
 
 | Layer | Scoped or shared | Mechanism |
 |---|---|---|
-| **Awareness** — what the agent knows happened | **Shared, both directions.** The chat (`user`) agent sees heartbeat actions; the heartbeat (`heartbeat`) agent sees chat activity. | Three layered mechanisms: (1) the **pending-mirror drain** — undrained proactive sends (`notifications.jsonl`) are delivered into the owner thread as one user-role block at the next user turn, so a reply to a briefing has its antecedent as real history; the reverse direction stays a live prompt slice (today's user chat into the heartbeat prompt — see [MEMORY.md](MEMORY.md) "Per-scope content"). (2) The **daily log** (`daily/daily_<today>.md`) — heartbeat-written, auto-loaded into the `user` prompt, richer per-day narrative but lagging. (3) The **history tools** (`get_chat_history`, `get_notification_history`) — Tier-1 core, callable every turn for deeper recall. |
+| **Awareness** — what the agent knows happened | **Shared, both directions.** The chat (`user`) agent sees heartbeat actions; the heartbeat (`heartbeat`) agent sees chat activity. | Three layered mechanisms: (1) the **pending-mirror drain** — undrained proactive sends (`notifications.jsonl`) are delivered into the owner thread as one user-role block at the next user turn, so a reply to a briefing has its antecedent as real history; the reverse direction stays a live prompt slice (today's user chat into the heartbeat prompt — see [MEMORY.md](MEMORY.md) "Per-scope content"). (2) The **daily log** (`daily/daily_<today>.md`) — heartbeat-written, auto-loaded into the `user` prompt, richer per-day narrative but lagging; next to it, the **today view** — code-built from the episode store, exact and current. (3) **`search_history`** — Tier-1 core, callable every turn for deeper recall. |
 | **Behavior** — how the agent acts | **Scoped.** | The *only* per-scope difference is the behavioral framing in the assembled prompt. `heartbeat`: terse scheduled tick — act only if a task is due, stay silent (ack `notify=false`) if nothing is. `user`: conversational, proactive, in Jarvis's voice. The framing files and how the builder selects them per scope are owned by [MEMORY.md](MEMORY.md). |
 
 So for everything but the few scope-declared tools, scope gates neither tools nor knowledge — it swaps the behavioral preamble. A heartbeat tick and a chat turn that both "check the gym schedule" run identical tools against identical memory; they differ only in how chatty the result is and whether silence is an acceptable answer. Scope stays one shared code path, never a fork.

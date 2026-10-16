@@ -244,8 +244,8 @@ preserved). New messages keep blobs for the current turn so the LLM can process
 them, then are stripped on the next reducer call.
 
 Anything outside the 50-message window is **not lost for audit** — every turn is
-appended to `chat_history.jsonl` before `ask_jarvis` runs and is queryable via
-`get_chat_history`. Disk-footprint hygiene (WAL high-water mark, un-VACUUMed
+recorded in the episode store (`jarvis_data/episodes/episodes.sqlite`) and is queryable via
+`search_history`. Disk-footprint hygiene (WAL high-water mark, un-VACUUMed
 pages) is tracked in issue #24.
 
 ### SQLite `check_same_thread=False`

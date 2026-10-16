@@ -44,53 +44,6 @@
   },
   {
     "destructive": false,
-    "name": "get_chat_history",
-    "schema": {
-      "description": "Read chat exchanges between Roi and Jarvis. Use when you need history\n    from earlier days — today's chat is already in context.\n\n    Args:\n        limit: max number of entries to return.\n        since: optional. A plain date '2026-05-08' means the start of that day,\n               Israel time — the day boundary is computed for you. A full\n               ISO 8601 timestamp with a UTC offset makes a precise cut instead.",
-      "name": "get_chat_history",
-      "parameters": {
-        "properties": {
-          "limit": {
-            "default": 20,
-            "type": "integer"
-          },
-          "since": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        },
-        "type": "object"
-      }
-    },
-    "scopes": null
-  },
-  {
-    "destructive": false,
-    "name": "get_notification_history",
-    "schema": {
-      "description": "Read the last N notification events that Jarvis sent (media ready, upgrades,\n    failures, system alerts). Use when the user asks what notifications were sent recently.",
-      "name": "get_notification_history",
-      "parameters": {
-        "properties": {
-          "limit": {
-            "default": 20,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      }
-    },
-    "scopes": null
-  },
-  {
-    "destructive": false,
     "name": "heartbeat_respond",
     "schema": {
       "description": "Report the outcome of this heartbeat tick or scheduled wake. Call\n    exactly once, as your last tool call, after all the work is done.\n\n    Args:\n        acted_tasks: Exact names (from HEARTBEAT.md) of every task you\n            resolved this tick — completed its work and updated its state\n            file, or confirmed Roi already handled it in today's chat.\n            Empty list if none. Never list a task you left for a later tick\n            (its body's conditions weren't met yet), and never a task that\n            was omitted from this tick's list. Always [] for a scheduled wake.\n        notify: True only if Roi should receive a message from this tick.\n        summary: One line for the internal log — what this tick did (or why\n            nothing was done). Always required.\n        notification_text: The user-facing message, required when notify is\n            True. Ignored when notify is False. Defaults to summary.",
@@ -254,6 +207,54 @@
         "required": [
           "filename"
         ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "search_history",
+    "schema": {
+      "description": "Search past activity: Roi's messages and your replies, tool calls and\n    their results, messages sent to Roi, and heartbeat activity. Use it for\n    anything no longer in this conversation. Each hit includes its turn's\n    message and reply.\n\n    Args:\n        query: keywords, any language. Empty returns the newest entries.\n        since: optional. '2026-05-08' = start of that Israel day; or a full\n            ISO 8601 timestamp with a UTC offset.\n        until: optional, same formats; a plain date includes that whole day.\n        kind: \"chat\", \"notifications\" (sent to Roi), \"background\"\n            (heartbeat), or \"all\".\n        limit: max turns or entries (up to 30).",
+      "name": "search_history",
+      "parameters": {
+        "properties": {
+          "kind": {
+            "default": "all",
+            "type": "string"
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer"
+          },
+          "query": {
+            "default": "",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "type": "object"
       }
     },

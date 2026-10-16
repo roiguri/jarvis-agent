@@ -27,6 +27,7 @@ from tools.core import (
     NOTIFICATION_LOG,
 )
 from observability import store as telemetry_store
+from episodes import record as episodes_record, store as episodes_store
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -55,6 +56,10 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
     if command_reply is not None:
         await asyncio.to_thread(append_chat_log, "user", inbound.user_text, inbound.thread_id)
         await asyncio.to_thread(append_chat_log, "assistant", command_reply, inbound.thread_id)
+        await asyncio.to_thread(
+            episodes_record.slash_command, thread_id=inbound.thread_id,
+            channel=inbound.channel or None, command=inbound.user_text, reply=command_reply,
+        )
         return command_reply
 
     await asyncio.to_thread(
@@ -88,6 +93,7 @@ async def run_owner_turn(
     *,
     channel: str | None = None,
     media_attachments: list[dict] | None = None,
+    input_role: str | None = None,
 ) -> str:
     """One user-scope turn under the owner lock; the single path every
     conversational caller goes through. Returns the reply — for a turn that did
@@ -100,6 +106,7 @@ async def run_owner_turn(
             thread_id,
             channel=channel,
             media_attachments=media_attachments,
+            input_role=input_role,
         )
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
@@ -192,6 +199,18 @@ async def main() -> None:
         logger.info("Telemetry store trimmed: %s", telemetry_store.trim())
     except Exception:
         logger.exception("Telemetry store maintenance failed")
+    try:
+        # TODO(#157): one-time import of the JSONL logs into the episode store; remove after both instances ran it.
+        if not episodes_store.imported():
+            counts = episodes_store.import_logs(CHAT_LOG, NOTIFICATION_LOG)
+            logger.info("Episodes: imported JSONL history into the store: %s", counts)
+    except Exception:
+        logger.exception("Episode store import failed")
+
+    async def log_notification(event: str, text: str, metadata: dict) -> None:
+        """Every delivered proactive send: the JSONL log and the episode store."""
+        await async_append_notification_log(event, text, metadata)
+        await asyncio.to_thread(episodes_record.notification, event, text, metadata)
     for log_path in (CHAT_LOG, NOTIFICATION_LOG):
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
@@ -205,7 +224,7 @@ async def main() -> None:
         channel's, supplied by its confirmation store."""
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
-            reply = await run_owner_turn(system_text, thread_id)
+            reply = await run_owner_turn(system_text, thread_id, input_role="system")
             if reply:
                 # Conversational reply, already chat-logged — no notification event.
                 await outbox.notify_owner(reply)
@@ -220,7 +239,7 @@ async def main() -> None:
         "telegram",
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
-        log_sink=async_append_notification_log,
+        log_sink=log_notification,
     )
 
     # Optional second channel: the jarvis-app hub, built only when APP_HUB_URL is
@@ -234,7 +253,7 @@ async def main() -> None:
                 "jarvis-app",
                 on_message=process_inbound_message,
                 on_confirmation_outcome=on_confirmation_outcome,
-                log_sink=async_append_notification_log,
+                log_sink=log_notification,
             )
         except Exception:
             logger.exception("jarvis-app channel misconfigured — continuing without it")
