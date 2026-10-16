@@ -30,7 +30,7 @@ _LOCK = threading.Lock()
 
 
 def _empty() -> dict:
-    return {"version": _VERSION, "triggers": [], "gates": {}, "last_run": {}}
+    return {"version": _VERSION, "triggers": [], "gates": {}, "last_run": {}, "task_skills": {}}
 
 
 def _read() -> dict:
@@ -49,6 +49,7 @@ def _read() -> dict:
     data.setdefault("triggers", [])
     data.setdefault("gates", {})
     data.setdefault("last_run", {})
+    data.setdefault("task_skills", {})
     return data
 
 
@@ -146,3 +147,18 @@ def stamp_tasks(names: list[str], when_iso: str) -> None:
         for name in names:
             data["last_run"][name] = when_iso
         _write(data)
+
+
+def task_skills() -> dict[str, list[str]]:
+    """The skills each heartbeat task's last stamped run ended with."""
+    with _LOCK:
+        return {k: list(v) for k, v in _read()["task_skills"].items()}
+
+
+def set_task_skills(names: list[str], skills: list[str]) -> None:
+    with _LOCK:
+        data = _read()
+        for name in names:
+            data["task_skills"][name] = sorted(skills)
+        _write(data)
+

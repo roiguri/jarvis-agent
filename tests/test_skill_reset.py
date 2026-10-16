@@ -66,12 +66,11 @@ def test_no_recorded_last_turn_counts_as_idle(use_llm):
     assert state("t_unrecorded")["active_skills"] == set()
 
 
-def test_heartbeat_keeps_its_skills(use_llm):
-    activate_fitness(use_llm, "heartbeat", scope="heartbeat")
-    assert "last_user_turn_at" not in state("heartbeat"), "only user turns are recorded"
+def test_heartbeat_is_not_reset_and_records_no_turn_time(use_llm):
     use_llm(FakeLLM([AIMessage(content="tick")]))
-    agent.ask_jarvis("tick", "heartbeat", scope="heartbeat")
-    assert state("heartbeat")["active_skills"] == {"fitness"}, "the heartbeat is not reset"
+    out = agent.ask_jarvis("tick", "heartbeat", scope="heartbeat", initial_skills={"fitness"})
+    assert out.active_skills == ("fitness",), "the warm start is kept, never reset"
+    assert "last_user_turn_at" not in state("heartbeat"), "only user turns are recorded"
 
 
 def test_needed_skill_comes_back_in_the_same_turn(use_llm):

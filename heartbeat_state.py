@@ -59,6 +59,8 @@ _PAUSED_RE = re.compile(r"(?:^|\|)\s*paused\s*(?=\||$)", re.IGNORECASE)
 # Optional "gate: <name>" field: the task's check runs in code (triggers/gates.py)
 # instead of in the tick's model turn. Same field-boundary anchoring as paused.
 _GATE_RE = re.compile(r"(?:^|\|)\s*gate:\s*(?P<name>[A-Za-z0-9_-]+)\s*(?=\||$)", re.IGNORECASE)
+# The task's notes file: "notes: `heartbeat/x.md`" (backticks optional).
+_NOTES_RE = re.compile(r"(?:^|\|)\s*notes:\s*`?(?P<path>[^`|\s]+)`?\s*(?=\||$)", re.IGNORECASE)
 # Window spec: "[Day[,Day...] ]HH:MM-HH:MM" or "[Day[,Day...] ]HH:MM±Nh"
 # (± also accepted as "+-" or "+/-" for ASCII-only editing).
 _WINDOW_RE = re.compile(
@@ -141,6 +143,7 @@ class HeartbeatTask:
     window: DueWindow | None = None  # None = no (or unparseable) window → open
     paused: bool = False  # owner-declared; skipped by the gate without running
     gate: str | None = None  # checked in code, never in the tick's model turn
+    notes: str | None = None  # the header's notes: path (memory-relative), if given
 
 
 _parse_cache: tuple[str, float, list[HeartbeatTask]] | None = None  # (path, mtime, tasks)
@@ -245,9 +248,43 @@ def parse_tasks_text(text: str) -> list[HeartbeatTask]:
                 window=window,
                 paused=bool(_PAUSED_RE.search(rest)),
                 gate=(gm.group("name") if (gm := _GATE_RE.search(rest)) else None),
+                notes=(nm.group("path") if (nm := _NOTES_RE.search(rest)) else None),
             )
         )
     return tasks
+
+
+def notes_path(task: HeartbeatTask) -> str:
+    """A task's notes file, memory-relative: its header's ``notes:`` path, or
+    the path a new task gets by default."""
+    return task.notes or f"heartbeat/{task.name.replace('-', '_')}.md"
+
+
+def skills_for(task_names: list[str] | None) -> set[str]:
+    """The skills the named tasks' last stamped runs ended with (a tick's warm
+    start). An unreadable store gives none — the tick activates what it needs."""
+    if not task_names:
+        return set()
+    from triggers import store
+
+    try:
+        saved = store.task_skills()
+    except Exception:
+        logger.exception("heartbeat_state: couldn't read task skills")
+        return set()
+    return {s for name in task_names for s in saved.get(name, [])}
+
+
+def remember_skills(task_names: list[str], skills: list[str]) -> None:
+    """Record the skills a stamped run ended with, for the tasks' next warm start."""
+    if not task_names:
+        return
+    from triggers import store
+
+    try:
+        store.set_task_skills(task_names, skills)
+    except Exception:
+        logger.exception("heartbeat_state: couldn't record task skills")
 
 
 def filter_heartbeat_md(text: str, due_names: list[str] | None) -> str:
