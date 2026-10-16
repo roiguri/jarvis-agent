@@ -279,10 +279,36 @@ _MEMORY_DIR = config.MEMORY_DIR
 _DAILY_DIR = os.path.join(_MEMORY_DIR, "daily")
 _SOUL_PATH = os.path.join(_MEMORY_DIR, "SOUL.md")
 _USER_PATH = os.path.join(_MEMORY_DIR, "USER.md")
+_MEMORY_INDEX_PATH = os.path.join(_MEMORY_DIR, "MEMORY.md")
 _HEARTBEAT_MD_PATH = os.path.join(_MEMORY_DIR, "HEARTBEAT.md")
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _AGENTS_PATH = os.path.join(_PROMPTS_DIR, "AGENTS.md")
 _HEARTBEAT_PROMPT_PATH = os.path.join(_PROMPTS_DIR, "heartbeat.md")
+
+# Size targets for the injected memory files, in chars. Keeping them under is
+# the nightly consolidation's job; writes are never refused for size. The
+# prompt includes at most CORE_FILE_CEILING x the target, so a file that grows
+# unchecked (consolidation failing for days) cannot swell every call.
+CORE_FILE_TARGETS = {"USER.md": 4000, "MEMORY.md": 8000}
+CORE_FILE_CEILING = 3
+
+
+def _core_file(name: str, path: str) -> str:
+    """A core memory file for the prompt, cut at its ceiling (with a marker
+    and a journal warning) if it has grown far past its target."""
+    body = load_or_blank(path)
+    limit = CORE_FILE_TARGETS[name] * CORE_FILE_CEILING
+    if len(body) > limit:
+        logger.warning("%s is %d chars, over its prompt ceiling of %d; cut in the prompt",
+                       name, len(body), limit)
+        body = body[:limit] + "\n[truncated — consolidation pending]"
+    return body
+
+
+def _memory_index() -> str:
+    body = _core_file("MEMORY.md", _MEMORY_INDEX_PATH)
+    return f"--- MEMORY.md (index of memory files) ---\n{body}" if body else ""
+
 
 _USER_FRAMING = (
     "You are in a live conversation with Roi — be direct and proactive, "
@@ -440,7 +466,8 @@ def build_system_prompt(
         envelope,
         load_or_blank(_SOUL_PATH),
         load_or_blank(_AGENTS_PATH),
-        load_or_blank(_USER_PATH),
+        _core_file("USER.md", _USER_PATH),
+        _memory_index(),
     ]
 
     if scope == "heartbeat":

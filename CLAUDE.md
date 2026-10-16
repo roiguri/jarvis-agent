@@ -119,6 +119,7 @@ Assembly order:
 SOUL.md            (memory dir — user-curated identity; agent-writable w/ confirmation)
 prompts/AGENTS.md  (code — operating rules; outside the memory sandbox, deploy-only)
 USER.md            (memory dir — durable user profile; agent-writable, no confirm)
+MEMORY.md          (memory dir — index of memory files; agent-maintained)
 ─ user scope ──────────  _USER_FRAMING + today's daily log + today view (heartbeat activity
                          from the episode store; proactive sends reach the thread as mirrored
                          history via the pending-mirror drain, not the prompt)
@@ -129,7 +130,7 @@ compact_skill_list (registry — every skill's SKILL.md description; active skil
 
 **Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
 
-`MEMORY.md` is **not** injected — the agent reads it on demand via the memory tools (AGENTS.md instructs it to consult the index). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
+`MEMORY.md` is injected in both scopes, so the agent knows what memory files exist without a tool call. USER.md and MEMORY.md have size targets (4,000 / 8,000 chars) that the nightly consolidation keeps them under; writes are never refused for size, and the prompt includes at most 3× a target (`CORE_FILE_TARGETS` in `agent.py`). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
 
 ---
 

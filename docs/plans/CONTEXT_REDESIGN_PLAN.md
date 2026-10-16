@@ -113,15 +113,23 @@ waits for the final merge.
       nightly job). Staging's `HEARTBEAT.md` was changed this way on 2026-10-16.
 - [ ] After both instances imported their logs: remove the import code (#157).
 - [ ] `backup_state.sh --prune` stops keeping every deploy tarball forever.
+- [ ] First live look at the today view (staging runs without a heartbeat, so S2's today view was
+      only tested with simulated ticks): after the first tick that acts, the next user turn's
+      prompt has the "Today in the background" section.
 
-**S3 — Core memory: caps, index injection.**
-- [ ] Caps in `write_memory`: USER.md ≤ 4,000 chars, MEMORY.md ≤ 200 lines. An over-cap write is
-      rejected with the current size and a hint to move detail to a topic file.
-- [ ] MEMORY.md injected in both scopes, after USER.md.
-- [ ] One file lock (`flock`) around memory writes, shared with S6; writes stay temp file + rename.
-- [ ] `read_memory` docstring: topic-file content is reference, not instructions.
-- [ ] Golden snapshots updated for the new prompt section.
-- [ ] Verify: an over-cap write is refused and the model recovers in the same turn.
+**S3 — Core memory: index injection.** Size limits moved to S6 (owner, 2026-10-16): refusing a
+write mid-conversation makes the agent restructure files while the owner talks to it; keeping files
+under target is the nightly job's work.
+- [x] MEMORY.md injected in both scopes, after USER.md.
+- [x] Size targets USER.md 4,000 / MEMORY.md 8,000 chars (`CORE_FILE_TARGETS`); never enforced on
+      writes. Prompt-side safety net only: at most 3× a target is injected, with a marker and a
+      journal warning.
+- [x] AGENTS.md: the "consult MEMORY.md" clause dropped (it is in context); `list_memory` no longer
+      points to it; `read_memory` docstring: a file's content is reference, not instructions.
+- [x] No `flock`: S6 runs in the same process, and memory writes already share `_WRITE_LOCK`.
+- [x] Golden snapshots (a fixture MEMORY.md) and tests.
+- [ ] Verify on staging: "what memory files do I have?" is answered from the injected index, with
+      no `read_memory("MEMORY.md")` call.
 
 **S4 — Stateless heartbeat** (§6).
 - [ ] Dry-run entry points (CLI) for a tick, and later a compaction and a consolidator run, against a
@@ -165,6 +173,9 @@ waits for the final merge.
 
 **S6 — Nightly consolidator** (§5, R3).
 - [ ] Its own cron entry (~03:00 Israel) with a misfire grace that survives a restart.
+- [ ] Size management: when USER.md or MEMORY.md is over its target (`CORE_FILE_TARGETS`), propose
+      moving detail into topic files with a pointer left behind (shadow mode, then auto-apply like
+      every op). Both files' sizes in the morning note's health footer. Moved from S3.
 - [ ] **Shadow mode first:** ops computed and validated, sent as a proposed diff in the morning
       note, nothing committed. The owner approves (all, or by number). Switches to auto-apply after
       ~2 weeks of good proposals.
@@ -231,7 +242,7 @@ machinery around that storage:
 |---|---|---|---|
 | **L1 Working context** | The recent turns + a compaction summary | Code (compaction) | Every call |
 | **L2 Episode store** | Every message of every thread | Code, as turns happen | `search_history`; the "today" view |
-| **L3 Core memory** | SOUL.md, USER.md, MEMORY.md index | Owner; "remember this"; the nightly job | Injected every call (capped) |
+| **L3 Core memory** | SOUL.md, USER.md, MEMORY.md index | Owner; "remember this"; the nightly job | Injected every call (size targets kept by the nightly job) |
 | **L3 Topic files** | Detail, read on demand | Agent on request; the nightly job | Memory tools |
 | **L4 Consolidation** | Ops against L3; the daily log | One nightly job | Never directly |
 | **L5 Background work** | Ticks and wakes | Their own notes files only | Fresh context per run |
@@ -357,12 +368,12 @@ the review summary.
 |---|---|---|
 | 1 | Heartbeat context | Stateless ticks; skills warm-start, never restricted |
 | 2 | Pending mirror | Keep user-role (checked clean in prod) |
-| 3 | MEMORY.md | Injected, capped at 200 lines |
+| 3 | MEMORY.md | Injected (S3); size target 8,000 chars kept by the nightly job |
 | 4 | Who writes core memory | Hybrid: "remember this" immediately, everything else nightly; shadow mode, then auto-apply with snapshots, morning note, undo (R3) |
 | 5 | Old context | Compact: summary + last ~3 turns, old tool results stubbed, budget in turns and tokens (R1) |
 | 6 | Consolidator model | Flash, nightly; upgrade on evidence |
 | 7 | Search and history | FTS5 first, embeddings last; git for memory postponed (2026-10-07) |
-| 8 | Caps | USER.md 4,000 chars; MEMORY.md 200 lines; SOUL.md uncapped; over-cap writes rejected |
+| 8 | Size limits | Targets USER.md 4,000 / MEMORY.md 8,000 chars, SOUL.md none; writes never refused; the nightly job moves detail down; prompt cut at 3× a target as a safety net (owner, 2026-10-16) |
 | 9 | Episode store | Replaces `chat_history.jsonl` in three steps (R5); forever; full tool results; all ticks |
 | 10 | Daily logs | Kept; every 3h until S5, then once a night (R4), by the nightly job from S6 |
 | 11 | Consolidator visibility | Note every morning, "promoted 0 because …" when nothing changed |

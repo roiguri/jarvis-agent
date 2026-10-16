@@ -97,14 +97,16 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `USER.md` | jarvis_memory | every turn | yes | yes | no |
 | `AGENTS.md` | **jarvis_code/prompts** | every turn | **no** (outside sandbox) | **no** (deploy only) | n/a |
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
-| `MEMORY.md` | jarvis_memory | **no** — read on demand via tools | yes | yes | no (delete blocked) |
+| `MEMORY.md` | jarvis_memory | every turn (both scopes, after USER.md) | yes | yes | no (delete blocked) |
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | no (the episode store holds the same messages) | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | no (the episode store holds the same sends) | append-only (heartbeat + gateway writers) | n/a |
 | `episodes.sqlite` | jarvis_data/episodes | user scope — the today view (heartbeat activity) | via `search_history` tool | code only, as things happen | n/a |
 
-The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is the agent's master *index*; the agent consults it on demand with `read_memory` (AGENTS.md instructs it to). Injecting it every turn was considered and rejected — it would spend tokens on an index the agent only needs when navigating memory, and the tool path already covers that need.
+**`MEMORY.md` is injected** (since the context redesign's S3). It is the agent's master *index*: with it in context the agent knows what files exist without a `read_memory` call, which earlier turns spent on most memory questions. It was kept out at first to save tokens; at ~2k chars (~450 tokens) the trade favours injecting it.
+
+**Size targets, not caps.** `USER.md` (4,000 chars) and `MEMORY.md` (8,000 chars) have targets (`CORE_FILE_TARGETS` in `agent.py`). Writes are never refused for size — refusing mid-conversation would make the agent restructure files while the owner talks to it. Keeping the files under target is the nightly consolidation's job (moving detail into topic files). As a safety net only, the prompt includes at most 3× a target, with a `[truncated — consolidation pending]` marker and a journal warning.
 
 ---
 
@@ -117,6 +119,7 @@ The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is 
 SOUL.md            (jarvis_memory — identity/voice)
 prompts/AGENTS.md  (code — operating rules; outside the sandbox)
 USER.md            (jarvis_memory — durable user profile)
+MEMORY.md          (jarvis_memory — index of memory files)
 ─ scope == "user" ─────────────────────────────────────────────
    _USER_FRAMING (conversational)  +  today's daily log
    + today view (what the heartbeat did today, from the episode store)
