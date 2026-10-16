@@ -78,27 +78,41 @@ Dropped from S1 (owner, 2026-10-10): scoping the fitness writer tools to user tu
 them (`manage_fitness_plan` as recently as 10-07), and it would restrict the heartbeat's tools,
 which decision 1 rules out. The R4 `daily-log` change moved to S5 (see there).
 
-**S2 — Episode store.** Every message of every turn, recorded by code (§3). Three steps, each
-reversible (R5):
-- [ ] **S2a, store written alongside the old logs.** `jarvis_data/episodes/episodes.sqlite`. The
-      owner's message is written at turn start (as `chat_history.jsonl` is today); the rest of the
-      turn at turn end from the final state, including abnormal ends. Slash commands recorded.
-      Mirror blocks classified as `jarvis_sent` by their header, never as owner speech. Media
-      stripped to path references before writing. Tool calls stored with arguments; tool results
-      stored in full with a secret/one-time-code redaction pass. Outbox deliveries written on
-      success. Idempotent backfill from `chat_history.jsonl` and `notifications.jsonl`.
-- [ ] Integrity check: turn IDs in the telemetry `turns` table vs the episode store, per day; a missing turn is visible.
-- [ ] The store gets its own rotating backup; `backup_state.sh --prune` stops keeping every deploy
-      tarball forever.
-- [ ] "Today" view in the user-scope prompt, built by code from the store: today's tick outcomes and
-      sends. Replaces the daily log's heartbeat-activity section for the chat side.
-- [ ] **S2b, tool swap.** FTS5 index; `search_history` replaces `get_chat_history` and
-      `get_notification_history`, which stay as aliases until S6 (the prod `daily-log` task calls
-      `get_notification_history`). Golden snapshots updated.
-- [ ] **S2c, retire `chat_history.jsonl`** one release later: heartbeat chat slice and
-      `scripts/trace.py` read the store. Marked as a format change in the deploy notes.
-- [ ] Verify: a travel turn's tool calls and results are searchable after they leave the window; a
-      process killed mid-turn still has the owner's message recorded.
+**S2 — Episode store.** Every message of every turn, recorded by code (§3). One PR (owner,
+2026-10-16): the store, the today view and the search tool together; retiring `chat_history.jsonl`
+waits for the final merge.
+- [x] `jarvis_data/episodes/episodes.sqlite` (package `episodes/`). Turn input written at turn start
+      (owner's raw message, attachments as paths; tick/wake instructions and confirmation results as
+      `system`); the turn's model steps (reply text, tool calls with arguments, tool results) at turn
+      end from the final state, including failed turns. Delivered sends via the Outbox log sink;
+      slash commands with their replies. The forwarded-notification block is not written (each send
+      already has its row).
+- [x] Content: narrow credential scrub (API keys, GitHub tokens, Bearer, JWT, password/key/token
+      fields); a row over 200k chars is cut; kept forever (§10 retention: forever for now, revisit
+      only if size grows — ~80 KB of tool results a day in 2026-10).
+- [x] One-time import of `chat_history.jsonl` and `notifications.jsonl` (`TODO(#157)`).
+- [x] `search_history` (FTS5; keywords or newest-in-range; `kind` chat/notifications/background/all;
+      grouped by turn) replaces `get_chat_history` and `get_notification_history` outright, no
+      aliases: S2 reaches prod only with the whole redesign.
+- [x] Today view in the user-scope prompt: today's heartbeat ticks that acted or messaged the owner,
+      and wakes, one line each from `heartbeat_respond` (latest 20). Heartbeat activity only; the
+      daily log keeps covering the conversation recap until S5.
+- [x] Integrity check in `scripts/context_report.py` (telemetry turns missing from the store, per
+      day); the store is backed up with SQLite's online backup.
+- [x] Docs (MEMORY.md "Episode store", RUNTIME.md, CLAUDE.md), goldens, tests.
+- [ ] Verify on staging (steps in the PR): rows for a tool turn; today view after an acting tick;
+      `search_history` finds an earlier day; a full day passes the integrity check.
+
+**Final merge (after S7), deploy steps:**
+- [ ] Retire `chat_history.jsonl`: the heartbeat's today-chat slice and `scripts/trace.py` read the
+      store; stop writing the log (owner, 2026-10-16: at the end of the redesign).
+- [ ] Prod `HEARTBEAT.md`, **before the restart onto the redesign**: in the `daily-log` task, replace
+      `(get_notification_history(limit=30), keeping today's)` with
+      `(search_history(kind="notifications", since=<today's date>))` — the old tool no longer
+      exists after S2. Skip only if S6 has already removed the task (daily log moved into the
+      nightly job). Staging's `HEARTBEAT.md` was changed this way on 2026-10-16.
+- [ ] After both instances imported their logs: remove the import code (#157).
+- [ ] `backup_state.sh --prune` stops keeping every deploy tarball forever.
 
 **S3 — Core memory: caps, index injection.**
 - [ ] Caps in `write_memory`: USER.md ≤ 4,000 chars, MEMORY.md ≤ 200 lines. An over-cap write is

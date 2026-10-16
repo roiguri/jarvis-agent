@@ -176,7 +176,7 @@ A model missing from `MODEL_PRICES` falls back to zero rates; rollups flag it wi
 
 Every table keeps 180 days (`store.RETENTION_DAYS`); `store.trim()` runs at startup (`main.py`). `prompts` age out by `last_seen`. Rows never change after a turn ends.
 
-`deploy/backup_state.sh` copies the store with SQLite's online backup (consistent while the service runs) instead of tarring the live file. `python -m observability.store --backup DEST` does the same by hand.
+`deploy/backup_state.sh` copies the store (and the episode store) with SQLite's online backup (consistent while the service runs) instead of tarring the live files. `python -m observability.store --backup DEST` does the same by hand.
 
 ### History before the store
 

@@ -36,6 +36,7 @@ from gateway.base import OWNER_THREAD_ID
 
 # Per-turn telemetry — ContextVars + recorders for the telemetry store.
 from observability import telemetry
+from episodes import record as episodes_record, today as episodes_today
 
 # ---------------------------------------------------------------------------
 # State schema — sliding message window + media blob stripping
@@ -461,6 +462,7 @@ def build_system_prompt(
         today = _load_today_daily_log()
         if today:
             parts.append(today)
+        parts.append(episodes_today.background_today())
 
 
     parts.append(registry.compact_skill_list(scope, active_skills))
@@ -744,6 +746,7 @@ def ask_jarvis(
     heartbeat_due_tasks: list[str] | None = None,
     channel: str | None = None,
     trigger=None,
+    input_role: str | None = None,
 ) -> turn_budget.TurnOutcome:
     """
     Run one agent turn and classify how it ended.
@@ -770,8 +773,12 @@ def ask_jarvis(
             origin-less turns. Published via CURRENT_CHANNEL.
         trigger: the trigger whose firing started this turn (a scheduled
             wake), or None. Published via CURRENT_TRIGGER.
+        input_role: how the episode store records this turn's input: "owner"
+            (default in user scope) or "system" (default in heartbeat scope;
+            also a confirmation result fed back as a turn).
     """
     now = _dt.datetime.now(_dt.timezone.utc)
+    raw_input = user_input
     user_input = f"{_turn_stamp(now)} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
@@ -811,6 +818,14 @@ def ask_jarvis(
         channel=channel,
         trigger_id=getattr(trigger, "id", None),
         due_tasks=heartbeat_due_tasks if scope == "heartbeat" else None,
+    )
+    episode_source = "chat" if scope == "user" else ("wake" if trigger is not None else "heartbeat")
+    episodes_record.turn_input(
+        turn_id=turn_id, thread_id=thread_id, scope=scope, channel=channel,
+        role=input_role or ("owner" if scope == "user" else "system"),
+        source=episode_source, content=raw_input, ts=now.isoformat(),
+        attachments=[a.get("path") for a in media_attachments or [] if a.get("path")],
+        meta={"trigger": trigger.id, "task": getattr(trigger.action, "task", None)} if trigger is not None else None,
     )
 
     mirror_block = mirror_cursor = None
@@ -1036,6 +1051,10 @@ def ask_jarvis(
         if scope == "heartbeat":
             ack = _ack_from_messages(end_messages)
             no_action = ack is None or not bool(ack.get("notify"))
+        turn_slice = _this_turns_messages(end_messages, user_input)
+        if turn_slice:
+            episodes_record.turn_steps(turn_id=turn_id, thread_id=thread_id, scope=scope,
+                                       channel=channel, source=episode_source, messages=turn_slice)
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
@@ -1044,6 +1063,24 @@ def ask_jarvis(
         turn_context.CURRENT_TRIGGER.reset(_trigger_token)
         turn_budget.TRACKER.reset(_tracker_token)
     return outcome
+
+
+def _this_turns_messages(messages: list, stamped_input: str) -> list:
+    """The thread's messages from this turn's input on, or [] when this turn's
+    input never reached the thread (the slice would be the previous turn's)."""
+    starts = _turn_starts(messages)
+    if not starts:
+        return []
+    turn = messages[starts[-1]:]
+    for m in turn:
+        if not isinstance(m, HumanMessage):
+            break
+        content = m.content
+        text = content if isinstance(content, str) else "".join(
+            b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text")
+        if text.startswith(stamped_input):
+            return turn
+    return []
 
 
 def _idle_long_enough(last_turn_at: str | None, now: _dt.datetime) -> bool:

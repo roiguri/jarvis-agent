@@ -55,6 +55,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
 ├── triggers/triggers.json # code-owned: pending triggers, gate state, task last_run stamps (gate input — see HEARTBEAT.md doc)
+├── episodes/episodes.sqlite  # the episode store — everything that happened (see "Episode store")
 └── logs/{chat_history,notifications}.jsonl
 
 /app/jarvis_code/gateway/*/media_cache/   # channel-owned (see GATEWAY.md)
@@ -99,8 +100,9 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `MEMORY.md` | jarvis_memory | **no** — read on demand via tools | yes | yes | no (delete blocked) |
 | `daily/<today>` | jarvis_memory | user scope (heartbeat: yesterday's) | yes | yes (heartbeat writes) | no |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
-| `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | via `get_chat_history` tool | append-only (gateway writes per turn) | n/a |
-| `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | via `get_notification_history` tool | append-only (heartbeat + gateway writers) | n/a |
+| `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | no (the episode store holds the same messages) | append-only (gateway writes per turn) | n/a |
+| `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | no (the episode store holds the same sends) | append-only (heartbeat + gateway writers) | n/a |
+| `episodes.sqlite` | jarvis_data/episodes | user scope — the today view (heartbeat activity) | via `search_history` tool | code only, as things happen | n/a |
 
 The key non-obvious row: **`MEMORY.md` is not injected into the prompt.** It is the agent's master *index*; the agent consults it on demand with `read_memory` (AGENTS.md instructs it to). Injecting it every turn was considered and rejected — it would spend tokens on an index the agent only needs when navigating memory, and the tool path already covers that need.
 
@@ -117,6 +119,7 @@ prompts/AGENTS.md  (code — operating rules; outside the sandbox)
 USER.md            (jarvis_memory — durable user profile)
 ─ scope == "user" ─────────────────────────────────────────────
    _USER_FRAMING (conversational)  +  today's daily log
+   + today view (what the heartbeat did today, from the episode store)
    (proactive sends reach the thread as mirrored history, not the prompt)
 ─ scope == "heartbeat" ────────────────────────────────────────
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
@@ -149,6 +152,50 @@ Both live slices are read **directly** by `build_system_prompt` (no tool call), 
 ### The skill block is RUNTIME's
 
 The final `compact_skill_list(...)` section — every skill's `SKILL.md` description, plus active skills' rule bodies — is produced and owned by the tool registry. This layer slots its return value in and does not describe it; see [RUNTIME.md](RUNTIME.md) ("The skill block").
+
+---
+
+## Episode store
+
+`jarvis_data/episodes/episodes.sqlite` (package `episodes/`) records everything that happened, in
+order, written by code as it happens. It is a separate file from the telemetry store: this one is
+conversation content.
+
+**Rows.** One per thing: `ts`, `turn_id` (the telemetry turn ID, so the stores join), `thread_id`,
+`scope`, `channel`, `role` (`owner`, `jarvis`, `tool_call` — name and arguments, `tool_result`,
+`jarvis_sent` — a delivered notification, `system` — a tick or wake instruction or a confirmation
+result), `source` (`chat`, `heartbeat`, `wake`, `slash_command`, `outbox`, `import`), `tool_name`,
+`meta` (JSON extras: notification event, trigger, call ID) and `content`. An FTS5 index covers
+`content`.
+
+**When rows are written** (`episodes/record.py`; every write is guarded, a failure is logged and
+never fails the turn):
+- turn start (`ask_jarvis`): the turn's input — the owner's raw message (attachments as
+  `[attached: path]`), a tick or wake instruction, or a confirmation result. Written first, so a
+  turn that crashes keeps it. The forwarded-notification block is not written: each delivered send
+  already has its own row.
+- turn end, from the final thread state: every model step of this turn — reply text, each tool
+  call with its arguments, each tool result — including failed and cut-short turns.
+- every delivered proactive send (the Outbox log sink in `main.py`, after a successful send).
+- slash commands and their replies (they never reach the model).
+
+**Content hygiene.** A narrow scrub replaces recognisable credentials (API keys, GitHub tokens,
+Bearer headers, JWTs, `password`/`api_key`/`token`-style fields) with `[redacted]`; IDs and hashes
+are left alone. A single row over 200,000 chars is cut with a note. Media is never stored, only
+its file path. Rows are kept forever.
+
+**Reading it.** `search_history` (core tool) — keywords via FTS5 (best match, newest first on
+ties; prefix match; all terms, then any term), or the newest entries in a date range; filtered by
+`kind` (`chat`, `notifications`, `background`, `all`); hits grouped by turn with the turn's message
+and reply. The user-scope prompt's **today view** lists today's heartbeat ticks that acted or
+messaged the owner, and wakes, from their `heartbeat_respond` calls (latest 20).
+
+**History before the store.** `chat_history.jsonl` and `notifications.jsonl` are imported once at
+startup (`source = import`; temporary code, `TODO(#157)`). Both logs are still written until the
+context redesign retires `chat_history.jsonl`.
+
+**Integrity.** `scripts/context_report.py` lists, per day, telemetry turns missing from the store.
+Backups copy the store with SQLite's online backup (`deploy/backup_state.sh`).
 
 ---
 

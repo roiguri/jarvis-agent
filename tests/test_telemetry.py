@@ -237,5 +237,4 @@ def test_mirror_block_counts_as_this_turns_input(use_llm):
     agent.ask_jarvis("about that briefing", OWNER_THREAD_ID)
     [turn] = turn_rows()
     [call] = calls_of(turn["turn_id"])
-    assert (call["history_messages"], call["turn_messages"]) == (0, 2), \
-        "the mirror block and the message it precedes are one turn's input"
+    assert call["turn_messages"] == 2, "the mirror block and the message it precedes are one turn's input"

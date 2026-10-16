@@ -234,7 +234,7 @@ Guards:
 
 `daily/daily_YYYY-MM-DD.md` is written by an ordinary task, `daily-log` in
 HEARTBEAT.md (every 3h, 05:00–23:30 Israel time), whose prose folds in today's
-chat, today's proactive sends (`get_notification_history`) and the day's
+chat, today's proactive sends (`search_history`, `kind="notifications"`) and the day's
 heartbeat activity. It used to be a rule in `prompts/heartbeat.md` that every
 tick reaching the model followed, which only kept it fresh while an hourly task
 kept waking the model; once crossfit moved behind a gate, that stopped. Chat

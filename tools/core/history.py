@@ -3,16 +3,16 @@ import json
 import os
 import tempfile
 import threading
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
-from timeutils import ISRAEL_TZ
 from langchain_core.tools import tool
 
 import config
+from episodes import search as episode_search
 from tools.registry import tool_register
 
-# Tool-owned activity logs: append-only JSONL the agent never file-reads —
-# queried only via get_chat_history / get_notification_history. Lives outside
+# Activity logs: append-only JSONL the agent never file-reads; the episode store
+# (episodes/) holds the same activity and is what search_history queries. Lives outside
 # the memory surface (not the memory dir). config creates DATA_DIR/logs at import
 # — the write path here just open()s, with no lazy mkdir of its own.
 _LOG_DIR = os.path.join(config.DATA_DIR, "logs")
@@ -69,38 +69,6 @@ def _append_line(path: str, record: dict) -> None:
             f.write(line)
 
 
-def _read_tail(path: str, limit: int) -> list[dict]:
-    """Read the last `limit` lines from a JSONL file efficiently (seeks from end)."""
-    if not os.path.exists(path):
-        return []
-    with open(path, "rb") as f:
-        f.seek(0, 2)  # seek to end
-        end = f.tell()
-        if end == 0:
-            return []
-        buf = b""
-        pos = end - 1
-        newlines_found = 0
-        # Walk backwards counting newlines to find the last `limit` lines
-        while pos >= 0 and newlines_found <= limit:
-            f.seek(pos)
-            char = f.read(1)
-            if char == b"\n" and pos != end - 1:
-                newlines_found += 1
-            buf = char + buf
-            pos -= 1
-        lines = buf.decode("utf-8").strip().splitlines()
-        records = []
-        for line in lines[-limit:]:
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-        return records
-
-
 def append_notification_log(event_type: str, message: str, metadata: dict | None = None) -> None:
     """Append one notification event to notifications.jsonl. Synchronous."""
     record = {
@@ -141,84 +109,20 @@ def append_chat_log(role: str, content: str, thread_id: str, attachment_paths: l
 
 @tool_register(namespace="core")
 @tool
-def get_notification_history(limit: int = 20) -> str:
-    """Read the last N notification events that Jarvis sent (media ready, upgrades,
-    failures, system alerts). Use when the user asks what notifications were sent recently."""
-    records = _read_tail(NOTIFICATION_LOG, limit)
-    if not records:
-        return "No notification history found."
-    lines = []
-    for r in records:
-        ts = r.get("ts", "?")
-        event = r.get("event", "?")
-        message = r.get("message", "").replace("\n", " ").strip()
-        if len(message) > 120:
-            message = message[:120] + "..."
-        lines.append(f"[{ts}] ({event}) {message}")
-    return "\n".join(lines)
-
-
-@tool_register(namespace="core")
-@tool
-def get_chat_history(limit: int = 20, since: str | None = None) -> str:
-    """Read chat exchanges between Roi and Jarvis. Use when you need history
-    from earlier days — today's chat is already in context.
+def search_history(query: str = "", since: str | None = None, until: str | None = None,
+                   kind: str = "all", limit: int = 10) -> str:
+    """Search past activity: Roi's messages and your replies, tool calls and
+    their results, messages sent to Roi, and heartbeat activity. Use it for
+    anything no longer in this conversation. Each hit includes its turn's
+    message and reply.
 
     Args:
-        limit: max number of entries to return.
-        since: optional. A plain date '2026-05-08' means the start of that day,
-               Israel time — the day boundary is computed for you. A full
-               ISO 8601 timestamp with a UTC offset makes a precise cut instead.
+        query: keywords, any language. Empty returns the newest entries.
+        since: optional. '2026-05-08' = start of that Israel day; or a full
+            ISO 8601 timestamp with a UTC offset.
+        until: optional, same formats; a plain date includes that whole day.
+        kind: "chat", "notifications" (sent to Roi), "background"
+            (heartbeat), or "all".
+        limit: max turns or entries (up to 30).
     """
-    if since is not None:
-        # Time-filtered path: read all entries and filter, then take last `limit`.
-        try:
-            # Date-only form: the Israel day boundary is computed here, not by
-            # the caller — a fixed offset in the contract was wrong every
-            # winter (+03:00 is summer-only; IST is +02:00).
-            day = date.fromisoformat(since)
-            since_dt = datetime(day.year, day.month, day.day, tzinfo=ISRAEL_TZ)
-        except ValueError:
-            try:
-                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            except ValueError:
-                return (f"Invalid 'since': {since!r}. Use 'YYYY-MM-DD' for the start "
-                        "of an Israel day, or a full ISO 8601 timestamp with an offset.")
-            if since_dt.tzinfo is None:
-                # Log entries are offset-aware; comparing them against a naive
-                # bound raises TypeError mid-scan. Reject rather than guess
-                # which day boundary was meant.
-                return (f"Ambiguous 'since': {since!r} has no UTC offset. Pass a plain "
-                        "'YYYY-MM-DD' for an Israel day, or include an offset.")
-        if not os.path.exists(CHAT_LOG):
-            return "No chat history found."
-        records = []
-        with open(CHAT_LOG, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    ts = datetime.fromisoformat(rec["ts"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    if ts >= since_dt:
-                        records.append(rec)
-                except (KeyError, ValueError, json.JSONDecodeError):
-                    pass
-        records = records[-limit:]
-    else:
-        records = _read_tail(CHAT_LOG, limit)
-
-    if not records:
-        return "No chat history found."
-    lines = []
-    for r in records:
-        ts = r.get("ts", "?")
-        role = r.get("role", "?")
-        content = r.get("content", "").replace("\n", " ").strip()
-        if len(content) > 200:
-            content = content[:200] + "..."
-        lines.append(f"[{ts}] {role}: {content}")
-    return "\n".join(lines)
+    return episode_search.search(query, since, until, kind, limit)

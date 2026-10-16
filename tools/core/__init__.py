@@ -18,8 +18,7 @@ from tools.core.history import (
     append_notification_log,
     async_append_notification_log,
     append_chat_log,
-    get_notification_history,
-    get_chat_history,
+    search_history,
 )
 from tools.core.scheduling import manage_trigger
 from tools.core.activate_skill import activate_skill
@@ -38,8 +37,7 @@ __all__ = [
     "append_notification_log",
     "async_append_notification_log",
     "append_chat_log",
-    "get_notification_history",
-    "get_chat_history",
+    "search_history",
     "manage_trigger",
     "activate_skill",
     "heartbeat_respond",

@@ -10,7 +10,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 - **Single-user**: designed for one owner (no multi-tenant routing)
 - **Runtime**: Python, hand-rolled LangGraph `StateGraph` agent (scoped tool registry + same-turn skill activation), Google Gemini model
-- **Persistence**: SQLite (LangGraph thread state, telemetry), JSONL logs, Markdown memory files
+- **Persistence**: SQLite (LangGraph thread state, telemetry, episode store), JSONL logs, Markdown memory files
 
 ---
 
@@ -44,6 +44,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   core/ is always-on; every other dir is an activatable skill, and a parent skill
 │                          #   may own zero tools and nest sub-skills (see "Add a new tool" below)
 ├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
+├── episodes/              # The episode store: everything that happened, recorded by code; search_history
+│                          #   and the today view read it (see docs/architecture/MEMORY.md "Episode store")
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
@@ -69,8 +71,10 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 ├── observability/telemetry.sqlite  # telemetry store: turns, llm_calls, tool_calls, bound_tools, prompts;
 │                                   #   180-day, app-only (observability/), agent never reads
+├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
+│                                   #   read via search_history and the today view
 └── logs/
-    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
+    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
 
 /app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
                                                  #   absolute paths from gateway/channels/telegram/media_cache.py)
@@ -115,8 +119,9 @@ Assembly order:
 SOUL.md            (memory dir — user-curated identity; agent-writable w/ confirmation)
 prompts/AGENTS.md  (code — operating rules; outside the memory sandbox, deploy-only)
 USER.md            (memory dir — durable user profile; agent-writable, no confirm)
-─ user scope ──────────  _USER_FRAMING + today's daily log (proactive sends reach the
-                         thread as mirrored history via the pending-mirror drain, not the prompt)
+─ user scope ──────────  _USER_FRAMING + today's daily log + today view (heartbeat activity
+                         from the episode store; proactive sends reach the thread as mirrored
+                         history via the pending-mirror drain, not the prompt)
 ─ heartbeat scope ─────  _HEARTBEAT_FRAMING + prompts/heartbeat.md + HEARTBEAT.md
                          + today's user chat + yesterday's daily log
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
