@@ -726,12 +726,18 @@ def _tool_node(state: JarvisState) -> dict:
         t0 = time.perf_counter()
         tool = registry.find(name, scope, active)
         if tool is None:
-            if ns and ns != "core":
+            # A call to an inactive skill's tool does not run: the skill's rules
+            # must be in the prompt first. The refusal activates the skill, so
+            # the model's next call sees the rules and can repeat the call.
+            if ns and ns != "core" and registry.find(name, scope, active | {ns}) is not None:
+                to_activate.add(ns)
                 msg = (
-                    f"'{name}' belongs to the '{ns}' skill, which is not active. "
-                    f"Call activate_skill(namespaces=['{ns}']) first, then call "
-                    f"'{name}' again — both in this same turn."
+                    f"'{name}' belongs to the '{ns}' skill, which was not active, so it did not run. "
+                    f"The skill is active now and its rules are in your instructions; "
+                    f"read them, then call '{name}' again."
                 )
+            elif ns and ns != "core":
+                msg = f"Tool '{name}' is not available in this turn."
             else:
                 msg = f"Tool '{name}' does not exist."
             messages.append(ToolMessage(

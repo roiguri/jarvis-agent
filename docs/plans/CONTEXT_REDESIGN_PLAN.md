@@ -71,10 +71,19 @@ since 2026-10-10 (`deploy-2026-10-10-3`).
 - [x] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
       hits after a 60-minute gap, so the reset costs no cache. RUNTIME.md's deferral note and the
       AGENTS.md "deactivate when no longer needed" line updated.
-- [x] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
-      within one round-trip. Staging 2026-10-16: no reset within 3h; after a 4h50m gap the turn
-      started with no skills ("Skills reset after idle on owner: ['google_health']") and switched
-      `google_health` back on in the same turn.
+- [x] A call to an inactive skill's tool does not run, but the refusal activates the skill: the next
+      call has its rules and tools and repeats the call (owner, 2026-10-16). Found by the staging
+      check below: after the reset the model called `health_status` straight from the conversation,
+      then sent `activate_skill` and the tool in one step (activation applies after the step), so the
+      tool ran on the third call. Prod showed 0 such refusals (skills never reset there). Considered
+      and not taken: running the tool in the same step as its activation, or auto-running any called
+      tool — both run a tool before its skill's rules are in the prompt. Later, if the extra round
+      matters: read-only tools could run with the rules attached to their result (needs a per-tool
+      read-only marker).
+- [ ] Verify: skill-schema tokens per user call drop after idle gaps; a needed skill is re-activated
+      within one round-trip. Staging 2026-10-16: the reset works (no reset within 3h; after a 4h50m
+      gap the turn started with no skills), but re-activation took 3 calls — rerun after the fix
+      above.
 
 Dropped from S1 (owner, 2026-10-10): scoping the fitness writer tools to user turns. Ticks do call
 them (`manage_fitness_plan` as recently as 10-07), and it would restrict the heartbeat's tools,
@@ -208,8 +217,11 @@ evals first (S5a), then compaction (S5b).
 - [x] Verify, evals (2026-10-16, real summaries): all 6 chat cases 3/3 — a chat rule followed 0→3
       and the morning's request remembered 0→3; the morning fact and the open request now come from
       the summary with no `search_history` call (before: found by searching). Baseline updated.
-- [ ] Verify, staging: `/compact` then a question about something only in the summary, and
-      `/context` shows it.
+- [x] Verify, staging (2026-10-16): `/compact` replaced 40 messages (27,148 chars) with a 1,134-char
+      record, outcome ok; `/context` showed it (span, the owner's two messages, done, learned, the live
+      reminder, skills used). Asked "what did we talk about this morning?", Jarvis answered correctly
+      from the record (nothing this morning; first exchange 15:15, then steps and the reading list),
+      though only after ~16 confirming tool calls.
 
 **S6 — Nightly consolidator** (§5, R3).
 - [ ] Its own cron entry (~03:00 Israel) with a misfire grace that survives a restart.
