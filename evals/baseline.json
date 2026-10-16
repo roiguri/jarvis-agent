@@ -4,6 +4,14 @@
       "passed": 3,
       "runs": 3
     },
+    "duplicate_files_noticed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "duplicate_not_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
     "finished_task_not_revived": {
       "passed": 3,
       "runs": 3
@@ -12,11 +20,27 @@
       "passed": 1,
       "runs": 3
     },
+    "jarvis_sent_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
     "morning_fact_recalled": {
       "passed": 3,
       "runs": 3
     },
+    "negative_tool_claim_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
+    "one_off_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
     "open_request_survives": {
+      "passed": 3,
+      "runs": 3
+    },
+    "passed_plan_retensed": {
       "passed": 3,
       "runs": 3
     },
@@ -32,11 +56,23 @@
       "passed": 3,
       "runs": 3
     },
+    "reply_to_briefing_used": {
+      "passed": 3,
+      "runs": 3
+    },
     "schedule_change_is_a_notice": {
       "passed": 8,
       "runs": 19
     },
+    "secret_not_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
     "sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "stated_preference_suggested": {
       "passed": 3,
       "runs": 3
     },
@@ -70,6 +106,5 @@
     }
   },
   "date": "2026-10-16",
-  "model": "gemini-3-flash-preview",
-  "note": "stateless heartbeat (S4b). form_text_not_repeated, schedule_change_is_a_notice and tick_cannot_create_tasks fail on existing behaviour (owner: out of scope); schedule_change_is_a_notice passes about half the time on any version (13/19 pre-S4, 8/19 S4b). Chat cases recorded on pre-S5 code (plain trim, no compaction): chat_rule_followed 0/3 and sent_message_not_attributed 0/3 are what compaction targets."
+  "model": "gemini-3-flash-preview"
 }

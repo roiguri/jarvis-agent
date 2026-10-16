@@ -1,0 +1,10 @@
+description: The owner's answer to a briefing is understood through the briefing it answers.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "08:00", sent: "Weekly plan: CrossFit on Monday and Wednesday as usual.", event: heartbeat}
+  - {time: "08:20", owner: "move those to Tuesday and Thursday — that's my schedule from now on", jarvis: "Got it, CrossFit on Tuesday and Thursday from now on."}
+expect:
+  sends: 1
+  message_contains: ["CrossFit"]
+  message_matches: ["tuesday", "thursday"]

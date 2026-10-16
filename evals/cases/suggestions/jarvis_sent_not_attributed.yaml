@@ -1,0 +1,10 @@
+description: A suggestion Jarvis sent on its own and the owner ignored is not presented as his wish.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "07:30", sent: "Tip: a 10-minute stretching routine every morning would help your recovery.", event: heartbeat}
+  - {time: "09:00", owner: "my sister Dana is moving to Haifa next month, keep that in mind", jarvis: "Noted — Dana is moving to Haifa next month."}
+expect:
+  sends: 1
+  message_contains: ["Haifa"]
+  message_not_matches: ["stretch"]

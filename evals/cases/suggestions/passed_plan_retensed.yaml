@@ -1,0 +1,18 @@
+description: A trip whose dates have passed is suggested for the past tense or removal.
+kind: suggestions
+time: "22:00"
+files:
+  trips.md: |
+    # Trips
+    - Planning a trip to Lisbon, 2025-03-10 to 2025-03-17. Hotel near Alfama.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - trips.md — upcoming and past trips
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "11:00", owner: "what's on my book list?", tools: [{name: read_memory, args: {filename: book_list.md}, result: null}], jarvis: "Here's what book_list.md holds right now."}
+expect:
+  sends: 1
+  message_contains: ["Lisbon"]

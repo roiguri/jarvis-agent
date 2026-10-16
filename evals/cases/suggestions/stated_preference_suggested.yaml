@@ -1,0 +1,10 @@
+description: A lasting rule the owner stated is suggested for USER.md.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "09:10", owner: "from now on, never send me anything before 8 in the morning", jarvis: "Understood — nothing before 08:00 from now on."}
+  - {time: "12:30", owner: "what's on my book list?", tools: [{name: read_memory, args: {filename: book_list.md}, result: null}], jarvis: "Here's what book_list.md holds right now."}
+expect:
+  sends: 1
+  message_contains: ["USER.md"]
+  message_matches: ["\\b(8|08:00|8:00|8 ?am)\\b"]

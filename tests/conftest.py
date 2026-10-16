@@ -82,8 +82,11 @@ def clean_logs():
         os.remove(pending_mirrors.CURSOR_PATH)
     import compaction
 
-    if os.path.exists(compaction.STATE_PATH):
-        os.remove(compaction.STATE_PATH)
+    import memory_suggestions
+
+    for path in (compaction.STATE_PATH, memory_suggestions.STATE_PATH):
+        if os.path.exists(path):
+            os.remove(path)
 
 
 @pytest.fixture

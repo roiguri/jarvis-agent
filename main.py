@@ -11,8 +11,9 @@ import config
 
 from agent import ask_jarvis, ask_jarvis_once
 import heartbeat_state
+import memory_suggestions
 from heartbeat import run_heartbeat
-from triggers.scheduler import add_heartbeat, init_scheduler, restore_pending
+from triggers.scheduler import add_heartbeat, add_memory_suggestions, init_scheduler, restore_pending
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
@@ -312,6 +313,7 @@ async def main() -> None:
     scheduler = init_scheduler()
     if config.HEARTBEAT_ENABLED:
         add_heartbeat(run_heartbeat)
+        add_memory_suggestions(memory_suggestions.run_scheduled)
 
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
@@ -330,6 +332,12 @@ async def main() -> None:
         past_due_tasks = restore_pending() if config.REMINDERS_ENABLED else []
 
         scheduler.start()
+        # A restart across the morning slot would otherwise skip the day's
+        # suggestions: APScheduler keeps no record of a run it never saw. The
+        # reference keeps the task from being collected.
+        catch_up = None
+        if config.HEARTBEAT_ENABLED and memory_suggestions.catch_up_due():
+            catch_up = asyncio.get_running_loop().create_task(memory_suggestions.run_scheduled())
         if config.HEARTBEAT_ENABLED:
             # Next fire time in the boot block: makes the phase checkable at a
             # glance instead of waiting for the first tick to hit the journal.

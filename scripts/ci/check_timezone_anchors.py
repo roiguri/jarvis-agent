@@ -51,6 +51,8 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "tools/fitness/_adherence.py": ("home", "adherence weeks are Israel-Sunday-anchored counting windows by design"),
     "tools/core/scheduling.py": ("both", "Israel rendering + away-mode owner-local echo"),
     "triggers/runner.py": ("home", "late-send annotation renders Israel time, as reminders always have"),
+    "triggers/scheduler.py": ("home", "the morning suggestions run at an Israel wall-clock time"),
+    "memory_suggestions.py": ("home", "the suggestions cover an Israel day"),
     "tools/fitness/_db.py": ("home", "workout dates are Israel-local strings; the gym is in Israel"),
     "tools/fitness/plans.py": ("home", "Sunday-anchored Israel week quotas"),
     "tools/fitness/reports.py": ("home", "reports over Israel-dated fitness rows"),
