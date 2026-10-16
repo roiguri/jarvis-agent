@@ -1,7 +1,7 @@
 {
   "cases": {
     "chat_rule_followed": {
-      "passed": 0,
+      "passed": 3,
       "runs": 3
     },
     "daily_log_written_quietly": {
@@ -41,7 +41,7 @@
       "runs": 19
     },
     "sent_message_not_attributed": {
-      "passed": 0,
+      "passed": 3,
       "runs": 3
     },
     "step_nudge_needed": {

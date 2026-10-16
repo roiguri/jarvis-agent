@@ -24,6 +24,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   (reminders and wakes; see docs/architecture/TRIGGERS.md)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), last_run stamps (kept in the trigger store)
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
+├── compaction.py          # older owner turns → one validated record at the window's head (post-turn job,
+│                          #   /compact, /context); see docs/architecture/MEMORY.md "Compaction"
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
@@ -169,7 +171,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 
 | Thread ID | Purpose |
 |-----------|---------|
-| `owner` | The one owner conversation — all channels stamp it (50-message window) |
+| `owner` | The one owner conversation — all channels stamp it (compacted past ~20k tokens to a record + the last 3 turns; 50-message trim as a backstop) |
 | `heartbeat` | Scheduled background checks and scheduled wakes — no saved conversation (each run starts fresh); the id still tags their records |
 
 Only user-scope turns write to `chat_history.jsonl` (tagged by `thread_id`); heartbeat and wake turns are not logged there. Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).

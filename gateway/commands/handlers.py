@@ -74,6 +74,31 @@ async def _clear(inbound: InboundMessage, args: list[str]) -> str:
     return "Conversation reset. Starting fresh."
 
 
+@command("context", "Show the compacted record of earlier conversation, if there is one")
+async def _context(inbound: InboundMessage, args: list[str]) -> str:
+    import compaction
+
+    record = await asyncio.to_thread(compaction.current_record, inbound.thread_id)
+    if not record:
+        return section("Context", [], empty="No compacted record yet — the whole conversation is still in the window.")
+    return document("Compacted record (what Jarvis keeps of the earlier conversation)", record)
+
+
+@command("compact", "Compact the earlier conversation now (keeps the last 3 turns)")
+async def _compact(inbound: InboundMessage, args: list[str]) -> str:
+    import compaction
+
+    plan = await asyncio.to_thread(compaction.compact_thread, inbound.thread_id, True)
+    if plan is None:
+        return section("Compact", [], empty="Nothing to compact — the conversation is only a few turns long.")
+    return kv_section("Compacted", [
+        ("Messages replaced", plan.covered),
+        ("Record size", f"{plan.after_chars:,} chars (was {plan.before_chars:,})"),
+        ("Outcome", plan.outcome),
+        ("Skills kept on", ", ".join(sorted(plan.active_skills)) or "none"),
+    ])
+
+
 def _active_skills(thread_id: str) -> set[str]:
     import agent
 

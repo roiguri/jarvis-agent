@@ -46,6 +46,7 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "observability/usage.py": ("home", "usage buckets report the server's own Israel-dated activity"),
     "episodes/search.py": ("home", "search_history's plain-date bounds are Israel days, as the logs it replaced"),
     "episodes/today.py": ("home", "the today view is the Israel day, like the daily log beside it"),
+    "compaction.py": ("both", "record times in Israel time, plus the owner's local time in away mode, as the turn stamp"),
     "evals/harness.py": ("home", "cases pin Israel wall-clock times, like the heartbeat they exercise"),
     "tools/fitness/_adherence.py": ("home", "adherence weeks are Israel-Sunday-anchored counting windows by design"),
     "tools/core/scheduling.py": ("both", "Israel rendering + away-mode owner-local echo"),
