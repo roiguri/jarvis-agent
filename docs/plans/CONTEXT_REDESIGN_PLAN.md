@@ -1,7 +1,7 @@
 # Context Redesign — Plan
 
-**Date:** 2026-10-07 · **Status:** S0 in prod since 2026-10-10 (#151); before-readings due
-~2026-10-15; S1 next.
+**Date:** 2026-10-07 · **Status:** S0 in prod since 2026-10-10 (#151); before-readings recorded
+2026-10-16 (§9); cache test, then S1.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -64,8 +64,8 @@ since 2026-10-10 (`deploy-2026-10-10-3`).
       numbers as the old JSONL path on imported data.
 - [x] Verify (staging, then prod): `/usage` matches the pre-change numbers for the imported window;
       a staging turn and a prod turn produce complete rows.
-- [ ] Before-reading recorded in §9 after ~5 full days in prod (~2026-10-15), including the cache
-      question.
+- [x] Before-reading recorded in §9 (2026-10-11..15).
+- [ ] The cache question (§9 "Open"): no prod data, so a fixed `measure_context.py` cache test.
 
 **S1 — Quick wins.** No new subsystems.
 - [ ] Skills reset after ~3h of owner silence, at the next turn's start (R2). Prod shows 0% cache
@@ -369,15 +369,30 @@ tool changes) are noted beside each reading.
 
 | | Before | S1 | S2 | S3 | S4 | S5 | S6 |
 |---|---|---|---|---|---|---|---|
-| user input / call | | | | | | | |
-| user input / turn | | | | | | | |
-| heartbeat input / tick | | | | | | | |
-| heartbeat input / day | | | | | | | |
-| cache-read share | | | | | | | |
-| tool + skill share of a user call | | | | | | | |
+| user input / call | 47.5k | | | | | | |
+| user input / turn | 128k | | | | | | |
+| heartbeat input / tick | 105k | | | | | | |
+| heartbeat input / day | 1.35M | | | | | | |
+| cache-read share | 62% | | | | | | |
+| tool + skill share of a user call | 38% | | | | | | |
 | new jobs' LLM spend / day | — | — | — | — | — | | |
 | compaction p95 latency | — | — | — | — | — | | |
 | episode store size / day | — | — | | | | | |
+
+**Before (prod, 2026-10-11..15, 5 full Israel days, telemetry store).** 81 turns: 17 user, 45
+heartbeat ticks, 19 wakes; 322 model calls; $2.25 (heartbeat $1.73, user $0.52). User: 47.5k input
+per call, 128k per turn, 2.7 calls per turn. Heartbeat: ticks 108k per tick, wakes 98k; 12.8 turns
+and 1.35M input a day; 40 of 45 ticks sent nothing. Cache-read share 62% in both scopes (79% between
+calls of one turn). What a call's input is made of (chars, averaged per call):
+
+| | prompt | tool declarations | earlier turns | this turn | tools bound |
+|---|---|---|---|---|---|
+| user | 20.0k | 65.6k (38% of tokens) | 62.8k (27% of tokens) | 5.6k | 73 |
+| heartbeat | 21.1k | 36.1k (35% of tokens) | 21.6k (20% of tokens) | 3.4k | 34 |
+
+Confounders: light user traffic (1–8 turns a day); the owner thread had every skill active all week,
+so no call changed its tool set mid-turn (the cache question below gets no answer from these days);
+the step-challenge task drove most wakes.
 
 **Staging measurement (2026-10-10, `scripts/measure_context.py`).** About 4.3 chars per token for
 prose and tool declarations alike, so the store's char composition converts by ÷4.3. Tokens per call:
@@ -389,11 +404,9 @@ five unused skills, ~13.9k tokens per call, more than core and the prompt togeth
 **Open: does a tool-set change cost the cache?** The script's cache test was inconclusive. Its cost
 pass had already sent the "+skill" request, so that request was warm, and at ~5–9k tokens per
 request Gemini's ~2k-token cache blocks capped even identical repeats at 40–45% cached (a real
-26.7k-token staging call was 91% cached). Settle it from prod telemetry after S0 deploys: calls right
-after a mid-turn `activate_skill` have a changed tool set and the same conversation, so their
-`cache_read_tokens` against the previous call answer it with real traffic. Fall back to a fixed
-script (cache test first with a unique prompt marker, ~20k tokens of conversation after the tools)
-only if a week of prod has too few activations.
+26.7k-token staging call was 91% cached). Prod telemetry could not settle it: in
+2026-10-11..15 no call changed its tool set mid-turn (every skill stayed active). So: a fixed
+script (cache test first with a unique prompt marker, ~20k tokens of conversation after the tools).
 
 **Quality rows**, with the threshold that means the slice failed:
 
