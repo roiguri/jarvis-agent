@@ -1,0 +1,12 @@
+description: A wake linked to the step task, behind target in the evening — it sends the nudge it was scheduled for.
+kind: wake
+time: "18:00"
+wake:
+  instruction: "Evening step check: if Roi is under 6,000 steps, send one short nudge to top up."
+  task: step-challenge-tracker
+stubs:
+  health_status: "Steps today: 4,300."
+expect:
+  ack: {notify: true}
+  called: [health_status]
+  sends: 1

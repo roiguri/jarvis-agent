@@ -15,8 +15,10 @@ which nothing measures today.
       for the scoped tool surface, so every prompt or docstring change is a reviewable diff.
 - [x] **T3 — Unit tests where bugs have been.** Heartbeat gate and parser, time boundaries,
       memory sandbox, message trimming, registry scoping, fitness math.
-- [ ] **T4 — Eval runner + heartbeat cases.** Top-level `evals/`: scenario cases run through
-      the real graph and real Gemini, graded on the trajectory; about 10 heartbeat cases.
+- [x] **T4 — Eval runner + heartbeat cases.** Top-level `evals/`: scenario cases run through
+      the real graph and real Gemini, graded on the trajectory; 12 heartbeat cases. Built as
+      the context redesign's S4a (2026-10-16); grading reads the scratch episode store and the
+      Outbox recorder rather than the thread, since S4 makes ticks stateless.
 - [ ] **T5 — User-scope evals + workflow.** Tool-choice and safety-rail cases, a local
       case-drafting helper, and an eval step in the `code-review` skill.
 
@@ -99,8 +101,10 @@ the Outbox and the channel. Both tracks build on these. No new seam in app code 
 - **D7 — Committed cases contain no real personal data.** Cases are written or sanitized by
   hand. The drafting helper (T5) reads prod logs locally and writes drafts to a gitignored
   directory. The owner reviews each draft before it becomes a case.
-- **D8 — Evals read the API key from the environment only.** The runner requires
-  `GOOGLE_API_KEY` to be set by whoever runs it and never reads a `.env` file.
+- **D8 — Evals take the API key from the environment, or else from staging's secrets.** If
+  `GOOGLE_API_KEY` is not set, the runner reads it (and nothing else) from
+  `/app/jarvis_staging/secrets/.env`, as `measure_context.py` does, so Claude Code can run evals
+  too (owner, 2026-10-16; this replaces "environment only"). Prod's `.env` is refused.
 
 ---
 

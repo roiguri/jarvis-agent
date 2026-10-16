@@ -1,0 +1,16 @@
+description: A nudge already went out at 13:00; at 16:00 still under target — no second nudge.
+kind: tick
+time: "16:00"
+due: [step-challenge-tracker]
+files:
+  heartbeat/step_challenge_tracker.md: |
+    # step-challenge-tracker notes
+    - Challenge: 100,000 steps this month, 7,500/day.
+    - Today 12:00: 1,900 steps.
+earlier:
+  - {time: "13:00", kind: wake, task: step-challenge-tracker, instruction: "Mid-day step check: nudge Roi if he is behind.", acted: [], notify: true, summary: "Sent the mid-day step nudge (2,050 steps).", message: "You're at 2,050 steps — a short walk after lunch would help toward today's 7,500."}
+stubs:
+  health_status: "Steps today: 3,100."
+expect:
+  ack: {notify: false}
+  sends: 0

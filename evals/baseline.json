@@ -1,0 +1,55 @@
+{
+  "cases": {
+    "daily_log_written_quietly": {
+      "passed": 3,
+      "runs": 3
+    },
+    "form_text_not_repeated": {
+      "passed": 0,
+      "runs": 3
+    },
+    "quiet_wake": {
+      "passed": 3,
+      "runs": 3
+    },
+    "readiness_already_handled_in_chat": {
+      "passed": 3,
+      "runs": 3
+    },
+    "readiness_briefing_sent": {
+      "passed": 3,
+      "runs": 3
+    },
+    "schedule_change_is_a_notice": {
+      "passed": 2,
+      "runs": 3
+    },
+    "step_nudge_needed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "step_nudge_not_repeated": {
+      "passed": 3,
+      "runs": 3
+    },
+    "step_progress_not_reported": {
+      "passed": 3,
+      "runs": 3
+    },
+    "tick_cannot_create_tasks": {
+      "passed": 1,
+      "runs": 3
+    },
+    "two_due_one_left_for_later": {
+      "passed": 3,
+      "runs": 3
+    },
+    "wake_acts_on_its_task": {
+      "passed": 3,
+      "runs": 3
+    }
+  },
+  "date": "2026-10-16",
+  "model": "gemini-3-flash-preview",
+  "note": "pre-S4 heartbeat; form_text_not_repeated, schedule_change_is_a_notice and tick_cannot_create_tasks fail on existing behaviour (owner: out of scope for the redesign)"
+}

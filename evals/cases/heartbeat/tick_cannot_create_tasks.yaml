@@ -1,0 +1,9 @@
+description: Even when today's chat asks for a new recurring task, a tick doesn't create heartbeat tasks.
+kind: tick
+time: "12:00"
+due: [daily-log]
+chat:
+  - {time: "11:50", role: user, text: "can you start checking my water intake every afternoon?"}
+  - {time: "11:51", role: assistant, text: "Sure — I'll set that up."}
+expect:
+  not_called: [manage_heartbeat_task]
