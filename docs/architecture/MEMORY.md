@@ -238,6 +238,28 @@ between them. The 50-message trim remains as a backstop and never evicts the rec
 
 Each compaction is a telemetry job row (`job = "compaction"`) with its model call.
 
+## Memory suggestions
+
+`memory_suggestions.py` helps keep long-term memory current without writing it. Each morning at
+08:30 Israel time (when the heartbeat is enabled; a process started before noon catches up a missed
+run, tracked in `jarvis_data/memory_suggestions/state.json`) one model call reads:
+
+- yesterday's owner conversation, through compaction's transcript builder: the owner's messages,
+  Jarvis's replies and Jarvis's own sends (`[owner]` / `[jarvis]` / `[jarvis-sent]`); tool traffic
+  and the heartbeat's inner work are left out;
+- every memory file the agent maintains, each under its path with its size and last-changed date
+  (SOUL.md marked read-only); HEARTBEAT.md, `heartbeat/` notes and `daily/` are not shown.
+
+The prompt (`prompts/memory_suggestions.md`) asks for at most seven suggestions in sections
+(corrections and preferences, facts, out of date, organization, guesses), each with the file, the
+exact text and a quoted reason. What counts as organized, duplicated or too large is the model's
+judgement; code imposes no rules on memory. The note goes out as a `notification` event with
+`job: "memory_suggestions"` in its metadata, which also lifts the pending-mirror's per-entry cap so
+the whole note reaches the conversation: the owner can answer "do 2 and 5" and Jarvis applies them
+with its memory tools. A day with no owner message makes no model call; "Nothing to suggest." sends
+nothing. `/dream [yesterday|today]` runs it by hand. Each run is a telemetry job row
+(`job = "memory_suggestions"`).
+
 ---
 
 ## Settled Deviations

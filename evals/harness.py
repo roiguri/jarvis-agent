@@ -320,7 +320,7 @@ def run_case(case: dict) -> Result:
     now = case_now(case)
     _reset()
     _seed(case, now)
-    if case.get("kind") == "chat":
+    if case.get("kind") in ("chat", "suggestions"):
         _seed_chat(case, now)
     seeded_max = (episode_store.rows("SELECT MAX(id) AS m FROM episodes") or [{"m": 0}])[0]["m"] or 0
 
@@ -347,6 +347,11 @@ def run_case(case: dict) -> Result:
                     compaction.compact_thread(OWNER_THREAD_ID, force=True)
             outcome = agent.ask_jarvis(case["message"], OWNER_THREAD_ID, channel="telegram")
             result.reply = outcome.text
+        elif case.get("kind") == "suggestions":
+            import memory_suggestions
+
+            patches.set(memory_suggestions, "datetime", frozen.datetime)
+            asyncio.run(memory_suggestions.send(now.date()))
         elif case.get("kind", "tick") == "wake":
             from triggers import store as trigger_store
             from triggers.model import ORIGIN_JARVIS, At, Trigger, Turn

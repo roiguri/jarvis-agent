@@ -26,6 +26,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
 ├── compaction.py          # older owner turns → one validated record at the window's head (post-turn job,
 │                          #   /compact, /context); see docs/architecture/MEMORY.md "Compaction"
+├── memory_suggestions.py  # each morning: yesterday's conversation + all memory files → suggestions sent
+│                          #   to the owner; memory unchanged (/dream); MEMORY.md "Memory suggestions"
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
@@ -77,6 +79,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                                   #   180-day, app-only (observability/), agent never reads
 ├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
 │                                   #   read via search_history and the today view
+├── memory_suggestions/state.json   # the morning suggestions' last run date (catch-up after a restart)
 └── logs/
     └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
 

@@ -1,0 +1,9 @@
+description: A day of one-off requests and a one-answer correction suggests nothing.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "10:00", owner: "remind me at 18:00 to call the plumber", tools: [{name: manage_trigger, args: {action: create, when: "18:00", text: "Call the plumber"}, result: "Reminder set for 18:00: Call the plumber"}], jarvis: "Reminder set for 18:00 to call the plumber."}
+  - {time: "15:00", owner: "which books did I finish?", tools: [{name: read_memory, args: {filename: book_list.md}, result: null}], jarvis: "Here's what book_list.md holds right now, with the finished ones marked."}
+  - {time: "15:01", owner: "shorter this time please", jarvis: "Finished: two books."}
+expect:
+  sends: 0

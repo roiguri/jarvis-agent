@@ -222,25 +222,34 @@ evals first (S5a), then compaction (S5b).
       from the record (nothing this morning; first exchange 15:15, then steps and the reading list),
       though only after ~16 confirming tool calls.
 
-**S6 — Nightly suggestions** (§5). Redesigned with the owner on 2026-10-16 after the prompt research
+**S6 — Memory suggestions** (§5). Redesigned with the owner on 2026-10-16 after the prompt research
 (context/reports/DREAMING_PROMPT.md): start with suggestions only; the job gets write tools only
 after a week of suggestions the owner likes.
-- [ ] A nightly job (~03:00 Israel, its own cron entry, a misfire grace that survives a restart): one
+- [x] A morning job (08:30 Israel, owner 2026-10-16: the note goes out at once, so no night run;
+      catch-up until noon after a restart; only with the heartbeat enabled): one
       model call over yesterday's conversation plus every memory file (~20 KB in prod, injected; no
       tools). The conversation comes from compaction's transcript builder: the owner's messages,
       Jarvis's replies, and Jarvis's own sends tagged `[jarvis-sent]`; heartbeat runs' inner work is
       left out. SOUL.md is context only.
-- [ ] Output: plain-text suggestions — facts to add or update, entries a change or a passed date made
+- [x] Output: plain-text suggestions — facts to add or update, entries a change or a passed date made
       stale, the same thing in two files, a file grown too wide or better merged with another,
       USER.md or MEMORY.md past its size target. Organization and size are the model's judgement;
       no code rules.
-- [ ] Delivered in a morning note (~08:30, a one-off trigger) through the Outbox; memory is not
-      changed. No model call on a day with no conversation; the note says so.
-- [ ] Prompt in `prompts/` with generic examples (public repo). Goals: carry forward what the owner
+- [x] Delivered at once through the Outbox as a `notification` event (`job: "memory_suggestions"`
+      in its metadata, owner 2026-10-16: no new event type); memory is not changed. No model call
+      on a day with no owner message, and nothing sent then or on "Nothing to suggest." (owner).
+      The pending mirror carries the whole note, so the owner can answer "do 2" in the conversation.
+      `/dream [yesterday|today]` runs it by hand (`TODO(#167)`: reconsider once suggestions end).
+- [x] Prompt in `prompts/` with generic examples (public repo). Goals: carry forward what the owner
       said once, follow his preferences, stay current as time passes; the keep/drop rules in the
       report. Jarvis's own sends are context, and say something about the owner only where he
       responded to them.
-- [ ] Evals: synthetic cases on the suggestions (report §6, adapted to suggestions).
+- [x] Evals: 9 synthetic cases in `evals/cases/suggestions/` (stated preference, one-off day,
+      ignored send, reply to a briefing, passed trip, broken-tool claim, duplicate fact, door code,
+      duplicate files), all 3/3. The first run found one note on a near-empty day inventing an
+      entire conversation with quotes, and one turning a single Sunday run into a schedule change;
+      the prompt now requires quotes to come from [owner] lines, forbids filling a quiet day, and
+      says one event does not change a routine.
 - [x] The daily log becomes code-only: the heartbeat gets a code-built "yesterday" view from the
       episode store instead of yesterday's daily file; the user scope stops injecting today's daily
       log (the today view covers it); no daily files are written (existing ones stay); `/logs`
@@ -250,7 +259,7 @@ after a week of suggestions the owner likes.
       replaced with `search_history`, whose own description covers it); its "sliding window of the
       last 50 messages" line, wrong since S5, now says older conversation arrives as a summary; the
       core-tool list says "history search".
-- [ ] Jarvis keeps writing memory during conversations (owner, 2026-10-16); suggestions may point at
+- [x] Jarvis keeps writing memory during conversations (owner, 2026-10-16); suggestions may point at
       those writes.
 - [ ] **Deploy step:** in prod `HEARTBEAT.md`, remove the `daily-log` task (replaces R4's "once a
       night"), and change `memory-index-audit`'s step 7 from "Log a "System Integrity Report" in the
@@ -382,13 +391,13 @@ does both, at one event:
   rule survives the night.
 - **Failure:** a deterministic record built by code plus a marker; a thrash guard.
 
-## 5. Nightly suggestions (S6)
+## 5. Memory suggestions (S6)
 
 Research and draft prompt: context/reports/DREAMING_PROMPT.md (2026-10-16), building on
 COMPACTION_AND_DREAMING.md. The first design (typed ops, code validation, shadow mode, auto-apply
 with snapshots) was replaced by the owner on 2026-10-16 with a staged one:
 
-- **Phase 1, suggestions:** each night one call reads yesterday's conversation and all memory
+- **Phase 1, suggestions:** each morning one call reads yesterday's conversation and all memory
   files and writes suggestions into a morning note. Nothing in memory changes; the owner reads them.
 - **Phase 2, after a week the owner likes:** the job gets the memory tools and applies its changes
   directly, with `backup_state.sh` before each run as the restore point.

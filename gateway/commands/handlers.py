@@ -99,6 +99,29 @@ async def _compact(inbound: InboundMessage, args: list[str]) -> str:
     ])
 
 
+# TODO(#167): consider removing once memory suggestions end.
+@command("dream", "Send the memory suggestions now. Sub: /dream yesterday|today")
+async def _dream(inbound: InboundMessage, args: list[str]) -> str:
+    import datetime as _dt
+
+    import memory_suggestions
+    from timeutils import ISRAEL_TZ
+
+    which = (args[0].lower() if args else "yesterday")
+    if which not in ("yesterday", "today"):
+        return section("Usage", ["`/dream [yesterday|today]` — today covers the day so far"])
+    day = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
+    if which == "yesterday":
+        day -= _dt.timedelta(days=1)
+    outcome = await memory_suggestions.send(day)
+    return kv_section("Memory suggestions", [
+        ("Day", day.isoformat()),
+        ("Outcome", {"sent": "sent as a message",
+                     "nothing": "nothing to send (no conversation, or nothing worth suggesting)",
+                     "failed": "failed — see the log"}[outcome]),
+    ])
+
+
 def _active_skills(thread_id: str) -> set[str]:
     import agent
 

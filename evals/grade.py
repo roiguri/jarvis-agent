@@ -11,6 +11,7 @@ Checks:
     sends:        int — how many messages reached the owner through the Outbox
     message_contains / message_not_contains: [strings] — over the text of every
                   message sent to the owner, case-insensitive
+    message_matches / message_not_matches: [regexes] — the same text, case-insensitive
     reply_contains / reply_not_contains: [strings] — a chat case's reply, case-insensitive
     reply_matches / reply_not_matches: [regexes] — a chat case's reply
 """
@@ -70,6 +71,10 @@ def grade(expect: dict, result) -> list[tuple[str, bool, str]]:
         checks.append((f"message contains {s!r}", s.lower() in text, text[:200]))
     for s in expect.get("message_not_contains") or []:
         checks.append((f"message does not contain {s!r}", s.lower() not in text, text[:200]))
+    for p in expect.get("message_matches") or []:
+        checks.append((f"message matches /{p}/", bool(re.search(p, text, re.I)), text[:300]))
+    for p in expect.get("message_not_matches") or []:
+        checks.append((f"message does not match /{p}/", not re.search(p, text, re.I), text[:300]))
     reply = (result.reply or "")
     for s in expect.get("reply_contains") or []:
         checks.append((f"reply contains {s!r}", s.lower() in reply.lower(), reply[:200]))

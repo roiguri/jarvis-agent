@@ -34,6 +34,9 @@ HEADER = "[Messages Jarvis sent you since the last turn:]"
 # bounded prompts win over total delivery once a day backs up past 20 sends.
 MAX_ENTRIES = 20
 ENTRY_CAP = 2000
+# Sends whose whole text must arrive, by the "job" their metadata names: the
+# owner answers the memory suggestions by number ("do 2 and 5").
+JOB_CAPS = {"memory_suggestions": 8000}
 
 
 def drain_pending() -> tuple[str | None, str | None]:
@@ -69,7 +72,7 @@ def drain_pending() -> tuple[str | None, str | None]:
                         ts = ts.replace(tzinfo=_dt.timezone.utc)
                     if ts < since or (cursor and ts_s <= cursor):
                         continue
-                    text = (rec.get("message") or "").strip()[:ENTRY_CAP]
+                    text = (rec.get("message") or "").strip()[:JOB_CAPS.get(rec.get("job"), ENTRY_CAP)]
                     if not text:
                         continue
                     entries.append(f"{PREFIX.get(event, '[Notification]')} {text}")
