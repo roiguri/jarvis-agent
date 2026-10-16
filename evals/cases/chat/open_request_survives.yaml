@@ -1,0 +1,13 @@
+description: A request the owner left open in the morning is picked up correctly in the evening.
+kind: chat
+time: "18:00"
+conversation:
+  - {time: "08:30", owner: "I need to pick a restaurant in Jaffa for Thursday dinner, 4 people. Let's decide later, not now.", jarvis: "Sure — tell me when you want to decide on the Thursday dinner in Jaffa."}
+filler: 20
+compact: true
+message: "ok, let's finish that restaurant thing now"
+stubs:
+  web_search: "Results: Shaffa Bar (Jaffa, casual, mid-range); Kalamata (Jaffa, Greek, sea view, upscale); Puaa (Jaffa flea market, cafe-restaurant, mid-range)."
+expect:
+  reply_contains: ["jaffa"]
+  reply_matches: ["(?i)thursday|4 people|four"]

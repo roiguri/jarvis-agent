@@ -1,4 +1,5 @@
-"""Runs one eval case through the real heartbeat with the real model.
+"""Runs one eval case through the real heartbeat or a real owner turn, with the
+real model.
 
 ``bootstrap()`` must run before any project import: it points JARVIS_ROOT at a
 scratch directory and puts the API key in the environment. Each attempt then
@@ -37,7 +38,10 @@ DEFAULT_STUB = "No data available."
 
 def bootstrap() -> str:
     """Scratch JARVIS_ROOT + API key; returns the scratch root. Call first."""
+    import atexit
+
     root = tempfile.mkdtemp(prefix="jarvis-evals-")
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
     os.environ["JARVIS_ROOT"] = root
     if not os.environ.get("GOOGLE_API_KEY"):
         env_file = os.environ.get("JARVIS_EVAL_ENV_FILE", DEFAULT_ENV_FILE)
@@ -56,6 +60,7 @@ def bootstrap() -> str:
 class Result:
     calls: list[dict] = field(default_factory=list)   # {"tool", "args"}
     ack: dict | None = None
+    reply: str = ""                                    # a chat case's reply text
     sends: list[dict] = field(default_factory=list)   # {"event", "text"}
     input_tokens: int = 0
     cache_read_tokens: int = 0
@@ -134,6 +139,7 @@ def _reset():
         episode_store._initialized.discard(path)
         telemetry_store._initialized.discard(path)
     agent.memory.delete_thread("heartbeat")
+    agent.memory.delete_thread("owner")
     shutil.copytree(FIXTURES, config.MEMORY_DIR, dirs_exist_ok=True)
 
 
@@ -197,6 +203,89 @@ def _seed(case: dict, now: datetime):
                                           {"messages": history, "scope": "heartbeat"}, as_node="llm")
 
 
+FILLER_TOPICS = [
+    ("what's on my book list?", "book_list.md"),
+    ("remind me what's in my memory index", "MEMORY.md"),
+    ("which books did I finish?", "book_list.md"),
+    ("show me my profile notes", "USER.md"),
+]
+
+
+def _seed_chat(case: dict, now: datetime) -> None:
+    """An owner conversation from earlier in the day, written the way a real
+    day leaves it: every row in the episode store and the chat log, and the
+    thread holding whatever its window keeps. ``filler`` adds that many
+    ordinary memory-lookup turns after the scripted ones, so the earliest
+    scripted turns fall out of the window."""
+    import json
+
+    import agent
+    import pending_mirrors
+    from episodes import store as episode_store
+    from gateway.base import OWNER_THREAD_ID
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from tools.core.history import CHAT_LOG
+
+    def at(hhmm: str) -> datetime:
+        hh, mm = map(int, hhmm.split(":"))
+        return now.replace(hour=hh, minute=mm)
+
+    turns = list(case.get("conversation") or [])
+    n_filler = int(case.get("filler", 0))
+    if n_filler:
+        start = at(turns[-1]["time"]) if turns else now.replace(hour=8, minute=0)
+        step = (now - start) / (n_filler + 1)
+        for k in range(n_filler):
+            question, filename = FILLER_TOPICS[k % len(FILLER_TOPICS)]
+            when = (start + step * (k + 1)).strftime("%H:%M")
+            turns.append({"time": when, "owner": question,
+                          "tools": [{"name": "read_memory", "args": {"filename": filename}, "result": None}],
+                          "jarvis": f"Here's what {filename} holds right now."})
+
+    messages, pending_sent = [], []
+    with episode_store.write() as con, open(CHAT_LOG, "w", encoding="utf-8") as chat:
+        for i, turn in enumerate(turns):
+            ts = at(turn["time"]).astimezone(timezone.utc).isoformat()
+            if "sent" in turn:
+                episode_store.insert(con, ts=ts, role="jarvis_sent", source="outbox",
+                                     meta={"event": turn.get("event", "heartbeat")}, content=turn["sent"])
+                pending_sent.append(f"{pending_mirrors.PREFIX.get(turn.get('event', 'heartbeat'))} {turn['sent']}")
+                continue
+            turn_id = f"chat{i}"
+            common = dict(ts=ts, turn_id=turn_id, thread_id=OWNER_THREAD_ID, scope="user",
+                          channel="telegram", source="chat")
+            if pending_sent:
+                messages.append(HumanMessage(content=pending_mirrors.HEADER + "\n" + "\n".join(pending_sent)))
+                pending_sent = []
+            messages.append(HumanMessage(content=f"{agent._turn_stamp(at(turn['time']))} {turn['owner']}"))
+            episode_store.insert(con, role="owner", content=turn["owner"], **common)
+            chat.write(json.dumps({"ts": ts, "thread_id": OWNER_THREAD_ID, "role": "user",
+                                   "content": turn["owner"]}) + "\n")
+            for j, call in enumerate(turn.get("tools") or []):
+                result = call["result"]
+                if result is None:  # a filler lookup reads the real fixture file
+                    path = os.path.join(FIXTURES, call["args"]["filename"])
+                    result = open(path, encoding="utf-8").read() if os.path.exists(path) else "(empty)"
+                call_id = f"call_{i}_{j}"
+                messages.append(AIMessage(content="", tool_calls=[{"name": call["name"], "args": call["args"],
+                                                                   "id": call_id, "type": "tool_call"}]))
+                messages.append(ToolMessage(content=result, name=call["name"], tool_call_id=call_id))
+                episode_store.insert(con, role="tool_call", tool_name=call["name"],
+                                     content=json.dumps(call["args"]), **common)
+                episode_store.insert(con, role="tool_result", tool_name=call["name"], content=result, **common)
+            messages.append(AIMessage(content=turn["jarvis"]))
+            episode_store.insert(con, role="jarvis", content=turn["jarvis"], **common)
+            chat.write(json.dumps({"ts": ts, "thread_id": OWNER_THREAD_ID, "role": "assistant",
+                                   "content": turn["jarvis"]}) + "\n")
+    if messages:
+        # One write carrying user input: the reducer trims it to the window,
+        # as a day of real turns would have.
+        agent.agent_executor.update_state({"configurable": {"thread_id": OWNER_THREAD_ID}},
+                                          {"messages": messages, "scope": "user",
+                                           "last_user_turn_at": at(turns[-1]["time"]).astimezone(timezone.utc).isoformat()},
+                                          as_node="llm")
+
+
 def _stub_tools(case: dict, patches: _Patches):
     from dataclasses import replace
 
@@ -231,6 +320,8 @@ def run_case(case: dict) -> Result:
     now = case_now(case)
     _reset()
     _seed(case, now)
+    if case.get("kind") == "chat":
+        _seed_chat(case, now)
     seeded_max = (episode_store.rows("SELECT MAX(id) AS m FROM episodes") or [{"m": 0}])[0]["m"] or 0
 
     patches = _Patches()
@@ -243,7 +334,19 @@ def run_case(case: dict) -> Result:
         patches.set(heartbeat, "datetime", frozen)
         patches.set(factory, "default_outbox", lambda: outbox)
         patches.set(heartbeat, "TURN_LOCK", asyncio.Lock())
-        if case.get("kind", "tick") == "wake":
+        if case.get("kind") == "chat":
+            from gateway.base import OWNER_THREAD_ID
+
+            if case.get("compact"):
+                try:
+                    import compaction
+                except ImportError:
+                    compaction = None  # code from before compaction existed: plain trim only
+                if compaction is not None:
+                    compaction.compact_thread(OWNER_THREAD_ID, force=True)
+            outcome = agent.ask_jarvis(case["message"], OWNER_THREAD_ID, channel="telegram")
+            result.reply = outcome.text
+        elif case.get("kind", "tick") == "wake":
             from triggers import store as trigger_store
             from triggers.model import ORIGIN_JARVIS, At, Trigger, Turn
 

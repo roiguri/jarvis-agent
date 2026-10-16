@@ -1,0 +1,10 @@
+description: A rule the owner stated in chat this morning is still followed after a compaction.
+kind: chat
+time: "17:30"
+conversation:
+  - {time: "08:05", owner: "from now on, always answer me in English, even when I write in Hebrew", jarvis: "Got it — I'll always answer in English."}
+filler: 20
+compact: true
+message: "מה יש לי ברשימת הקריאה?"
+expect:
+  reply_not_matches: ["[֐-׿]"]

@@ -155,30 +155,53 @@ under target is the nightly job's work.
       the old pattern (same tasks act on the same days), input per tick and per day drop, and the
       owner reads a week of sends for quality.
 
-**S5 — Compaction** (§4, R1).
-- [ ] The window budget counts turns and tokens, not messages.
-- [ ] Compaction event when the removable part crosses a threshold: turns older than the last ~3 are
-      replaced by a structured summary; in the kept turns, calls stay and older results become stubs
-      pointing at the store; the latest results stay in full. Nothing changes between events, so
-      the cached prefix holds.
-- [ ] Runs after the turn, outside the owner lock; applies under the lock only if the checkpoint is
-      unchanged.
-- [ ] Horizon: rows since the last consolidation or the last ~36h, whichever is longer (X7). Carried
-      open requests re-verified against the whole store; they expire after a few days.
+**S5 — Compaction** (§4, R1). Design settled with the owner on 2026-10-16. Two parts: conversation
+evals first (S5a), then compaction (S5b).
+- [x] **S5a, evals:** user-scope support in `evals/` (a seeded owner conversation in the checkpoint
+      and the episode store, filler turns pushing the morning out of the window; an optional
+      compaction step before the follow-up message; checks on the reply). 6 cases in
+      `evals/cases/chat/`. Baseline on pre-S5 code (plain trim): morning fact 3/3 and open request
+      3/3 (both found by `search_history`), finished task not revived 3/3, tools used 3/3; a chat
+      rule followed 0/3 and the morning's request remembered 0/3 — what compaction targets.
+- [ ] **Trigger:** a post-turn job compacts when the earlier conversation in the window passes about
+      20k tokens; the last 3 turns stay verbatim. The 50-message cap stays as a backstop only and
+      keeps the summary (pinned). The job runs outside the owner lock and applies under it only if
+      the checkpoint is unchanged.
+- [ ] **Summary:** one user-role message at the head of the window, framed as reference ("everything
+      was handled except 'Open requests'; tools remain available; full messages are searchable").
+      Code fills: header (span covered, when compacted), the owner's own messages verbatim (newest
+      first, size budget), identifiers (URLs, codes, amounts), live reminders and wakes from the
+      trigger store, skills used today. The model fills JSON (structured output): open requests
+      (owner's exact quote, when asked), done (dated facts), owner rules (quotes), learned,
+      decisions, lookup hints. Built fresh each time from the episode store over the last ~36h
+      (later: since the last nightly run) — not stacked on the previous summary. Carried open
+      requests are re-checked against the store and expire after ~3 days.
+- [ ] **Timestamps:** every transcript line the summarizer reads is tagged with its Israel date and
+      time; the header states the covered span; items carry absolute dates; an item with a relative
+      date word ("today", "tomorrow", "yesterday", "last week") is dropped by code. Israel time
+      throughout, plus the owner's local time in `/tz` away mode, as the turn stamp does.
+- [ ] **Validation:** every quote must be a substring of an owner row in the span; dates parse and
+      are not in the future; secret scrub; the summary is smaller than what it replaces. A failing
+      item is dropped; a failing record gets one corrective retry, then a deterministic code-only
+      record. A thrash guard after a fallback.
+- [ ] In the kept turns, calls stay and older results become stubs pointing at the store
+      (`[result cleared — 14 KB, searchable]`); the newest results stay in full. Only at a
+      compaction, never per turn (cache).
+- [ ] Skills with no call in the kept turns are switched off at the compaction.
+- [ ] Model: Flash (~2–4 cents per compaction); upgrade only if the evals show bad summaries.
+- [ ] Silent to the owner; a telemetry job row per compaction (`telemetry.job("compaction")`: sizes
+      before/after, outcome ok/retried/fallback/skipped_stale, latency). Slash commands: `/context`
+      shows the current summary; `/compact` runs one by hand (also the live test on staging).
 - [ ] `/clear` respected: rows before a clear are never re-derived; `/clear` runs under the owner
       lock.
-- [ ] The backstop trim keeps the summary message (it is pinned, not the first thing evicted).
-- [ ] Code validation, one corrective retry, deterministic fallback record, thrash guard.
-- [ ] Skills unused in the kept tail and for ~24h deactivated at compaction too.
+- [ ] No nightly compaction (owner, 2026-10-16): the summary's items are dated, so it stays correct
+      across days; revisit with S6 if mornings feel cluttered.
 - [ ] **Deploy step:** prod `HEARTBEAT.md` `daily-log` → once a night (R4). Until this slice the 3-hourly
-      log is the chat side's only record of silent heartbeat actions (closed by S2's "today" view)
-      and of conversation that fell out of the window (closed by this slice's summary). Saves ~5
-      ticks/day.
-- [ ] Golden test on the summary framing prefix; staging probe that the model doesn't read the
-      summary as owner speech.
-- [ ] Verify (dry-run harness + staging): a long travel day compacts and Jarvis still answers about
-      the morning; an open request survives; a finished one doesn't come back; tools keep being
-      called after the summary; a cleared conversation stays cleared.
+      log is the chat side's only record of conversation that fell out of the window (closed by
+      this slice's summary). Saves ~5 ticks/day.
+- [ ] Golden test on the summary framing; tests for each part.
+- [ ] Verify: evals vs the S5a baseline; on staging, `/compact` then a question about something
+      only in the summary, and `/context` shows it.
 
 **S6 — Nightly consolidator** (§5, R3).
 - [ ] Its own cron entry (~03:00 Israel) with a misfire grace that survives a restart.
