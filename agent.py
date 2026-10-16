@@ -45,6 +45,11 @@ from observability import telemetry
 # starts; storage stays bounded by the cap plus up to two turns' traffic.
 MAX_MESSAGES = 50
 
+# A user turn that follows this much silence starts with no skills active. The
+# prompt cache is gone after about an hour anyway, so the reset costs no cache
+# hits, and the model re-activates what the new request needs.
+SKILL_IDLE_RESET = _dt.timedelta(hours=3)
+
 # Gemini's documented ceiling for inline media. The API also recommends the
 # Files API past a ~20 MB request, but that is a recommendation, not a limit —
 # a 42 MB video inlines and is read correctly. A backstop, not a policy: every
@@ -192,9 +197,12 @@ class JarvisState(AgentState):
     # bound tool surface via registry.get_tools(scope, active_skills).
     # heartbeat_due_tasks: which HEARTBEAT.md task blocks to inject this turn
     # (heartbeat scope only). None = all. Overwritten every turn.
+    # last_user_turn_at: UTC ISO start of the latest user-scope turn; drives
+    # the idle skill reset.
     scope: NotRequired[str]
     active_skills: NotRequired[Annotated[set[str], _merge_skills]]
     heartbeat_due_tasks: NotRequired[list[str] | None]
+    last_user_turn_at: NotRequired[str]
 
 
 # ---------------------------------------------------------------------------
@@ -620,9 +628,8 @@ def _llm_node(state: JarvisState) -> dict:
 def _tool_node(state: JarvisState) -> dict:
     """Execute the last message's tool calls.
 
-    Every tool returns a plain string except the activate/deactivate
-    meta-tools, which return a sentinel dict ``{"_activate": [...],
-    "content": str}``. For those, the human-readable ``content`` becomes the
+    Every tool returns a plain string except the activate_skill meta-tool,
+    which returns a sentinel dict ``{"_activate": [...], "content": str}``. For those, the human-readable ``content`` becomes the
     ToolMessage and the namespaces drive an ``active_skills`` state update;
     all other tools behave exactly as the prebuilt ToolNode did (one
     ToolMessage per call, exceptions captured as an error ToolMessage so the
@@ -638,7 +645,6 @@ def _tool_node(state: JarvisState) -> dict:
 
     messages: list[ToolMessage] = []
     to_activate: set[str] = set()
-    to_deactivate: set[str] = set()
 
     for tc in tool_calls:
         name = tc.get("name", "")
@@ -688,9 +694,8 @@ def _tool_node(state: JarvisState) -> dict:
             )
             continue
 
-        if isinstance(result, dict) and ("_activate" in result or "_deactivate" in result):
+        if isinstance(result, dict) and "_activate" in result:
             to_activate |= set(result.get("_activate", []) or [])
-            to_deactivate |= set(result.get("_deactivate", []) or [])
             messages.append(ToolMessage(
                 content=str(result.get("content", "")),
                 name=name, tool_call_id=call_id,
@@ -710,8 +715,8 @@ def _tool_node(state: JarvisState) -> dict:
         )
 
     delta: dict = {"messages": messages}
-    if to_activate or to_deactivate:
-        delta["active_skills"] = (active | to_activate) - to_deactivate
+    if to_activate:
+        delta["active_skills"] = active | to_activate
     return delta
 
 
@@ -766,7 +771,8 @@ def ask_jarvis(
         trigger: the trigger whose firing started this turn (a scheduled
             wake), or None. Published via CURRENT_TRIGGER.
     """
-    user_input = f"{_turn_stamp(_dt.datetime.now(_dt.timezone.utc))} {user_input}"
+    now = _dt.datetime.now(_dt.timezone.utc)
+    user_input = f"{_turn_stamp(now)} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
         "configurable": {"thread_id": thread_id},
@@ -778,9 +784,16 @@ def ask_jarvis(
 
     # --- Telemetry boundary ----------------------------------------------
     # Snapshot active_skills before the graph runs. Empty for a fresh thread.
+    state_update: dict = {}
     try:
         snap = agent_executor.get_state(config)
         active_start = sorted((snap.values or {}).get("active_skills", set()))
+        if scope == "user":
+            state_update["last_user_turn_at"] = now.isoformat()
+            if active_start and _idle_long_enough((snap.values or {}).get("last_user_turn_at"), now):
+                logger.info("Skills reset after idle on %s: %s", thread_id, active_start)
+                state_update["active_skills"] = set()
+                active_start = []
     except Exception:
         active_start = []
     turn_id = turn_id or uuid4().hex
@@ -946,7 +959,7 @@ def ask_jarvis(
             input_messages.insert(0, ("user", mirror_block))
         events = agent_executor.stream(
             {"messages": input_messages, "scope": scope,
-             "heartbeat_due_tasks": heartbeat_due_tasks},
+             "heartbeat_due_tasks": heartbeat_due_tasks, **state_update},
             config,
             stream_mode="values"
         )
@@ -1031,6 +1044,14 @@ def ask_jarvis(
         turn_context.CURRENT_TRIGGER.reset(_trigger_token)
         turn_budget.TRACKER.reset(_tracker_token)
     return outcome
+
+
+def _idle_long_enough(last_turn_at: str | None, now: _dt.datetime) -> bool:
+    """Whether SKILL_IDLE_RESET has passed since the last user turn. A thread
+    with no recorded last turn counts as idle."""
+    if not last_turn_at:
+        return True
+    return now - _dt.datetime.fromisoformat(last_turn_at) >= SKILL_IDLE_RESET
 
 
 def _exhausted_outcome(tracker, turn_id: str, answer: str) -> turn_budget.TurnOutcome:

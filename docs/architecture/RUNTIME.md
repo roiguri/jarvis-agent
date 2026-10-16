@@ -40,7 +40,7 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
 | `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
 | `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
-| `activate_skill.py` | `activate_skill`, `deactivate_skill` | The meta-tools that expose Tier 2. |
+| `activate_skill.py` | `activate_skill` | The meta-tool that exposes Tier 2. Skills leave by the idle reset, not by a tool. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)
 
@@ -65,7 +65,7 @@ A `parent/child` namespace is a **sub-skill**. The mechanism is the same compact
 
 - **Two-step discovery.** `compact_skill_list` is hierarchy-aware: only top-level skills are listed by default. A parent's sub-skills are listed (indented, under the parent) **only when the parent is in `active_skills`** — children stay hidden until the parent is activated.
 - **Parent may own zero tools.** `media` registers no tools; it is purely a discovery index. `_visible` is unchanged — a parent with no tools binds nothing; a sub-skill's tools bind iff its own `parent/child` namespace is active.
-- **Child activation is independent — no cascade.** Activating `media/radarr` binds only radarr tools. Activating or deactivating the parent `media` does **not** activate or deactivate any child; the parent listing is a discovery aid, not a bundle. A sub-skill's rules body (if any) renders whenever the sub-skill itself is active, even if the parent is not — guardrails stay attached to the bound tools.
+- **Child activation is independent — no cascade.** Activating `media/radarr` binds only radarr tools. Activating the parent `media` does **not** activate any child; the parent listing is a discovery aid, not a bundle. A sub-skill's rules body (if any) renders whenever the sub-skill itself is active, even if the parent is not — guardrails stay attached to the bound tools.
 - **`skill_namespaces()`** returns every registered non-core namespace **plus every derived parent**, so both `media` and `media/radarr` are valid `activate_skill` targets (validated through the existing `_split_known`). `agent.py`, `JarvisState`, and the tool node need no changes — the "activate the skill first" `ToolMessage` already names the full `parent/child` namespace.
 
 This is the first intentional extension *beyond* OpenClaw's flat skill model (OpenClaw skills have no parent/child nesting); it reuses Jarvis's existing dynamic-activation primitives and does not touch the capability/sandbox boundary.
@@ -118,16 +118,18 @@ class JarvisState(AgentState):
     scope: str                                            # "user" | "heartbeat"; set on first turn, then stable
     active_skills: Annotated[set[str], _merge_skills]     # namespaces activated in this thread
     heartbeat_due_tasks: list[str] | None                 # heartbeat scope: which HEARTBEAT.md blocks to inject
+    last_user_turn_at: str                                # user scope: start of the latest turn (UTC ISO)
 ```
 
 | Field | Reducer | Lifetime |
 |---|---|---|
 | `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting), and only by whole turns, so a call is never separated from its response. The previous turn is always kept, however long — a long turn followed by "continue" must still see what it is continuing. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
-| `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
+| `active_skills` | `activate_skill` adds; an input of `set()` replaces it (the idle reset); otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message — until the idle reset below. |
 | `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |
+| `last_user_turn_at` | none (last-write-wins) | Written at the start of every user-scope turn by `ask_jarvis`. Never written in heartbeat scope. |
 
-`active_skills` decay (auto-clear after N hours of thread inactivity) is a recognized future enhancement and is **out of scope for this layer** — activations persist until explicitly deactivated or the thread is reset. See "Deferred" below.
+**Idle skill reset.** A user-scope turn that starts `SKILL_IDLE_RESET` (3h) or more after the previous user-scope turn — or on a thread with no recorded last turn — starts with `active_skills` empty (`ask_jarvis` passes `set()` in the turn input and logs the reset). The conversation itself is untouched; the model re-activates what the new request needs, in the same turn. Gemini caches tool declarations ahead of the system prompt, so any tool-set change costs the cache for one call; after 3h of silence the cache has expired anyway, so the reset costs nothing, and there is no mid-conversation reset to churn the prefix. The heartbeat thread is not reset. Telemetry shows a reset as an empty `active_skills_start` after a turn that ended with skills.
 
 ---
 
@@ -158,7 +160,7 @@ One graph, compiled once at startup. Bindings (system prompt + tool set) are reb
       tool = registry.find(tc.name, scope, active_skills)
       if tool is None: → ToolMessage("not available; activate the skill first")
       result = tool.invoke(tc.args)
-      if result signals _activate/_deactivate: mutate new_active
+      if result signals _activate: add to new_active
     return {messages: tool_messages, active_skills: new_active}
 ```
 
@@ -217,9 +219,9 @@ without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
 
 ## Contracts
 
-### `activate_skill` / `deactivate_skill` (`tools/core/activate_skill.py`)
+### `activate_skill` (`tools/core/activate_skill.py`)
 
-The only tools whose return value mutates state. They return a sentinel dict the `tool_node` interprets; every other tool returns a plain string.
+The only tool whose return value mutates state. It returns a sentinel dict the `tool_node` interprets; every other tool returns a plain string. There is no deactivate tool: the model called one 2 times in three months against 90 activations, and the idle reset replaced it.
 
 ```python
 @tool
@@ -229,11 +231,6 @@ def activate_skill(namespaces: list[str]) -> dict:
     become available immediately, in this same turn."""
     return {"_activate": [...validated against registry namespaces...],
             "content": "Activated: media. Tools are now available."}
-
-@tool
-def deactivate_skill(namespaces: list[str]) -> dict:
-    """Drop a skill's tools from this conversation to shrink the surface."""
-    return {"_deactivate": [...], "content": "Deactivated: media."}
 ```
 
 Unknown namespaces are reported back in `content` (the LLM is told what *is* available) and never silently activated.
@@ -330,7 +327,6 @@ What you should **not** need to touch when adding a skill:
 
 | Item | Decision |
 |---|---|
-| `active_skills` idle-timeout (auto-clear after N hours, e.g. 12h) | Out of scope. Activations persist until explicitly deactivated or the thread resets; decay is a future enhancement, not built here. |
 | Per-scope deny-lists (true tool restriction) | Not built. Add only if a concrete need appears; scope stays informational. |
 | `home` namespace | Not created until home-automation tools exist. |
 | File-driven prompt content (SOUL / AGENTS / USER), prompt assembly order, per-scope content selection, hot-reload | Owned by the memory/identity layer ([MEMORY.md](MEMORY.md)). This layer owns only the skill block, slotted into the builder's output. |
