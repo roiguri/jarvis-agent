@@ -138,16 +138,20 @@ under target is the nightly job's work.
       #146), and what statelessness puts at risk (no repeated nudge, notes state, a wake acting
       on its task). Run by hand, never in CI; Claude Code may run them (key from staging's
       secrets). Baseline recorded on the pre-S4 heartbeat.
-- [ ] **S4b**: a second graph compiled without a checkpointer for ticks and wakes; the ack and
-      the outcome returned in `TurnOutcome` instead of read back from a checkpoint.
-- [ ] A tick sees: core memory, the due task blocks, the due tasks' notes files (injected), today's
-      user chat slice, tick rules, and the today view (earlier ticks and wakes today, failed ones
-      included) in place of replayed history.
-- [ ] Skills warm-start from each task's last run (code-owned, next to its `last_run` stamp);
+- [x] **S4b**: a second graph compiled without a checkpointer for ticks and wakes
+      (`stateless_executor`); the ack and the end skills returned in `TurnOutcome`.
+- [x] A tick sees: core memory, the due task blocks, the due tasks' notes files (injected, cut past
+      8,000 chars), today's user chat slice, tick rules, and the today view (earlier ticks and
+      wakes today, failed ones included — a failed tick's cause is recorded in the episode store)
+      in place of replayed history. One tick-rules line changed ("shown below"); nothing else.
+- [x] Skills warm-start from each task's last stamped run (`task_skills` in the trigger store);
       never a limit.
-- [ ] Dropped (owner, 2026-10-16): "ticks write only their notes files, never core memory" — the
+- [x] Dropped (owner, 2026-10-16): "ticks write only their notes files, never core memory" — the
       memory audit and daily-log tasks write core files, and the heartbeat is never restricted.
-- [ ] Verify: evals match the baseline within noise; after the final merge, a week of acks matches
+- [x] Evals match the baseline within noise (2026-10-16): every passing case 3/3; the
+      schedule-tone case passes ~50% on either version (13/19 pre-S4, 8/19 S4b; the one changed
+      line made no difference, 6/10 vs 5/10). Baseline updated.
+- [ ] Verify after the final merge: a week of acks matches
       the old pattern (same tasks act on the same days), input per tick and per day drop, and the
       owner reads a week of sends for quality.
 

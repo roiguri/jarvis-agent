@@ -27,6 +27,10 @@ class TurnOutcome:
     cause: str | None = None
     # (tool name, count) for every tool call that succeeded this turn.
     committed_calls: tuple[tuple[str, int], ...] = ()
+    # The turn's heartbeat_respond payload (heartbeat scope), or None.
+    ack: dict | None = None
+    # The skills active when the turn ended.
+    active_skills: tuple[str, ...] = ()
 
     @property
     def finished(self) -> bool:

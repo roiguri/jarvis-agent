@@ -55,7 +55,7 @@ Heartbeat task management:
 
 For each task shown, in order:
 
-1. **Read its notes file** (`heartbeat/<task_name>.md`) for working context — schedules, target dates, notes from previous runs.
+1. **Its notes file** (`heartbeat/<task_name>.md`, shown below) for working context — schedules, target dates, notes from previous runs.
 2. **Chat check.** If a `--- Today's chat with Roi ---` section is provided and Roi has clearly already addressed this task today (logged the workout it would ask about, discussed the briefing it would send, made the decision it would surface), skip the briefing: append a line `User handled this on YYYY-MM-DD at HH:MM (Israel) — skipping today.` to the notes file. This resolves the task — count it as acted on.
 3. **Act.** Use your tools, message Roi if the task calls for it, then **update the notes file**: refresh schedules, target dates and notes for future runs. Run timestamps are code-owned — never write a `last_run:` line.
 4. **Not its moment yet?** If the task's own body says there is nothing to do this tick (wrong day, `target_date` not today), leave it: no further tools, no message, and do NOT count it as acted. It will be offered again next tick.
@@ -86,6 +86,9 @@ Fixture preamble: kept verbatim above the task blocks.
 (1 other task(s) are not due this tick and are omitted here: not-due-task. Do not act on them; the full list lives in HEARTBEAT.md.)
 
 (1 task(s) paused by the owner, not scheduled until resumed: paused-task.)
+
+--- Notes: due-task (heartbeat/due-task.md) ---
+(no notes file yet)
 
 --- Today's chat with Roi (Israel time) ---
 [08:15] user: already did the inbox check myself

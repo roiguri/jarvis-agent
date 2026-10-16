@@ -46,7 +46,8 @@ def _normalize_cadence(cadence: str) -> str | None:
 
 
 def _default_notes(name: str) -> str:
-    """The notes path a brand-new task gets: kebab name → snake filename."""
+    """The notes path a brand-new task gets: kebab name → snake filename
+    (the same default heartbeat_state.notes_path falls back to)."""
     return f"heartbeat/{name.replace('-', '_')}.md"
 
 

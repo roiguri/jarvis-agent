@@ -5,6 +5,7 @@
 - ``turn_steps`` at the end of a turn: every model step of the turn — reply
   text, each tool call with its arguments, each tool result — read from the
   final conversation state, so failed and cut-short turns are recorded too.
+- ``turn_failure`` for a background turn that did not finish.
 - ``notification`` for every delivered proactive send.
 - ``slash_command`` for a command and its reply (they never reach the model).
 
@@ -84,6 +85,18 @@ def turn_steps(*, turn_id: str, thread_id: str, scope: str, channel: str | None,
                     store.insert(con, ts=ts, role="tool_result", tool_name=m.name, meta=meta,
                                  content=_text(m.content), **common)
     _guarded("turn steps", write)
+
+
+def turn_failure(*, turn_id: str, thread_id: str, scope: str, source: str, cause: str,
+                 ts: str | None = None) -> None:
+    """A background turn that did not finish: its cause, so the next turn's
+    today view shows it (a heartbeat turn has no thread to carry a note)."""
+    def write():
+        with store.write() as con:
+            store.insert(con, ts=ts or store.now_iso(), turn_id=turn_id, thread_id=thread_id,
+                         scope=scope, role="system", source=source, meta={"failed": True},
+                         content=f"Did not finish: {cause}")
+    _guarded("turn failure", write)
 
 
 def notification(event: str, text: str, metadata: dict | None = None) -> None:

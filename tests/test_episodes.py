@@ -224,11 +224,12 @@ def test_today_view_lists_what_the_heartbeat_did_today():
     ]
 
 
-def test_today_view_is_empty_without_activity_and_in_the_user_prompt(use_llm):
+def test_today_view_is_empty_without_activity_and_in_both_prompts(use_llm):
     assert today.background_today() == ""
     ack(datetime.now(timezone.utc).isoformat(), "x", ["inbox-check"], False, "inbox cleared")
     assert "inbox cleared" in agent.build_system_prompt("user", set(), None)
-    assert "Today in the background" not in agent.build_system_prompt("heartbeat", set(), [])
+    assert "inbox cleared" in agent.build_system_prompt("heartbeat", set(), []), \
+        "a tick keeps no conversation; the today view tells it what earlier ticks did"
 
 
 # --- History import (TODO(#157): remove with the import) -------------------------

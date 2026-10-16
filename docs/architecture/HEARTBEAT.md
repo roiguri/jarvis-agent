@@ -30,14 +30,17 @@ run_heartbeat()                                  heartbeat.py
         ▼
 ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
+        ├─ no saved conversation (stateless_executor): each tick starts fresh,
+        │  with the due tasks' warm-start skills
         ├─ build_system_prompt injects ONLY the due HEARTBEAT.md blocks;
-        │  non-due tasks collapse to a one-line note naming them
-        ├─ agent works the due tasks (reads/writes its notes files, uses tools)
+        │  non-due tasks collapse to a one-line note naming them; plus the
+        │  due tasks' notes files and the today view (earlier ticks today)
+        ├─ agent works the due tasks (updates its notes files, uses tools)
         ├─ agent calls heartbeat_respond(acted_tasks, notify, summary, …)
         └─ agent replies (terse tick log — never delivered)
         │
         ▼
-run_heartbeat() reads the ack (agent.get_heartbeat_ack)
+run_heartbeat() reads the ack (outcome.ack)
         ├─ no ack AND the turn did not finish (failed / budget_exhausted)
         │  → code-built notice, event="heartbeat", tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
@@ -187,10 +190,17 @@ simply not evaluated that tick.
 ## The ack (`heartbeat_respond`)
 
 Bound **only** in heartbeat scope (`scopes=("heartbeat",)` — the first user of
-the registry's per-scope binding). The runner extracts the last call's args
-from the turn's checkpointed messages (`agent.get_heartbeat_ack`; walks only
-past the final HumanMessage, so a stale ack from an earlier tick is never
-picked up). Missing ack → warning, no stamp, task re-fires — safe.
+the registry's per-scope binding). `ask_jarvis` returns the last call's args in
+the turn outcome (`TurnOutcome.ack`). Heartbeat turns keep no conversation, so a
+stale ack from an earlier tick cannot be picked up. Missing ack → warning, no
+stamp, task re-fires — safe.
+
+**Continuity without a conversation.** A tick sees what it needs from before in
+its prompt: the due tasks' notes files (whole up to 8,000 chars), the today
+view (earlier ticks and wakes today, failed ones included — a failed tick has no
+thread to leave a note in, so its cause is recorded in the episode store), and
+today's chat. Each stamped task records the skills its run ended with
+(`task_skills` in the trigger store); its next tick starts with them.
 
 ## Authoring (`manage_heartbeat_task`)
 

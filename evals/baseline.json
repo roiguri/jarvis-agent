@@ -5,7 +5,7 @@
       "runs": 3
     },
     "form_text_not_repeated": {
-      "passed": 0,
+      "passed": 1,
       "runs": 3
     },
     "quiet_wake": {
@@ -21,8 +21,8 @@
       "runs": 3
     },
     "schedule_change_is_a_notice": {
-      "passed": 2,
-      "runs": 3
+      "passed": 8,
+      "runs": 19
     },
     "step_nudge_needed": {
       "passed": 3,
@@ -51,5 +51,5 @@
   },
   "date": "2026-10-16",
   "model": "gemini-3-flash-preview",
-  "note": "pre-S4 heartbeat; form_text_not_repeated, schedule_change_is_a_notice and tick_cannot_create_tasks fail on existing behaviour (owner: out of scope for the redesign)"
+  "note": "stateless heartbeat (S4b). form_text_not_repeated, schedule_change_is_a_notice and tick_cannot_create_tasks fail on existing behaviour (owner: out of scope); schedule_change_is_a_notice passes about half the time on any version (13/19 pre-S4, 8/19 S4b)."
 }
