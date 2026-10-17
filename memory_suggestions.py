@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 NOTHING = "Nothing to suggest."
 JOB = "memory_suggestions"          # names the send in its notification metadata
 TIMEOUT_S = 180
-MAX_TOKENS = 16384   # the model's thinking counts against it too
+MAX_TOKENS = 32768   # the model's thinking counts against it too
 
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "memory_suggestions.md")
 
