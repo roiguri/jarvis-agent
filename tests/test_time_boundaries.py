@@ -17,7 +17,8 @@ import timeutils
 from tests.conftest import LOG_DIR
 from tests.fakes import frozen_datetime, frozen_datetime_module
 from timeutils import ISRAEL_TZ
-from tools.core.history import get_chat_history
+from episodes import store as episode_store
+from tools.core.history import search_history
 from tools.google_health import google_health_tools as health
 
 UTC = timezone.utc
@@ -59,16 +60,17 @@ def test_week_bounds_contain_their_anchor(anchor):
     assert start <= local_day <= end
 
 
-# --- get_chat_history's `since` -------------------------------------------------
+# --- search_history's `since` / `until` -----------------------------------------
 
 def seed_chat(*stamps):
-    with open(os.path.join(LOG_DIR, "chat_history.jsonl"), "w", encoding="utf-8") as f:
+    with episode_store.write() as con:
         for ts in stamps:
-            f.write(json.dumps({"ts": ts, "thread_id": "owner", "role": "user", "content": f"at {ts}"}) + "\n")
+            episode_store.insert(con, ts=ts, thread_id="owner", scope="user", role="owner",
+                                 source="chat", content=f"at {ts}")
 
 
-def history(since):
-    return get_chat_history.invoke({"since": since, "limit": 50})
+def history(since, until=None):
+    return search_history.invoke({"since": since, "until": until, "limit": 30})
 
 
 @pytest.mark.parametrize("day, last_of_previous, first_of_day", [
@@ -92,11 +94,19 @@ def test_since_a_timestamp_cuts_exactly():
 
 def test_since_without_an_offset_is_refused():
     seed_chat("2026-01-15T10:00:00+00:00")
-    assert history("2026-01-15T10:00:00").startswith("Ambiguous 'since'")
+    assert history("2026-01-15T10:00:00").startswith("Ambiguous date")
 
 
 def test_since_garbage_is_refused():
-    assert history("last tuesday").startswith("Invalid 'since'")
+    assert history("last tuesday").startswith("Invalid date")
+
+
+def test_until_a_date_includes_that_whole_israel_day():
+    # Winter: the Israel day 2026-01-15 ends at 22:00 UTC on the 15th.
+    seed_chat("2026-01-15T21:59:00+00:00", "2026-01-15T22:00:00+00:00")
+    out = history("2026-01-15", "2026-01-15")
+    assert "at 2026-01-15T21:59:00+00:00" in out
+    assert "22:00:00" not in out
 
 
 # --- the pending-mirror window ---------------------------------------------------

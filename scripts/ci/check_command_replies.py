@@ -43,8 +43,10 @@ CASES: list[tuple[str, str]] = [
     ("/heartbeat", "strict"),      # header + HEARTBEAT.md body — the header is ours
     ("/heartbeat list", "strict"),
     ("/heartbeat morning", "raw"), # per-task notes verbatim
-    ("/logs", "raw"),              # daily log verbatim
+    ("/logs", "strict"),
     ("/logs 32.13", "strict"),     # invalid date → usage help
+    ("/logs 1.1.2026", "raw"),     # a finished day: its daily log verbatim
+    ("/logs 2.1.2026", "strict"),  # a finished day without a log
     ("/usage", "strict"),
     ("/usage week", "strict"),
     ("/usage today heartbeat", "strict"),
@@ -52,6 +54,10 @@ CASES: list[tuple[str, str]] = [
     ("/tz", "strict"),
     ("/tz home", "strict"),
     ("/tz Nowhere/Nope", "strict"),  # invalid zone → usage help
+    ("/context", "strict"),            # empty branch on a fresh root; the record itself is raw
+    ("/compact", "strict"),
+    ("/dream", "strict"),              # nothing happened on a fresh root: no model call
+    ("/dream someday", "strict"),      # invalid → usage help
     ("/triggers", "strict"),
     ("/triggers cancel nope", "strict"),  # unknown id
     ("/triggers cancel", "strict"),       # missing id → usage help
@@ -67,6 +73,7 @@ MEMORY_SEED = {
     "notes.md": "Some note.\n",
     "HEARTBEAT.md": "Heartbeat tasks.\n\n- morning · every 4h\n",
     "heartbeat/morning.md": "# morning\n\nlast_run: 2026-07-30T06:00:00Z\n",
+    "daily/daily_2026-01-01.md": "# Daily Log - Thursday, January 1, 2026\n\n## Conversations\n- A note.\n",
 }
 
 TURNS_SEED = [
@@ -101,10 +108,6 @@ def _seed(scratch: str) -> None:
     israel_today = dt.datetime.now(dt.timezone.utc).astimezone(
         ZoneInfo("Asia/Jerusalem")
     ).date()
-    daily = os.path.join(config.MEMORY_DIR, "daily", f"daily_{israel_today}.md")
-    os.makedirs(os.path.dirname(daily), exist_ok=True)
-    with open(daily, "w", encoding="utf-8") as f:
-        f.write(f"# {israel_today}\n\n- seeded by check_command_replies\n")
 
     # Mid-day UTC so the record lands on the same Israel day the rollup asks for
     # regardless of when CI runs.

@@ -1,0 +1,7 @@
+description: What memory already says with the same meaning is not suggested again.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "09:00", owner: "as you know I live in Tel Aviv and work Sunday to Thursday — any good cafés near Dizengoff?", jarvis: "A few options near Dizengoff: …"}
+expect:
+  sends: 0

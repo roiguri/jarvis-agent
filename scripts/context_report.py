@@ -21,8 +21,10 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import config
+from episodes import store as episode_store
 from observability import store
 from observability.usage import estimate_usd
+from timeutils import ISRAEL_TZ
 
 
 def turn_stats(since: str) -> list[dict]:
@@ -70,6 +72,27 @@ def due_task_costs(since: str) -> list[dict]:
         """,
         (since,),
     )
+
+
+def episode_integrity(since: str) -> list[tuple[str, int, int]]:
+    """(Israel day, finished turns in telemetry, of those missing from the episode
+    store) — a turn whose recording failed shows up here. Turns from before the
+    store existed (its log import) reached it as imported rows without a turn id,
+    so they are not counted."""
+    started = episode_store.rows("SELECT value FROM meta WHERE key = 'log_import'")
+    if started:
+        since = max(since, started[0]["value"])
+    turns = store.rows("SELECT turn_id, ts FROM turns WHERE ts >= ? AND ended_at IS NOT NULL "
+                       "AND scope IN ('user', 'heartbeat')", (since,))
+    recorded = {r["turn_id"] for r in episode_store.rows(
+        "SELECT DISTINCT turn_id FROM episodes WHERE ts >= ? AND turn_id IS NOT NULL", (since,))}
+    days: dict[str, list[int]] = {}
+    for t in turns:
+        day = datetime.fromisoformat(t["ts"]).astimezone(ISRAEL_TZ).date().isoformat()
+        counts = days.setdefault(day, [0, 0])
+        counts[0] += 1
+        counts[1] += t["turn_id"] not in recorded
+    return [(day, n, missing) for day, (n, missing) in sorted(days.items())]
 
 
 def checkpoint_weights() -> dict[str, int]:
@@ -144,6 +167,12 @@ def main() -> None:
             f"  {d['turns']:4d} turns | input/turn {(d['input'] or 0) // d['turns']:>7,} | "
             f"${usd:.2f} | {d['no_action'] or 0} no-action | {d['due']}"
         )
+
+    print("\n## episode store integrity (turns in telemetry missing from the episode store)")
+    if not os.path.exists(episode_store.STORE_PATH):
+        print("  (no episode store yet)")
+    for day, n, missing in episode_integrity(since):
+        print(f"  {day}: {n:4d} turns, {missing} missing" + ("  <-- check the journal" if missing else ""))
 
     print("\n## checkpoint weight (latest blob per thread; ~bytes/4 = tokens re-sent per call)")
     for thread, size in sorted(checkpoint_weights().items()):

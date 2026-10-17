@@ -30,14 +30,17 @@ run_heartbeat()                                  heartbeat.py
         ▼
 ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[…])       agent.py
         │
+        ├─ no saved conversation (stateless_executor): each tick starts fresh,
+        │  with the due tasks' warm-start skills
         ├─ build_system_prompt injects ONLY the due HEARTBEAT.md blocks;
-        │  non-due tasks collapse to a one-line note naming them
-        ├─ agent works the due tasks (reads/writes its notes files, uses tools)
+        │  non-due tasks collapse to a one-line note naming them; plus the
+        │  due tasks' notes files and the today view (earlier ticks today)
+        ├─ agent works the due tasks (updates its notes files, uses tools)
         ├─ agent calls heartbeat_respond(acted_tasks, notify, summary, …)
         └─ agent replies (terse tick log — never delivered)
         │
         ▼
-run_heartbeat() reads the ack (agent.get_heartbeat_ack)
+run_heartbeat() reads the ack (outcome.ack)
         ├─ no ack AND the turn did not finish (failed / budget_exhausted)
         │  → code-built notice, event="heartbeat", tick_failed=true
         ├─ ack.notify? → default_outbox().notify_owner(notification_text,
@@ -187,10 +190,17 @@ simply not evaluated that tick.
 ## The ack (`heartbeat_respond`)
 
 Bound **only** in heartbeat scope (`scopes=("heartbeat",)` — the first user of
-the registry's per-scope binding). The runner extracts the last call's args
-from the turn's checkpointed messages (`agent.get_heartbeat_ack`; walks only
-past the final HumanMessage, so a stale ack from an earlier tick is never
-picked up). Missing ack → warning, no stamp, task re-fires — safe.
+the registry's per-scope binding). `ask_jarvis` returns the last call's args in
+the turn outcome (`TurnOutcome.ack`). Heartbeat turns keep no conversation, so a
+stale ack from an earlier tick cannot be picked up. Missing ack → warning, no
+stamp, task re-fires — safe.
+
+**Continuity without a conversation.** A tick sees what it needs from before in
+its prompt: the due tasks' notes files (whole up to 8,000 chars), the today
+view (earlier ticks and wakes today, failed ones included — a failed tick has no
+thread to leave a note in, so its cause is recorded in the episode store), and
+today's chat. Each stamped task records the skills its run ended with
+(`task_skills` in the trigger store); its next tick starts with them.
 
 ## Authoring (`manage_heartbeat_task`)
 
@@ -230,15 +240,13 @@ Guards:
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
 
-## The daily log
+## Yesterday: the daily log
 
-`daily/daily_YYYY-MM-DD.md` is written by an ordinary task, `daily-log` in
-HEARTBEAT.md (every 3h, 05:00–23:30 Israel time), whose prose folds in today's
-chat, today's proactive sends (`get_notification_history`) and the day's
-heartbeat activity. It used to be a rule in `prompts/heartbeat.md` that every
-tick reaching the model followed, which only kept it fresh while an hourly task
-kept waking the model; once crossfit moved behind a gate, that stopped. Chat
-after the last run of the day (23:00) is not captured.
+A tick sees yesterday as its daily log (`daily/daily_YYYY-MM-DD.md`), written the
+next morning by the morning job in one model call over the whole day (see
+MEMORY.md "Daily log"). It replaced a 3-hourly `daily-log` heartbeat task, which
+lagged, cost a tick every three hours, and missed chat after its last run of the
+day.
 
 ## Scheduled wakes (`run_wake`)
 
@@ -247,7 +255,7 @@ When it fires, `run_wake` runs it on the heartbeat thread, under the same
 `TURN_LOCK` as ticks: `ask_jarvis(scope="heartbeat", heartbeat_due_tasks=[],
 trigger=...)`, so every task collapses to the not-due note and the
 "Scheduled wakes" rules in `prompts/heartbeat.md` apply (work only the
-instruction; no task list, no daily log; ack with `acted_tasks=[]`). The ack is
+instruction; no task list; ack with `acted_tasks=[]`). The ack is
 delivered by the same `_deliver` helper as a tick, as a `heartbeat` event whose
 metadata names the trigger. Nothing is stamped.
 

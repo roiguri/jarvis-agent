@@ -1,0 +1,10 @@
+description: Morning readiness is due with real data, so a short briefing goes out.
+kind: tick
+time: "08:30"
+due: [morning-readiness-check]
+stubs:
+  health_status: "Last night: slept 6h10m (efficiency 88%), resting HR 58 (+4 vs 7-day avg), HRV 38 ms (-15%). Steps so far today: 420."
+expect:
+  ack: {notify: true, acted_tasks: [morning-readiness-check]}
+  called: [health_status]
+  sends: 1

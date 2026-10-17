@@ -1,8 +1,8 @@
 """Snapshots of the system prompt the model sees, per scope.
 
-The memory files Jarvis writes (SOUL.md, USER.md, HEARTBEAT.md, daily logs, the
-chat log) are fixed fixtures from tests/fixtures/, and the clock is pinned, so
-these files change only when code or the committed prompts change: AGENTS.md,
+The memory files Jarvis writes (SOUL.md, USER.md, HEARTBEAT.md, yesterday's
+daily log, the chat log) are fixed fixtures from tests/fixtures/, and the clock
+is pinned, so these files change only when code or the committed prompts change: AGENTS.md,
 heartbeat.md, SKILL.md bodies, the framing, or the assembly logic.
 """
 

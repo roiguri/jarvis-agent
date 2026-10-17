@@ -11,8 +11,9 @@ import config
 
 from agent import ask_jarvis, ask_jarvis_once
 import heartbeat_state
+import dream
 from heartbeat import run_heartbeat
-from triggers.scheduler import add_heartbeat, init_scheduler, restore_pending
+from triggers.scheduler import add_dream, add_heartbeat, init_scheduler, restore_pending
 from gateway.base import InboundMessage
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
@@ -27,6 +28,7 @@ from tools.core import (
     NOTIFICATION_LOG,
 )
 from observability import store as telemetry_store
+from episodes import record as episodes_record, store as episodes_store
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -55,6 +57,10 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
     if command_reply is not None:
         await asyncio.to_thread(append_chat_log, "user", inbound.user_text, inbound.thread_id)
         await asyncio.to_thread(append_chat_log, "assistant", command_reply, inbound.thread_id)
+        await asyncio.to_thread(
+            episodes_record.slash_command, thread_id=inbound.thread_id,
+            channel=inbound.channel or None, command=inbound.user_text, reply=command_reply,
+        )
         return command_reply
 
     await asyncio.to_thread(
@@ -88,6 +94,7 @@ async def run_owner_turn(
     *,
     channel: str | None = None,
     media_attachments: list[dict] | None = None,
+    input_role: str | None = None,
 ) -> str:
     """One user-scope turn under the owner lock; the single path every
     conversational caller goes through. Returns the reply — for a turn that did
@@ -100,10 +107,44 @@ async def run_owner_turn(
             thread_id,
             channel=channel,
             media_attachments=media_attachments,
+            input_role=input_role,
         )
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
+    _schedule_compaction(thread_id)
     return outcome.text
+
+
+_compacting: set[str] = set()
+
+
+def _schedule_compaction(thread_id: str) -> None:
+    """After a turn, compact the thread in the background if it has grown past
+    the limit. Prepared (with its model call) outside the owner lock, applied
+    under it, and only if no turn changed the thread in between."""
+    if thread_id in _compacting:
+        return
+
+    async def run() -> None:
+        import compaction
+        from observability import telemetry
+
+        def prepare():
+            with telemetry.job("compaction"):
+                return compaction.prepare(thread_id)
+
+        _compacting.add(thread_id)
+        try:
+            plan = await asyncio.to_thread(prepare)
+            if plan is not None:
+                async with _owner_turn_lock:
+                    await asyncio.to_thread(compaction.apply, plan)
+        except Exception:
+            logger.exception("Background compaction failed for %s", thread_id)
+        finally:
+            _compacting.discard(thread_id)
+
+    asyncio.get_running_loop().create_task(run())
 
 
 def _running_provenance() -> dict:
@@ -192,6 +233,18 @@ async def main() -> None:
         logger.info("Telemetry store trimmed: %s", telemetry_store.trim())
     except Exception:
         logger.exception("Telemetry store maintenance failed")
+    try:
+        # TODO(#157): one-time import of the JSONL logs into the episode store; remove after both instances ran it.
+        if not episodes_store.imported():
+            counts = episodes_store.import_logs(CHAT_LOG, NOTIFICATION_LOG)
+            logger.info("Episodes: imported JSONL history into the store: %s", counts)
+    except Exception:
+        logger.exception("Episode store import failed")
+
+    async def log_notification(event: str, text: str, metadata: dict) -> None:
+        """Every delivered proactive send: the JSONL log and the episode store."""
+        await async_append_notification_log(event, text, metadata)
+        await asyncio.to_thread(episodes_record.notification, event, text, metadata)
     for log_path in (CHAT_LOG, NOTIFICATION_LOG):
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
@@ -205,7 +258,7 @@ async def main() -> None:
         channel's, supplied by its confirmation store."""
         try:
             await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
-            reply = await run_owner_turn(system_text, thread_id)
+            reply = await run_owner_turn(system_text, thread_id, input_role="system")
             if reply:
                 # Conversational reply, already chat-logged — no notification event.
                 await outbox.notify_owner(reply)
@@ -220,7 +273,7 @@ async def main() -> None:
         "telegram",
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
-        log_sink=async_append_notification_log,
+        log_sink=log_notification,
     )
 
     # Optional second channel: the jarvis-app hub, built only when APP_HUB_URL is
@@ -234,7 +287,7 @@ async def main() -> None:
                 "jarvis-app",
                 on_message=process_inbound_message,
                 on_confirmation_outcome=on_confirmation_outcome,
-                log_sink=async_append_notification_log,
+                log_sink=log_notification,
             )
         except Exception:
             logger.exception("jarvis-app channel misconfigured — continuing without it")
@@ -260,6 +313,7 @@ async def main() -> None:
     scheduler = init_scheduler()
     if config.HEARTBEAT_ENABLED:
         add_heartbeat(run_heartbeat)
+        add_dream(dream.run_scheduled)
 
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
@@ -278,6 +332,12 @@ async def main() -> None:
         past_due_tasks = restore_pending() if config.REMINDERS_ENABLED else []
 
         scheduler.start()
+        # A restart across the morning slot would otherwise skip the day's
+        # log and suggestions: APScheduler keeps no record of a run it never saw. The
+        # reference keeps the task from being collected.
+        catch_up = None
+        if config.HEARTBEAT_ENABLED and dream.catch_up_due():
+            catch_up = asyncio.get_running_loop().create_task(dream.run_scheduled())
         if config.HEARTBEAT_ENABLED:
             # Next fire time in the boot block: makes the phase checkable at a
             # glance instead of waiting for the first tick to hit the journal.

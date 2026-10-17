@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import datetime as _dt
 import json
 import logging
@@ -36,6 +37,7 @@ from gateway.base import OWNER_THREAD_ID
 
 # Per-turn telemetry — ContextVars + recorders for the telemetry store.
 from observability import telemetry
+from episodes import record as episodes_record, today as episodes_today
 
 # ---------------------------------------------------------------------------
 # State schema — sliding message window + media blob stripping
@@ -44,6 +46,11 @@ from observability import telemetry
 # (_add_and_trim) trims to whole turns fitting in MAX_MESSAGES when a turn
 # starts; storage stays bounded by the cap plus up to two turns' traffic.
 MAX_MESSAGES = 50
+
+# A user turn that follows this much silence starts with no skills active. The
+# prompt cache is gone after about an hour anyway, so the reset costs no cache
+# hits, and the model re-activates what the new request needs.
+SKILL_IDLE_RESET = _dt.timedelta(hours=3)
 
 # Gemini's documented ceiling for inline media. The API also recommends the
 # Files API past a ~20 MB request, but that is a recommendation, not a limit —
@@ -165,6 +172,10 @@ def _add_and_trim(existing: list, new: list) -> list:
     cut = next((i for i in starts if len(combined) - i <= MAX_MESSAGES), starts[-1])
     if len(starts) >= 2:
         cut = min(cut, starts[-2])
+    # A compaction record at the head is pinned: the trim never evicts it.
+    head = combined[0]
+    if cut > 0 and isinstance(head, HumanMessage) and (head.id or "").startswith("compaction-summary"):
+        return [head] + combined[cut:]
     return combined[cut:]
 
 def _merge_skills(existing, new):
@@ -192,9 +203,12 @@ class JarvisState(AgentState):
     # bound tool surface via registry.get_tools(scope, active_skills).
     # heartbeat_due_tasks: which HEARTBEAT.md task blocks to inject this turn
     # (heartbeat scope only). None = all. Overwritten every turn.
+    # last_user_turn_at: UTC ISO start of the latest user-scope turn; drives
+    # the idle skill reset.
     scope: NotRequired[str]
     active_skills: NotRequired[Annotated[set[str], _merge_skills]]
     heartbeat_due_tasks: NotRequired[list[str] | None]
+    last_user_turn_at: NotRequired[str]
 
 
 # ---------------------------------------------------------------------------
@@ -270,10 +284,67 @@ _MEMORY_DIR = config.MEMORY_DIR
 _DAILY_DIR = os.path.join(_MEMORY_DIR, "daily")
 _SOUL_PATH = os.path.join(_MEMORY_DIR, "SOUL.md")
 _USER_PATH = os.path.join(_MEMORY_DIR, "USER.md")
+_MEMORY_INDEX_PATH = os.path.join(_MEMORY_DIR, "MEMORY.md")
 _HEARTBEAT_MD_PATH = os.path.join(_MEMORY_DIR, "HEARTBEAT.md")
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _AGENTS_PATH = os.path.join(_PROMPTS_DIR, "AGENTS.md")
 _HEARTBEAT_PROMPT_PATH = os.path.join(_PROMPTS_DIR, "heartbeat.md")
+
+# Size targets for the injected memory files, in chars. Keeping them under is
+# the nightly consolidation's job; writes are never refused for size. The
+# prompt includes at most CORE_FILE_CEILING x the target, so a file that grows
+# unchecked (consolidation failing for days) cannot swell every call.
+CORE_FILE_TARGETS = {"USER.md": 4000, "MEMORY.md": 8000}
+CORE_FILE_CEILING = 3
+
+
+def _core_file(name: str, path: str) -> str:
+    """A core memory file for the prompt, cut at its ceiling (with a marker
+    and a journal warning) if it has grown far past its target."""
+    body = load_or_blank(path)
+    limit = CORE_FILE_TARGETS[name] * CORE_FILE_CEILING
+    if len(body) > limit:
+        logger.warning("%s is %d chars, over its prompt ceiling of %d; cut in the prompt",
+                       name, len(body), limit)
+        body = body[:limit] + "\n[truncated — consolidation pending]"
+    return body
+
+
+# A due task's notes file goes into the tick's prompt whole up to this size;
+# past it, cut with a marker (notes are agent-written and can grow).
+NOTES_MAX_CHARS = 8000
+
+
+def _due_task_notes(due_tasks: list[str] | None) -> list[str]:
+    """One prompt section per due task's notes file (heartbeat scope). ``None``
+    (the due-gate failed open) shows every task's notes except gated and
+    paused ones, matching the task blocks shown."""
+    try:
+        tasks = heartbeat_state.parse_tasks()
+    except Exception:
+        logger.exception("couldn't parse HEARTBEAT.md for notes")
+        return []
+    if due_tasks is None:
+        names = {t.name for t in tasks if not t.gate and not t.paused}
+    else:
+        names = set(due_tasks)
+    sections = []
+    for task in tasks:
+        if task.name not in names:
+            continue
+        rel = heartbeat_state.notes_path(task)
+        body = load_or_blank(os.path.join(_MEMORY_DIR, rel))
+        if len(body) > NOTES_MAX_CHARS:
+            logger.warning("notes file %s is %d chars; cut in the prompt", rel, len(body))
+            body = body[:NOTES_MAX_CHARS] + "\n[truncated]"
+        sections.append(f"--- Notes: {task.name} ({rel}) ---\n{body or '(no notes file yet)'}")
+    return sections
+
+
+def _memory_index() -> str:
+    body = _core_file("MEMORY.md", _MEMORY_INDEX_PATH)
+    return f"--- MEMORY.md (index of memory files) ---\n{body}" if body else ""
+
 
 _USER_FRAMING = (
     "You are in a live conversation with Roi — be direct and proactive, "
@@ -312,21 +383,13 @@ def _turn_stamp(now: _dt.datetime) -> str:
 
 
 def _load_yesterday_daily_log() -> str:
-    """Yesterday's daily log (heartbeat scope). The live chat slice already
-    covers today, so yesterday is the cheapest 'context not otherwise in this
-    prompt' window. Older days are reachable via read_memory on demand."""
+    """Yesterday's daily log (heartbeat scope), written the morning after.
+    Older days are reachable via read_memory on demand."""
     yesterday = (_dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
                  - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
     fname = f"daily_{yesterday}.md"
     body = load_or_blank(os.path.join(_DAILY_DIR, fname))
     return f"--- Yesterday's log ({fname}) ---\n{body}" if body else ""
-
-
-def _load_today_daily_log() -> str:
-    """Today's daily log (user scope) — the heartbeat→chat awareness bridge."""
-    fname = f"daily_{_today_israel()}.md"
-    body = load_or_blank(os.path.join(_DAILY_DIR, fname))
-    return f"--- Today's log ({fname}) ---\n{body}" if body else ""
 
 
 def _today_israel_start_utc() -> _dt.datetime:
@@ -400,12 +463,12 @@ def build_system_prompt(
     memory dir) + AGENTS.md (operating rules, committed under prompts/) +
     USER.md (Roi's profile/preferences, memory dir) + a scope framing line
     + the registry skill block. Scope-specific:
-    - user: today's daily log. (Heartbeat sends reach the user thread as
+    - user: the today view. (Heartbeat sends reach the user thread as
       mirrored history via the pending-mirror drain, not as a prompt slice.)
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
-      addressed) + yesterday's daily log (older days are reachable via
-      read_memory on demand). When ``due_tasks`` is a list, only those task
+      addressed) + the today view + yesterday's daily log (older days are
+      reachable via read_memory). When ``due_tasks`` is a list, only those task
       blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
       one-line note); None injects every task except gated ones.
     All files are read per turn (edits take effect next turn, no restart).
@@ -431,7 +494,8 @@ def build_system_prompt(
         envelope,
         load_or_blank(_SOUL_PATH),
         load_or_blank(_AGENTS_PATH),
-        load_or_blank(_USER_PATH),
+        _core_file("USER.md", _USER_PATH),
+        _memory_index(),
     ]
 
     if scope == "heartbeat":
@@ -442,17 +506,15 @@ def build_system_prompt(
             hb = heartbeat_state.filter_heartbeat_md(hb, due_tasks)
         if hb:
             parts.append(f"--- HEARTBEAT.md ---\n{hb}")
+        parts.extend(_due_task_notes(due_tasks))
+        parts.append(episodes_today.background_today(_dt.datetime.now(_dt.timezone.utc)))
         chat = _load_recent_user_chat()
         if chat:
             parts.append(chat)
-        yday = _load_yesterday_daily_log()
-        if yday:
-            parts.append(yday)
+        parts.append(_load_yesterday_daily_log())
     else:
         parts.append(_USER_FRAMING)
-        today = _load_today_daily_log()
-        if today:
-            parts.append(today)
+        parts.append(episodes_today.background_today(_dt.datetime.now(_dt.timezone.utc)))
 
 
     parts.append(registry.compact_skill_list(scope, active_skills))
@@ -620,9 +682,8 @@ def _llm_node(state: JarvisState) -> dict:
 def _tool_node(state: JarvisState) -> dict:
     """Execute the last message's tool calls.
 
-    Every tool returns a plain string except the activate/deactivate
-    meta-tools, which return a sentinel dict ``{"_activate": [...],
-    "content": str}``. For those, the human-readable ``content`` becomes the
+    Every tool returns a plain string except the activate_skill meta-tool,
+    which returns a sentinel dict ``{"_activate": [...], "content": str}``. For those, the human-readable ``content`` becomes the
     ToolMessage and the namespaces drive an ``active_skills`` state update;
     all other tools behave exactly as the prebuilt ToolNode did (one
     ToolMessage per call, exceptions captured as an error ToolMessage so the
@@ -638,7 +699,6 @@ def _tool_node(state: JarvisState) -> dict:
 
     messages: list[ToolMessage] = []
     to_activate: set[str] = set()
-    to_deactivate: set[str] = set()
 
     for tc in tool_calls:
         name = tc.get("name", "")
@@ -653,12 +713,18 @@ def _tool_node(state: JarvisState) -> dict:
         t0 = time.perf_counter()
         tool = registry.find(name, scope, active)
         if tool is None:
-            if ns and ns != "core":
+            # A call to an inactive skill's tool does not run: the skill's rules
+            # must be in the prompt first. The refusal activates the skill, so
+            # the model's next call sees the rules and can repeat the call.
+            if ns and ns != "core" and registry.find(name, scope, active | {ns}) is not None:
+                to_activate.add(ns)
                 msg = (
-                    f"'{name}' belongs to the '{ns}' skill, which is not active. "
-                    f"Call activate_skill(namespaces=['{ns}']) first, then call "
-                    f"'{name}' again — both in this same turn."
+                    f"'{name}' belongs to the '{ns}' skill, which was not active, so it did not run. "
+                    f"The skill is active now and its rules are in your instructions; "
+                    f"read them, then call '{name}' again."
                 )
+            elif ns and ns != "core":
+                msg = f"Tool '{name}' is not available in this turn."
             else:
                 msg = f"Tool '{name}' does not exist."
             messages.append(ToolMessage(
@@ -688,9 +754,8 @@ def _tool_node(state: JarvisState) -> dict:
             )
             continue
 
-        if isinstance(result, dict) and ("_activate" in result or "_deactivate" in result):
+        if isinstance(result, dict) and "_activate" in result:
             to_activate |= set(result.get("_activate", []) or [])
-            to_deactivate |= set(result.get("_deactivate", []) or [])
             messages.append(ToolMessage(
                 content=str(result.get("content", "")),
                 name=name, tool_call_id=call_id,
@@ -710,13 +775,14 @@ def _tool_node(state: JarvisState) -> dict:
         )
 
     delta: dict = {"messages": messages}
-    if to_activate or to_deactivate:
-        delta["active_skills"] = (active | to_activate) - to_deactivate
+    if to_activate:
+        delta["active_skills"] = active | to_activate
     return delta
 
 
-def build_graph():
-    """Compile the agent graph once at startup."""
+def build_graph(checkpointer=None):
+    """Compile the agent graph once at startup. With a checkpointer, a thread
+    keeps its conversation across turns; without one, every run starts fresh."""
     builder = StateGraph(JarvisState)
     builder.add_node("llm", _llm_node)
     builder.add_node("tools", _tool_node)
@@ -725,10 +791,14 @@ def build_graph():
     # otherwise to END — the same branch create_agent's prebuilt loop applied.
     builder.add_conditional_edges("llm", tools_condition)
     builder.add_edge("tools", "llm")
-    return builder.compile(checkpointer=memory)
+    return builder.compile(checkpointer=checkpointer)
 
 
-agent_executor = build_graph()
+agent_executor = build_graph(memory)
+# Heartbeat ticks and wakes: no saved conversation, each run starts fresh. What
+# a tick needs from before comes from its prompt (notes files, the today view,
+# today's chat) and the episode store, not from replayed earlier ticks.
+stateless_executor = build_graph()
 
 def ask_jarvis(
     user_input: str,
@@ -739,6 +809,8 @@ def ask_jarvis(
     heartbeat_due_tasks: list[str] | None = None,
     channel: str | None = None,
     trigger=None,
+    input_role: str | None = None,
+    initial_skills: set[str] | None = None,
 ) -> turn_budget.TurnOutcome:
     """
     Run one agent turn and classify how it ended.
@@ -765,8 +837,18 @@ def ask_jarvis(
             origin-less turns. Published via CURRENT_CHANNEL.
         trigger: the trigger whose firing started this turn (a scheduled
             wake), or None. Published via CURRENT_TRIGGER.
+        input_role: how the episode store records this turn's input: "owner"
+            (default in user scope) or "system" (default in heartbeat scope;
+            also a confirmation result fed back as a turn).
+        initial_skills: heartbeat scope — the skills the turn starts with (the
+            due tasks' warm start). Heartbeat turns keep no conversation: they
+            run on ``stateless_executor`` and start from their input alone.
     """
-    user_input = f"{_turn_stamp(_dt.datetime.now(_dt.timezone.utc))} {user_input}"
+    stateless = scope == "heartbeat"
+    executor = stateless_executor if stateless else agent_executor
+    now = _dt.datetime.now(_dt.timezone.utc)
+    raw_input = user_input
+    user_input = f"{_turn_stamp(now)} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
         "configurable": {"thread_id": thread_id},
@@ -778,9 +860,22 @@ def ask_jarvis(
 
     # --- Telemetry boundary ----------------------------------------------
     # Snapshot active_skills before the graph runs. Empty for a fresh thread.
+    state_update: dict = {}
     try:
-        snap = agent_executor.get_state(config)
-        active_start = sorted((snap.values or {}).get("active_skills", set()))
+        if stateless:
+            active_start = sorted(initial_skills or [])
+            if active_start:
+                state_update["active_skills"] = set(active_start)
+            snap = None
+        else:
+            snap = agent_executor.get_state(config)
+            active_start = sorted((snap.values or {}).get("active_skills", set()))
+        if scope == "user" and snap is not None:
+            state_update["last_user_turn_at"] = now.isoformat()
+            if active_start and _idle_long_enough((snap.values or {}).get("last_user_turn_at"), now):
+                logger.info("Skills reset after idle on %s: %s", thread_id, active_start)
+                state_update["active_skills"] = set()
+                active_start = []
     except Exception:
         active_start = []
     turn_id = turn_id or uuid4().hex
@@ -799,12 +894,21 @@ def ask_jarvis(
         trigger_id=getattr(trigger, "id", None),
         due_tasks=heartbeat_due_tasks if scope == "heartbeat" else None,
     )
+    episode_source = "chat" if scope == "user" else ("wake" if trigger is not None else "heartbeat")
+    episodes_record.turn_input(
+        turn_id=turn_id, thread_id=thread_id, scope=scope, channel=channel,
+        role=input_role or ("owner" if scope == "user" else "system"),
+        source=episode_source, content=raw_input, ts=now.isoformat(),
+        attachments=[a.get("path") for a in media_attachments or [] if a.get("path")],
+        meta={"trigger": trigger.id, "task": getattr(trigger.action, "task", None)} if trigger is not None else None,
+    )
 
     mirror_block = mirror_cursor = None
     if scope == "user" and thread_id == OWNER_THREAD_ID:
         mirror_block, mirror_cursor = pending_mirrors.drain_pending()
 
     final_response = ""
+    last_values: dict | None = None
     outcome: turn_budget.TurnOutcome | None = None
     # The first streamed event means the input (mirror block included) is in
     # the checkpoint — from then on the drained mirrors are part of the thread
@@ -944,9 +1048,9 @@ def ask_jarvis(
             input_messages = [("user", user_input)]
         if mirror_block:
             input_messages.insert(0, ("user", mirror_block))
-        events = agent_executor.stream(
+        events = executor.stream(
             {"messages": input_messages, "scope": scope,
-             "heartbeat_due_tasks": heartbeat_due_tasks},
+             "heartbeat_due_tasks": heartbeat_due_tasks, **state_update},
             config,
             stream_mode="values"
         )
@@ -954,6 +1058,7 @@ def ask_jarvis(
         last_ai = None
         for event in events:
             input_checkpointed = True
+            last_values = event
             last_message = event["messages"][-1]
             if last_message.type == "ai":
                 last_ai = last_message
@@ -976,6 +1081,7 @@ def ask_jarvis(
                     config, tracker,
                     f"the model stopped mid-response without an answer (it reported `{reason}`)",
                     suffix=" Rephrasing or splitting the request usually gets past it.",
+                    stateless=stateless,
                 )
             elif tracker.wrapped_up:
                 outcome = turn_budget.TurnOutcome(
@@ -999,6 +1105,7 @@ def ask_jarvis(
             outcome = _failed_outcome(
                 config, tracker, turn_budget.describe_error(e),
                 unsaved_input=None if input_checkpointed else user_input,
+                stateless=stateless,
             )
     finally:
         if mirror_cursor and input_checkpointed:
@@ -1008,21 +1115,37 @@ def ask_jarvis(
             acc["outcome"] = outcome.kind if outcome else turn_budget.FAILED
             acc["budget"] = tracker.record()
         # End-state active_skills + no_action signal — read from the post-run
-        # checkpoint snapshot. Falls back to active_start so the record stays
-        # consistent even if get_state fails (rare).
+        # checkpoint snapshot, or for a stateless turn from its last streamed
+        # state. Falls back to active_start so the record stays consistent even
+        # if get_state fails (rare).
         try:
-            end_snap = agent_executor.get_state(config)
-            active_end = sorted((end_snap.values or {}).get("active_skills", set()))
-            end_messages = (end_snap.values or {}).get("messages", [])
+            if stateless:
+                end_values = last_values or {}
+            else:
+                end_values = agent_executor.get_state(config).values or {}
+            active_end = sorted(end_values.get("active_skills", set()))
+            end_messages = end_values.get("messages", [])
         except Exception:
             active_end = active_start
             end_messages = []
         # no_action mirrors delivery: a tick delivers only when its ack says
         # notify, so a missing ack counts as a no-op.
         no_action = False
+        ack = None
         if scope == "heartbeat":
             ack = _ack_from_messages(end_messages)
             no_action = ack is None or not bool(ack.get("notify"))
+            if outcome is None or not outcome.finished:
+                episodes_record.turn_failure(
+                    turn_id=turn_id, thread_id=thread_id, scope=scope, source=episode_source,
+                    cause=(outcome.cause if outcome else None) or "unknown", ts=now.isoformat(),
+                )
+        if outcome is not None:
+            outcome = dataclasses.replace(outcome, ack=ack, active_skills=tuple(active_end))
+        turn_slice = _this_turns_messages(end_messages, user_input)
+        if turn_slice:
+            episodes_record.turn_steps(turn_id=turn_id, thread_id=thread_id, scope=scope,
+                                       channel=channel, source=episode_source, messages=turn_slice)
         telemetry.record_turn_end(active_skills_end=active_end, no_action=no_action)
         telemetry.TURN_ID.reset(_tid_token)
         turn_context.CURRENT_SCOPE.reset(_scope_token)
@@ -1031,6 +1154,32 @@ def ask_jarvis(
         turn_context.CURRENT_TRIGGER.reset(_trigger_token)
         turn_budget.TRACKER.reset(_tracker_token)
     return outcome
+
+
+def _this_turns_messages(messages: list, stamped_input: str) -> list:
+    """The thread's messages from this turn's input on, or [] when this turn's
+    input never reached the thread (the slice would be the previous turn's)."""
+    starts = _turn_starts(messages)
+    if not starts:
+        return []
+    turn = messages[starts[-1]:]
+    for m in turn:
+        if not isinstance(m, HumanMessage):
+            break
+        content = m.content
+        text = content if isinstance(content, str) else "".join(
+            b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text")
+        if text.startswith(stamped_input):
+            return turn
+    return []
+
+
+def _idle_long_enough(last_turn_at: str | None, now: _dt.datetime) -> bool:
+    """Whether SKILL_IDLE_RESET has passed since the last user turn. A thread
+    with no recorded last turn counts as idle."""
+    if not last_turn_at:
+        return True
+    return now - _dt.datetime.fromisoformat(last_turn_at) >= SKILL_IDLE_RESET
 
 
 def _exhausted_outcome(tracker, turn_id: str, answer: str) -> turn_budget.TurnOutcome:
@@ -1052,7 +1201,8 @@ def _exhausted_outcome(tracker, turn_id: str, answer: str) -> turn_budget.TurnOu
 
 
 def _failed_outcome(
-    config: dict, tracker, cause: str, suffix: str = "", unsaved_input: str | None = None
+    config: dict, tracker, cause: str, suffix: str = "", unsaved_input: str | None = None,
+    stateless: bool = False,
 ) -> turn_budget.TurnOutcome:
     """A ``failed`` outcome, with its note written into the thread.
 
@@ -1063,11 +1213,15 @@ def _failed_outcome(
 
     ``unsaved_input`` is the turn's text when it failed before its input reached
     the checkpoint. It is written ahead of the note so the turn boundary moves:
-    otherwise the thread's last HumanMessage is the previous turn's, and a
-    heartbeat would read that turn's ack as this one's.
+    otherwise the thread's last HumanMessage is the previous turn's.
+
+    A ``stateless`` turn has no thread to write into; its failure is recorded
+    in the episode store instead, where the today view shows it.
     """
     calls = tracker.committed_calls()
     text = turn_budget.failure_text(cause, calls) + suffix
+    if stateless:
+        return turn_budget.TurnOutcome(turn_budget.FAILED, text, cause=cause, committed_calls=calls)
     written = [HumanMessage(content=unsaved_input)] if unsaved_input is not None else []
     written.append(AIMessage(content=turn_budget.failure_note(cause, calls)))
     try:
@@ -1097,20 +1251,6 @@ def _ack_from_messages(messages) -> dict | None:
             if tc.get("name") == "heartbeat_respond":
                 ack = tc.get("args") or {}
     return ack
-
-
-def get_heartbeat_ack(thread_id: str) -> dict | None:
-    """The ``heartbeat_respond`` payload from a thread's LAST turn, or None.
-
-    Any failure degrades to None, never raises.
-    """
-    try:
-        snap = agent_executor.get_state({"configurable": {"thread_id": thread_id}})
-        messages = (snap.values or {}).get("messages", [])
-    except Exception:
-        logger.exception("get_heartbeat_ack: failed to read state for %s", thread_id)
-        return None
-    return _ack_from_messages(messages)
 
 
 def ask_jarvis_once(user_input: str) -> str:

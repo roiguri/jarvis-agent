@@ -1,12 +1,13 @@
-"""Meta-tools that expose Tier-2 skills on demand.
+"""The meta-tool that exposes Tier-2 skills on demand.
 
-These are the only tools whose return value mutates graph state: they return
-a sentinel dict that the agent's tool node interprets to update
-``active_skills``. Every other tool returns a plain string.
+It is the only tool whose return value mutates graph state: it returns a
+sentinel dict that the agent's tool node interprets to update
+``active_skills``. Every other tool returns a plain string. Skills leave the
+conversation by the idle reset in ``ask_jarvis``, not by a tool.
 
 The activatable skills (and their purpose) are advertised in the system
-prompt's skill block, generated from the registry — these tool docstrings
-stay generic so skill names live in exactly one place (the registry).
+prompt's skill block, generated from the registry — this tool's docstring
+stays generic so skill names live in exactly one place (the registry).
 """
 
 from langchain_core.tools import tool
@@ -53,25 +54,3 @@ def activate_skill(namespaces: list[str]) -> dict:
     if not known and not unknown:
         parts.append("No skills specified.")
     return {"_activate": known, "content": " ".join(parts)}
-
-
-@tool_register(namespace="core")
-@tool
-def deactivate_skill(namespaces: list[str]) -> dict:
-    """Drop a skill's tools from this conversation to shrink the tool surface.
-
-    Use when a skill is clearly no longer needed for the rest of the
-    conversation."""
-    known, unknown = _split_known(namespaces)
-    parts: list[str] = []
-    if known:
-        parts.append(f"Deactivated: {', '.join(known)}.")
-    if unknown:
-        avail = ", ".join(sorted(skill_namespaces())) or "(none)"
-        parts.append(
-            f"Unknown skill(s) ignored: {', '.join(unknown)}. "
-            f"Available skills: {avail}."
-        )
-    if not known and not unknown:
-        parts.append("No skills specified.")
-    return {"_deactivate": known, "content": " ".join(parts)}

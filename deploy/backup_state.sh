@@ -13,9 +13,9 @@
 #
 # For a clean checkpointer copy take the snapshot with the service stopped; a live
 # snapshot may capture threads.sqlite-wal mid-write, which is fine for restore-to-a-point
-# but not a guaranteed-consistent live copy. The telemetry store is the exception: it is
-# written on every model call, so it goes in as an SQLite online-backup copy (consistent
-# while the service runs) in place of the live file.
+# but not a guaranteed-consistent live copy. The telemetry and episode stores are the
+# exception: written on every turn, they go in as SQLite online-backup copies
+# (consistent while the service runs) in place of the live files.
 #
 # Convention: all progress goes to stderr; the single stdout line of a <label> run is the
 # tarball path, so callers can capture it — TARBALL="$(backup_state.sh <label>)".
@@ -59,26 +59,32 @@ cmd_backup() {
     # -C "$ROOT" so archived paths are jarvis_memory/... and jarvis_data/... (root-relative),
     # which is exactly what --restore unpacks back into $ROOT.
     log "archiving $MEMORY_DIR + $DATA_DIR"
-    local telemetry_rel="jarvis_data/observability/telemetry.sqlite"
-    if [[ -f "$ROOT/$telemetry_rel" ]]; then
+    # Written on every turn, so these go in as SQLite online-backup copies
+    # (consistent while the service runs) in place of the live files.
+    local stores=() rel
+    for rel in jarvis_data/observability/telemetry.sqlite jarvis_data/episodes/episodes.sqlite; do
+        [[ -f "$ROOT/$rel" ]] && stores+=("$rel")
+    done
+    if (( ${#stores[@]} )); then
         # Global, not local: the EXIT trap must still see it when set -e aborts.
         BACKUP_TMP="$(mktemp -d)"
         trap 'rm -rf "$BACKUP_TMP"' EXIT
-        local tmp="$BACKUP_TMP"
-        mkdir -p "$tmp/copy/$(dirname "$telemetry_rel")"
-        if command -v sqlite3 >/dev/null; then
-            sqlite3 "$ROOT/$telemetry_rel" ".backup '$tmp/copy/$telemetry_rel'"
-        else
-            python3 -c 'import sqlite3, sys
+        local tmp="$BACKUP_TMP" excludes=()
+        for rel in "${stores[@]}"; do
+            mkdir -p "$tmp/copy/$(dirname "$rel")"
+            if command -v sqlite3 >/dev/null; then
+                sqlite3 "$ROOT/$rel" ".backup '$tmp/copy/$rel'"
+            else
+                python3 -c 'import sqlite3, sys
 src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
-src.backup(dst)' "$ROOT/$telemetry_rel" "$tmp/copy/$telemetry_rel"
-        fi
-        # Excluded from the live pass, appended as the copy: an uncompressed tar is
-        # appendable, so the exclude never sees the copy's identical name.
-        tar -cf "$tmp/state.tar" -C "$ROOT" \
-            --exclude="$telemetry_rel" --exclude="$telemetry_rel-wal" --exclude="$telemetry_rel-shm" \
-            jarvis_memory jarvis_data
-        tar -rf "$tmp/state.tar" -C "$tmp/copy" "$telemetry_rel"
+src.backup(dst)' "$ROOT/$rel" "$tmp/copy/$rel"
+            fi
+            excludes+=(--exclude="$rel" --exclude="$rel-wal" --exclude="$rel-shm")
+        done
+        # Excluded from the live pass, appended as the copies: an uncompressed tar
+        # is appendable, so the excludes never see the copies' identical names.
+        tar -cf "$tmp/state.tar" -C "$ROOT" "${excludes[@]}" jarvis_memory jarvis_data
+        tar -rf "$tmp/state.tar" -C "$tmp/copy" "${stores[@]}"
         gzip -c "$tmp/state.tar" > "$out"
     else
         tar -czf "$out" -C "$ROOT" jarvis_memory jarvis_data

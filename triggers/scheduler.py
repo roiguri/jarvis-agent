@@ -53,6 +53,23 @@ def add_heartbeat(run_heartbeat) -> None:
     )
 
 
+def add_dream(run) -> None:
+    """Register the morning job — yesterday's daily log and memory suggestions
+    (Israel time). A run held up past CATCH_UP_UNTIL is dropped; the job
+    covers only its own day."""
+    import dream as ms
+    from timeutils import ISRAEL_TZ
+
+    grace = (datetime.combine(datetime.min, ms.CATCH_UP_UNTIL) - datetime.combine(datetime.min, ms.RUN_AT))
+    get_scheduler().add_job(
+        run,
+        CronTrigger(hour=ms.RUN_AT.hour, minute=ms.RUN_AT.minute, timezone=ISRAEL_TZ),
+        id="dream",
+        replace_existing=True,
+        misfire_grace_time=int(grace.total_seconds()),
+    )
+
+
 def _job_id(trigger_id: str) -> str:
     return f"trigger_{trigger_id}"
 

@@ -5,7 +5,7 @@ Scope: read-only measurement of the staging tree `/app/jarvis_staging/code` (HEA
 Method:
 - Schema sizes come from the golden snapshots `tests/golden/tools/**/*.json`. These are produced by `convert_to_openai_tool(tool)["function"]` (tests/test_tool_surface.py:19-20) and pinned by CI. I read them as plain JSON with `python3 -I`. No project module was imported and no `.env` was touched. The test itself imports `agent` (tests/test_tool_surface.py:13), which is why I did not run it.
 - Token figures use the repo's own estimator, characters ÷ 4 over compact JSON (tests/test_tool_surface.py:23-27, `tests/golden/surface.md`). This is an estimate. Gemini receives `FunctionDeclaration`s converted by langchain-google-genai, not OpenAI JSON, and its real per-declaration token count was not measured.
-- Usage figures come from a join of `turns.jsonl` and `tool_calls.jsonl` on `turn_id` (the method in docs/plans/context/RESEARCH.md §2). The window is 2026-09-22 to 2026-10-06 20:00 UTC: 415 turns (314 user, 101 heartbeat) and 1,706 tool calls. One malformed line in `turns.jsonl` was skipped. `tool_calls.jsonl` has no scope or args fields, so scope comes from the turn and the target of `activate_skill` cannot be seen directly. It is inferred from changes in `active_skills_start`/`active_skills_end`.
+- Usage figures come from a join of `turns.jsonl` and `tool_calls.jsonl` on `turn_id` (the method in docs/plans/archive/context/RESEARCH.md §2). The window is 2026-09-22 to 2026-10-06 20:00 UTC: 415 turns (314 user, 101 heartbeat) and 1,706 tool calls. One malformed line in `turns.jsonl` was skipped. `tool_calls.jsonl` has no scope or args fields, so scope comes from the turn and the target of `activate_skill` cannot be seen directly. It is inferred from changes in `active_skills_start`/`active_skills_end`.
 
 ---
 
@@ -309,8 +309,8 @@ Per-call shares:
 
 Inputs per call are from section 4.
 
-- **Earlier context measurement (≈43k heartbeat calls).** The 63/18/10/9 split recorded history 63% and tool results 18%. The remaining ~10% and ~9% were the system prompt and the tool schemas, but the docs do not label which is which. — [docs/plans/context/PROBLEMS.md:83-88](docs/plans/context/PROBLEMS.md), [docs/plans/context/RESEARCH.md:62-69](docs/plans/context/RESEARCH.md)
-- **Caching.** Tools sit inside the cached prefix ("system instruction + tools + history"). — [docs/plans/context/PROBLEMS.md:131](docs/plans/context/PROBLEMS.md) Cache-read covers about 48% (user) and 56% (heartbeat) of input per call in this window (section 4).
+- **Earlier context measurement (≈43k heartbeat calls).** The 63/18/10/9 split recorded history 63% and tool results 18%. The remaining ~10% and ~9% were the system prompt and the tool schemas, but the docs do not label which is which. — [docs/plans/archive/context/PROBLEMS.md:83-88](docs/plans/archive/context/PROBLEMS.md), [docs/plans/archive/context/RESEARCH.md:62-69](docs/plans/archive/context/RESEARCH.md)
+- **Caching.** Tools sit inside the cached prefix ("system instruction + tools + history"). — [docs/plans/archive/context/PROBLEMS.md:131](docs/plans/archive/context/PROBLEMS.md) Cache-read covers about 48% (user) and 56% (heartbeat) of input per call in this window (section 4).
 
 ### Inferences
 - The heartbeat shift from about 9–10% to about 33% is mostly the denominator shrinking (43k to 21k after the context work). The schemas themselves grew a little (google_health health_status). In heartbeat they are now as large as the measured history.
@@ -342,7 +342,7 @@ Several rules appear two or three times: in a docstring (always bound while the 
   - send_form has an inline JSON example for `rows` and a multi-bullet usage policy. — [tools/core/forms.py:72](tools/core/forms.py)
   - manage_itinerary documents 22 arguments in prose.
   - manage_collection explains its schema-evolution semantics in prose.
-- **Docstrings drive behaviour.** A behaviour persisted after the prompt instruction was removed, because the bound tool docstring's worked example advertised it. "Docstring examples can be live bugs." — [docs/plans/context/RESEARCH.md:138-157](docs/plans/context/RESEARCH.md); see also [docs/plans/context/PROBLEMS.md:281](docs/plans/context/PROBLEMS.md)
+- **Docstrings drive behaviour.** A behaviour persisted after the prompt instruction was removed, because the bound tool docstring's worked example advertised it. "Docstring examples can be live bugs." — [docs/plans/archive/context/RESEARCH.md:138-157](docs/plans/archive/context/RESEARCH.md); see also [docs/plans/archive/context/PROBLEMS.md:281](docs/plans/archive/context/PROBLEMS.md)
 - **Owner rule on always-on tools.** Weigh per-turn schema cost against frequency, and prefer slash command (zero context) over skill over core tool. A `manage_timezone` core tool was rejected for `/tz`: "spamming the context with a constant tool is not a good idea." — user memory `feedback_no_always_on_tools_for_rare_actions.md` (`/home/jarvis_user/.claude/projects/-app-jarvis-staging-code/memory/`)
 - **Architecture.** Core is described as "~9 tools… cost is fixed and cheap"; there are actually 11/12 now, at ≈2.6–2.9k tokens. Per-scope deny-lists are "not built". — [docs/architecture/RUNTIME.md:36](docs/architecture/RUNTIME.md), [docs/architecture/RUNTIME.md:334](docs/architecture/RUNTIME.md)
 - **Process.** CLAUDE.md requires a `--update-golden` run for any prompt or docstring change, so tests/golden/surface.md is a ready-made cost diff for any redesign. — CLAUDE.md "Change behavioral rules" row

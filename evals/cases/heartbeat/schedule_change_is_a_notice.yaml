@@ -1,0 +1,11 @@
+description: "#146: a schedule-change wake writes a proactive notice, not a reply ('Got it', 'I've updated')."
+kind: wake
+time: "15:00"
+wake:
+  instruction: "Workout schedule changed — Roi booked Thursday 19:00 WOD in Arbox. Tell him what changed and where his week stands against his 2-session quota."
+stubs:
+  get_weekly_fitness_summary: "This week: 2 of 2 CrossFit sessions booked (Mon 20:00, Thu 19:00)."
+expect:
+  ack: {notify: true}
+  sends: 1
+  message_not_contains: ["got it", "i've updated", "i have updated"]

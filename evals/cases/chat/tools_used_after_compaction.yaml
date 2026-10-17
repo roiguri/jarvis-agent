@@ -1,0 +1,9 @@
+description: After a compaction Jarvis still acts with its tools instead of only narrating.
+kind: chat
+time: "16:00"
+filler: 20
+compact: true
+message: "add Klara and the Sun by Kazuo Ishiguro to my book list"
+expect:
+  called_with:
+    - {tool: write_memory, args: {filename: "book_list", content: "Klara"}}

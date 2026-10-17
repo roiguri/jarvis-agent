@@ -1,0 +1,12 @@
+description: Readiness was already discussed in today's chat, so the tick marks it done without messaging.
+kind: tick
+time: "08:40"
+due: [morning-readiness-check]
+chat:
+  - {time: "08:05", role: user, text: "how did I sleep? am I good for crossfit today?"}
+  - {time: "08:06", role: assistant, text: "You slept 7h20m with good efficiency and your HRV is above average — you're well recovered, go for it."}
+stubs:
+  health_status: "Last night: slept 7h20m (efficiency 93%), resting HR 54, HRV 52 ms (+8%)."
+expect:
+  ack: {notify: false, acted_tasks: [morning-readiness-check]}
+  sends: 0

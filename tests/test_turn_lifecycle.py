@@ -234,13 +234,11 @@ def test_unsaved_tick_ignores_previous_ack(use_llm, fake_outbox, due, stamped, r
         raise sqlite3.OperationalError("database is locked")
 
     with monkeypatch.context() as m:
-        m.setattr(agent.agent_executor, "stream", locked_stream)
+        m.setattr(agent.stateless_executor, "stream", locked_stream)
         run_tick()
     assert "OLD BRIEFING" not in [t for _, t in fake_outbox.sent], "no stale briefing re-sent"
     assert stamped == [], "no stale stamp"
     assert [e for e, _ in notices(fake_outbox)] == ["heartbeat+tick_failed"], "failure notice sent"
-    assert isinstance(thread_messages("heartbeat")[-2], HumanMessage), \
-        "thread has this tick's input before the note"
 
 
 def test_failed_tick_notice_through_real_outbox(use_llm, due, run_tick, monkeypatch):

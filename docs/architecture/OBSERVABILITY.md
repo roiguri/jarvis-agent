@@ -85,7 +85,7 @@ Written as each call returns (`ts` is the return time; start is `ts - duration_m
 
 ### `bound_tools` and `prompts`
 
-`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: today's daily log (user scope) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
+`bound_tools` has one row per tool bound at any point in a turn; `first_call_index` says when it joined (a skill activated mid-turn joins at the next call). `prompts` stores each distinct system prompt once; repeats only move `last_seen`. The text is the prompt exactly as sent, so it includes the per-scope live sections: the today view (both scopes) and today's user chat and due task blocks (heartbeat). Those change during the day, so most heartbeat ticks add a new row — roughly 30 prompts of 9–15k chars a day, about 10 MB a month.
 
 ### Writes
 
@@ -160,7 +160,7 @@ Per-scope turn cost and cache ratio, average input composition per model call, h
 
 ### `scripts/measure_context.py` — real token costs
 
-Makes real model calls (needs the API key; run by hand on staging, never in CI): the token cost of the system prompt, of the core tools and of each skill, and a prompt-cache test (same request ×3, then one skill added ×3, run twice) showing whether a tool-set change costs the cache. Saves JSON next to the store.
+Makes real model calls (needs the API key; run by hand on staging, never in CI). By default: the token cost of the system prompt, of the core tools and of each skill. With `--cache`: a realistic request (unique marker, ~20k tokens of filler conversation) warmed ×3, then changed one way at a time (tools removed, tools and rules removed, a skill added), showing whether each change keeps the cached conversation. Saves JSON next to the store. The 2026-10-16 run found that any tool-set change costs the whole cache for one call (Gemini caches tool declarations ahead of the system prompt).
 
 ---
 
@@ -176,7 +176,7 @@ A model missing from `MODEL_PRICES` falls back to zero rates; rollups flag it wi
 
 Every table keeps 180 days (`store.RETENTION_DAYS`); `store.trim()` runs at startup (`main.py`). `prompts` age out by `last_seen`. Rows never change after a turn ends.
 
-`deploy/backup_state.sh` copies the store with SQLite's online backup (consistent while the service runs) instead of tarring the live file. `python -m observability.store --backup DEST` does the same by hand.
+`deploy/backup_state.sh` copies the store (and the episode store) with SQLite's online backup (consistent while the service runs) instead of tarring the live files. `python -m observability.store --backup DEST` does the same by hand.
 
 ### History before the store
 

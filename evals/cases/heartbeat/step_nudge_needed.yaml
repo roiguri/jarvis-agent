@@ -1,0 +1,10 @@
+description: Afternoon, well under 5,000 steps, no nudge sent yet today — one short nudge.
+kind: tick
+time: "16:00"
+due: [step-challenge-tracker]
+stubs:
+  health_status: "Steps today: 3,100."
+expect:
+  ack: {notify: true, acted_tasks: [step-challenge-tracker]}
+  called: [health_status]
+  sends: 1

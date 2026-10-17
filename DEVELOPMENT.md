@@ -179,6 +179,22 @@ is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooli
    venv/bin/python -m pytest --update-golden      # after an intended prompt/SKILL.md/docstring change
    ```
    `tests/golden/` snapshots the system prompt and the tool schemas; review its diff like code.
+
+   Before merging a change that alters what the model sees or how a turn behaves (a prompt,
+   a tool docstring, a `SKILL.md`, the model, heartbeat logic), run the evals: real-model
+   scenarios with a pass rate per case, compared against the committed baseline. By hand,
+   never in CI; about $0.03 per attempt. Every attempt runs in a scratch root with
+   outside-reaching tools stubbed, so nothing touches staging or prod state. The API key is
+   taken from the environment, or else from staging's `secrets/.env` (never prod's).
+   ```bash
+   venv/bin/python -m evals.run                      # all cases, 3 attempts each
+   venv/bin/python -m evals.run --case 'step*' -k 1  # a subset
+   venv/bin/python -m evals.run --update-baseline    # after an intended behaviour change
+   ```
+   A case dropping below its baseline is the signal to look at what changed; each run's
+   details (checks, tool calls, the ack, sends, tokens) are in `evals/results/` (not
+   committed). Cases live in `evals/cases/` and contain no real personal data (the repo is
+   public).
 3. **Ship** — push the branch, open a PR to `main` (CI runs the test suite and the four guards, all required), merge:
    ```bash
    git push origin feat/my-change
@@ -244,8 +260,8 @@ preserved). New messages keep blobs for the current turn so the LLM can process
 them, then are stripped on the next reducer call.
 
 Anything outside the 50-message window is **not lost for audit** — every turn is
-appended to `chat_history.jsonl` before `ask_jarvis` runs and is queryable via
-`get_chat_history`. Disk-footprint hygiene (WAL high-water mark, un-VACUUMed
+recorded in the episode store (`jarvis_data/episodes/episodes.sqlite`) and is queryable via
+`search_history`. Disk-footprint hygiene (WAL high-water mark, un-VACUUMed
 pages) is tracked in issue #24.
 
 ### SQLite `check_same_thread=False`

@@ -1,0 +1,126 @@
+{
+  "cases": {
+    "background_only_day": {
+      "passed": 3,
+      "runs": 3
+    },
+    "chat_rule_followed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "duplicate_files_noticed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "duplicate_not_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
+    "finished_task_not_revived": {
+      "passed": 3,
+      "runs": 3
+    },
+    "form_text_not_repeated": {
+      "passed": 1,
+      "runs": 3
+    },
+    "jarvis_sent_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "log_sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "morning_fact_recalled": {
+      "passed": 3,
+      "runs": 3
+    },
+    "negative_tool_claim_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
+    "no_invented_outcome": {
+      "passed": 3,
+      "runs": 3
+    },
+    "one_off_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
+    "open_request_survives": {
+      "passed": 3,
+      "runs": 3
+    },
+    "outcomes_recorded": {
+      "passed": 3,
+      "runs": 3
+    },
+    "passed_plan_retensed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "quiet_wake": {
+      "passed": 3,
+      "runs": 3
+    },
+    "readiness_already_handled_in_chat": {
+      "passed": 3,
+      "runs": 3
+    },
+    "readiness_briefing_sent": {
+      "passed": 3,
+      "runs": 3
+    },
+    "reply_to_briefing_used": {
+      "passed": 3,
+      "runs": 3
+    },
+    "schedule_change_is_a_notice": {
+      "passed": 8,
+      "runs": 19
+    },
+    "secret_not_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
+    "sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "stated_preference_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
+    "step_nudge_needed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "step_nudge_not_repeated": {
+      "passed": 3,
+      "runs": 3
+    },
+    "step_progress_not_reported": {
+      "passed": 3,
+      "runs": 3
+    },
+    "tick_cannot_create_tasks": {
+      "passed": 3,
+      "runs": 3
+    },
+    "tools_used_after_compaction": {
+      "passed": 3,
+      "runs": 3
+    },
+    "two_due_one_left_for_later": {
+      "passed": 3,
+      "runs": 3
+    },
+    "wake_acts_on_its_task": {
+      "passed": 3,
+      "runs": 3
+    }
+  },
+  "date": "2026-10-17",
+  "model": "gemini-3-flash-preview"
+}

@@ -17,7 +17,7 @@ TURN_LOCK = asyncio.Lock()
 
 
 async def run_heartbeat() -> None:
-    """Periodic agent turn. HEARTBEAT.md + recent daily logs + tick rules are
+    """Periodic agent turn. HEARTBEAT.md + yesterday's daily log + tick rules are
     injected by the agent's build_system_prompt (scope='heartbeat'); this
     issues the imperative and delivers per the heartbeat_respond ack.
 
@@ -78,28 +78,27 @@ async def _run_tick(now_utc: datetime.datetime, due_names: list[str] | None) -> 
     from agent import ask_jarvis
 
     now_israel = now_utc.astimezone(ISRAEL_TZ)
-    today = now_israel.strftime("%Y-%m-%d")
 
     prompt = (
         "Run the scheduled heartbeat check now. Work the due tasks shown in "
         "the HEARTBEAT.md section of your context, following the heartbeat "
-        "rules above it.\n\n"
-        f"Today's daily log file: daily/daily_{today}.md."
+        "rules above it."
     )
 
     logger.info("Heartbeat: running agent turn")
     # Bounded by the heartbeat's turn budget inside the turn itself. Not
     # wrapped in asyncio.wait_for: that only stops waiting — the thread keeps
     # running, and the next tick could then start a second turn on this thread.
+    skills = await asyncio.to_thread(heartbeat_state.skills_for, due_names)
     outcome = await asyncio.to_thread(
         ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
-        scope="heartbeat", heartbeat_due_tasks=due_names,
+        scope="heartbeat", heartbeat_due_tasks=due_names, initial_skills=skills,
     )
     if not outcome.finished:
         logger.error("Heartbeat: agent turn ended %s: %s", outcome.kind, outcome.cause)
 
     # Structured tick-ack: delivery and stamping key off it.
-    ack = await _read_ack()
+    ack = outcome.ack
     acted: list[str] = []
     if ack is None:
         logger.warning("Heartbeat: no heartbeat_respond call this tick — not stamping")
@@ -155,18 +154,12 @@ async def _run_tick(now_utc: datetime.datetime, due_names: list[str] | None) -> 
                     heartbeat_state.stamp, acted, now_utc
                 )
                 logger.info("Heartbeat: stamped last_run for %s", stamped)
+                # The skills this run ended with are the tasks' next warm start.
+                await asyncio.to_thread(
+                    heartbeat_state.remember_skills, stamped, list(outcome.active_skills)
+                )
             except Exception:
                 logger.exception("Heartbeat: failed to stamp last_run state")
-
-
-async def _read_ack() -> dict | None:
-    from agent import get_heartbeat_ack
-
-    try:
-        return await asyncio.to_thread(get_heartbeat_ack, HEARTBEAT_THREAD_ID)
-    except Exception:
-        logger.exception("Heartbeat: failed to read heartbeat_respond ack")
-        return None
 
 
 async def _deliver(ack: dict | None, metadata: dict | None = None) -> str | None:
@@ -218,13 +211,15 @@ async def run_wake(trigger) -> None:
             logger.info("Heartbeat: wake %s was cancelled before it ran — skipping", trigger.id)
             return
         logger.info("Heartbeat: running wake %s", trigger.id)
+        skills = await asyncio.to_thread(heartbeat_state.skills_for, [task] if task else [])
         outcome = await asyncio.to_thread(
             ask_jarvis, prompt, HEARTBEAT_THREAD_ID,
             scope="heartbeat", heartbeat_due_tasks=[task] if task else [], trigger=trigger,
+            initial_skills=skills,
         )
         if not outcome.finished:
             logger.error("Heartbeat: wake %s ended %s: %s", trigger.id, outcome.kind, outcome.cause)
-        ack = await _read_ack()
+        ack = outcome.ack
         if ack is None:
             logger.warning("Heartbeat: wake %s left no heartbeat_respond call", trigger.id)
             if not outcome.finished:

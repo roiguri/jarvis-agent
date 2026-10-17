@@ -74,6 +74,57 @@ async def _clear(inbound: InboundMessage, args: list[str]) -> str:
     return "Conversation reset. Starting fresh."
 
 
+@command("context", "Show the compacted record of earlier conversation, if there is one")
+async def _context(inbound: InboundMessage, args: list[str]) -> str:
+    import compaction
+
+    record = await asyncio.to_thread(compaction.current_record, inbound.thread_id)
+    if not record:
+        return section("Context", [], empty="No compacted record yet — the whole conversation is still in the window.")
+    return document("Compacted record (what Jarvis keeps of the earlier conversation)", record)
+
+
+@command("compact", "Compact the earlier conversation now (keeps the last 3 turns)")
+async def _compact(inbound: InboundMessage, args: list[str]) -> str:
+    import compaction
+
+    plan = await asyncio.to_thread(compaction.compact_thread, inbound.thread_id, True)
+    if plan is None:
+        return section("Compact", [], empty="Nothing to compact — the conversation is only a few turns long.")
+    return kv_section("Compacted", [
+        ("Messages replaced", plan.covered),
+        ("Record size", f"{plan.after_chars:,} chars (was {plan.before_chars:,})"),
+        ("Outcome", plan.outcome),
+        ("Skills kept on", ", ".join(sorted(plan.active_skills)) or "none"),
+    ])
+
+
+# TODO(#167): consider removing once memory suggestions end.
+@command("dream", "Write the daily log and send the memory suggestions now. Sub: /dream yesterday|today")
+async def _dream(inbound: InboundMessage, args: list[str]) -> str:
+    import datetime as _dt
+
+    import dream
+    from timeutils import ISRAEL_TZ
+
+    which = (args[0].lower() if args else "yesterday")
+    if which not in ("yesterday", "today"):
+        return section("Usage", ["`/dream [yesterday|today]` — today covers the day so far"])
+    day = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
+    if which == "yesterday":
+        day -= _dt.timedelta(days=1)
+    log, suggestions = await dream.run(day)
+    return kv_section("Morning job", [
+        ("Day", day.isoformat()),
+        ("Daily log", {"written": f"written — `/logs {day:%d.%m.%Y}`",
+                       "nothing": "nothing happened that day",
+                       "failed": "failed — see the log"}[log]),
+        ("Memory suggestions", {"sent": "sent as a message",
+                                "nothing": "nothing to send (no conversation, or nothing worth suggesting)",
+                                "failed": "failed — see the log"}[suggestions]),
+    ])
+
+
 def _active_skills(thread_id: str) -> set[str]:
     import agent
 
@@ -166,7 +217,7 @@ async def _status(inbound: InboundMessage, args: list[str]) -> str:
 
 
 def _memory_list_top_level() -> str:
-    """Top-level memory files only — excludes daily/ (use /logs) and heartbeat/
+    """Top-level memory files only — excludes daily/ (older logs) and heartbeat/
     (use /heartbeat list) subdirs, which have their own surfaces."""
     import os
     import config
@@ -305,10 +356,14 @@ _LOGS_USAGE = section(
 
 @command(
     "logs",
-    "Show today's daily log. Sub: /logs today|yesterday|D[.M[.Y]]",
+    "Show a day: today so far, or an earlier day's daily log. Sub: /logs today|yesterday|D[.M[.Y]]",
 )
 async def _logs(inbound: InboundMessage, args: list[str]) -> str:
-    from tools.core.memory import read_memory
+    import datetime as _dt
+
+    import daily_log
+    from episodes import today as episodes_today
+    from timeutils import ISRAEL_TZ
 
     if not args:
         iso = _parse_log_date("today")
@@ -317,8 +372,15 @@ async def _logs(inbound: InboundMessage, args: list[str]) -> str:
         if iso is None:
             return join("Invalid date.", _LOGS_USAGE)
 
-    return await asyncio.to_thread(
-        read_memory.invoke, {"filename": f"daily/daily_{iso}.md"}
+    day = _dt.date.fromisoformat(iso)
+    if day < _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date():
+        log = await asyncio.to_thread(daily_log.read, day)
+        return log or f"No daily log for {day:%A %Y-%m-%d} (a day's log is written the next morning)."
+    background, conversation = await asyncio.to_thread(episodes_today.day_view, day)
+    return join(
+        f"**{day:%A %Y-%m-%d}**",
+        section("In the background", background),
+        section("Conversation", conversation),
     )
 
 

@@ -38,9 +38,9 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 | Module (`tools/core/`) | Tools | Notes |
 |---|---|---|
 | `memory.py` | `read_memory`, `write_memory`, `list_memory`, `delete_memory` | `delete_memory` is `destructive` → confirmation. |
-| `history.py` | `get_chat_history`, `get_notification_history` | Read-only recall. See "The notification question" below. |
+| `history.py` | `search_history` | Read-only recall over the episode store: conversation, tool results, sent notifications, heartbeat activity ([MEMORY.md](MEMORY.md) "Episode store"). |
 | `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
-| `activate_skill.py` | `activate_skill`, `deactivate_skill` | The meta-tools that expose Tier 2. |
+| `activate_skill.py` | `activate_skill` | The meta-tool that exposes Tier 2. Skills leave by the idle reset, not by a tool. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)
 
@@ -65,8 +65,8 @@ A `parent/child` namespace is a **sub-skill**. The mechanism is the same compact
 
 - **Two-step discovery.** `compact_skill_list` is hierarchy-aware: only top-level skills are listed by default. A parent's sub-skills are listed (indented, under the parent) **only when the parent is in `active_skills`** — children stay hidden until the parent is activated.
 - **Parent may own zero tools.** `media` registers no tools; it is purely a discovery index. `_visible` is unchanged — a parent with no tools binds nothing; a sub-skill's tools bind iff its own `parent/child` namespace is active.
-- **Child activation is independent — no cascade.** Activating `media/radarr` binds only radarr tools. Activating or deactivating the parent `media` does **not** activate or deactivate any child; the parent listing is a discovery aid, not a bundle. A sub-skill's rules body (if any) renders whenever the sub-skill itself is active, even if the parent is not — guardrails stay attached to the bound tools.
-- **`skill_namespaces()`** returns every registered non-core namespace **plus every derived parent**, so both `media` and `media/radarr` are valid `activate_skill` targets (validated through the existing `_split_known`). `agent.py`, `JarvisState`, and the tool node need no changes — the "activate the skill first" `ToolMessage` already names the full `parent/child` namespace.
+- **Child activation is independent — no cascade.** Activating `media/radarr` binds only radarr tools. Activating the parent `media` does **not** activate any child; the parent listing is a discovery aid, not a bundle. A sub-skill's rules body (if any) renders whenever the sub-skill itself is active, even if the parent is not — guardrails stay attached to the bound tools.
+- **`skill_namespaces()`** returns every registered non-core namespace **plus every derived parent**, so both `media` and `media/radarr` are valid `activate_skill` targets (validated through the existing `_split_known`). `agent.py`, `JarvisState`, and the tool node need no changes — the refusal of an inactive skill's tool activates the full `parent/child` namespace.
 
 This is the first intentional extension *beyond* OpenClaw's flat skill model (OpenClaw skills have no parent/child nesting); it reuses Jarvis's existing dynamic-activation primitives and does not touch the capability/sandbox boundary.
 
@@ -74,7 +74,7 @@ This is the first intentional extension *beyond* OpenClaw's flat skill model (Op
 
 "Notifications" looks like a candidate namespace but is deliberately **not** one, because the concern is split across two layers that already have homes:
 
-1. **Querying past notifications** — `get_notification_history` is read-only recall, the same shape as `get_chat_history`. It belongs in **Tier 1 core (`history.py`)**, available every turn, not gated behind an activation.
+1. **Querying past notifications** — read-only recall through `search_history` (`kind="notifications"`). It belongs in **Tier 1 core (`history.py`)**, available every turn, not gated behind an activation.
 2. **Delivering notifications** — media "download ready / failed / upgraded" pushes are produced by the **gateway webhook notifier** (`gateway/webhook/notifier.py`) and recorded via `append_notification_log`. These are *not agent tools at all*; they are a gateway **Plane 2 (proactive send)** concern ([GATEWAY.md](GATEWAY.md)).
 
 So the queryable half is core and the push half is gateway. There is nothing left to put in a `notifications` skill, and creating one would falsely imply the agent activates a skill to receive notifications. It doesn't.
@@ -90,7 +90,7 @@ A turn runs under a **scope**: `user` or `heartbeat`. Scope is carried in `Jarvi
 | Scope affects | Scope does **not** affect |
 |---|---|
 | **Which prompt is built.** `user` and `heartbeat` get different framing and scope-specific context; the exact per-scope file composition is owned by [MEMORY.md](MEMORY.md). | **Tool reachability for the default (`scopes=None`) registration.** Both scopes can call any tool of any activated skill, including `destructive` ones. |
-| **Default `active_skills` on a new thread.** Both `user` and `heartbeat` threads start **blank** (`active_skills = set()`). The heartbeat agent reads HEARTBEAT.md and calls `activate_skill` per-task as needed — the registry does not pre-activate from task definitions. | **Confirmation.** `destructive` tools always route through the gateway `Confirmation` store regardless of scope. Heartbeat-triggered deletes prompt the owner exactly like user-triggered ones. |
+| **Default `active_skills`.** The `user` thread starts **blank** (`active_skills = set()`). Heartbeat turns keep no conversation; each starts with its due tasks' warm-start skills (what their last stamped run ended with) and calls `activate_skill` for anything else — the registry does not pre-activate from task definitions. | **Confirmation.** `destructive` tools always route through the gateway `Confirmation` store regardless of scope. Heartbeat-triggered deletes prompt the owner exactly like user-triggered ones. |
 | **Binding of scope-declared tools.** `heartbeat_respond` registers `scopes=("heartbeat",)` — a user turn has no tick to acknowledge, so it never sees the tool. `scopes` can only narrow visibility, never widen it past activation. | |
 
 Restriction is **opt-in per tool** (`scopes` tuple), used when a tool is meaningless outside a scope — not a blanket deny-list, and not a default field every tool must think about. A tool may also branch on the *running* scope internally where one action of it is scope-sensitive: `manage_heartbeat_task` rejects `create` on heartbeat turns (a tick must not schedule new work for itself) while allowing update/delete/list — see [HEARTBEAT.md](HEARTBEAT.md).
@@ -101,7 +101,7 @@ The two scopes run on **separate threads** with separate checkpoints (`heartbeat
 
 | Layer | Scoped or shared | Mechanism |
 |---|---|---|
-| **Awareness** — what the agent knows happened | **Shared, both directions.** The chat (`user`) agent sees heartbeat actions; the heartbeat (`heartbeat`) agent sees chat activity. | Three layered mechanisms: (1) the **pending-mirror drain** — undrained proactive sends (`notifications.jsonl`) are delivered into the owner thread as one user-role block at the next user turn, so a reply to a briefing has its antecedent as real history; the reverse direction stays a live prompt slice (today's user chat into the heartbeat prompt — see [MEMORY.md](MEMORY.md) "Per-scope content"). (2) The **daily log** (`daily/daily_<today>.md`) — heartbeat-written, auto-loaded into the `user` prompt, richer per-day narrative but lagging. (3) The **history tools** (`get_chat_history`, `get_notification_history`) — Tier-1 core, callable every turn for deeper recall. |
+| **Awareness** — what the agent knows happened | **Shared, both directions.** The chat (`user`) agent sees heartbeat actions; the heartbeat (`heartbeat`) agent sees chat activity. | Three layered mechanisms: (1) the **pending-mirror drain** — undrained proactive sends (`notifications.jsonl`) are delivered into the owner thread as one user-role block at the next user turn, so a reply to a briefing has its antecedent as real history; the reverse direction stays a live prompt slice (today's user chat into the heartbeat prompt — see [MEMORY.md](MEMORY.md) "Per-scope content"). (2) The **today view** (both scopes) — code-built from the episode store, exact and current — and **yesterday's daily log** (heartbeat), written the morning after. (3) **`search_history`** — Tier-1 core, callable every turn for deeper recall. |
 | **Behavior** — how the agent acts | **Scoped.** | The *only* per-scope difference is the behavioral framing in the assembled prompt. `heartbeat`: terse scheduled tick — act only if a task is due, stay silent (ack `notify=false`) if nothing is. `user`: conversational, proactive, in Jarvis's voice. The framing files and how the builder selects them per scope are owned by [MEMORY.md](MEMORY.md). |
 
 So for everything but the few scope-declared tools, scope gates neither tools nor knowledge — it swaps the behavioral preamble. A heartbeat tick and a chat turn that both "check the gym schedule" run identical tools against identical memory; they differ only in how chatty the result is and whether silence is an acceptable answer. Scope stays one shared code path, never a fork.
@@ -118,16 +118,18 @@ class JarvisState(AgentState):
     scope: str                                            # "user" | "heartbeat"; set on first turn, then stable
     active_skills: Annotated[set[str], _merge_skills]     # namespaces activated in this thread
     heartbeat_due_tasks: list[str] | None                 # heartbeat scope: which HEARTBEAT.md blocks to inject
+    last_user_turn_at: str                                # user scope: start of the latest turn (UTC ISO)
 ```
 
 | Field | Reducer | Lifetime |
 |---|---|---|
-| `messages` | `_add_and_trim` | Window of 50, trimmed **only when a write carries a `HumanMessage`** (a turn starting), and only by whole turns, so a call is never separated from its response. The previous turn is always kept, however long — a long turn followed by "continue" must still see what it is continuing. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
+| `messages` | `_add_and_trim` | Compacted by `compaction.py` past ~20k tokens (a record at the head + the last 3 turns; see [MEMORY.md](MEMORY.md) "Compaction"). Window of 50 as a backstop — a compaction record at the head is pinned and never trimmed — trimmed **only when a write carries a `HumanMessage`** (a turn starting), and only by whole turns, so a call is never separated from its response. The previous turn is always kept, however long — a long turn followed by "continue" must still see what it is continuing. Within a turn the window only grows — a turn may never evict its own input. Pruned to one checkpoint per thread by `PruningSqliteSaver`. |
 | `scope` | none (last-write-wins; only ever set once) | Per thread, stable for its life. |
-| `active_skills` | set union/difference: `activate_skill` adds, `deactivate_skill` removes, otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message. |
+| `active_skills` | `activate_skill` adds; an input of `set()` replaces it (the idle reset); otherwise persists | Persisted in the checkpoint, so activations **carry across turns** within a thread — the LLM does not re-activate every message — until the idle reset below. |
 | `heartbeat_due_tasks` | none (last-write-wins) | Overwritten every turn by `ask_jarvis`. `None` = inject the full HEARTBEAT.md; a list injects only those blocks (see [HEARTBEAT.md](HEARTBEAT.md)). Unused in user scope. |
+| `last_user_turn_at` | none (last-write-wins) | Written at the start of every user-scope turn by `ask_jarvis`. Never written in heartbeat scope. |
 
-`active_skills` decay (auto-clear after N hours of thread inactivity) is a recognized future enhancement and is **out of scope for this layer** — activations persist until explicitly deactivated or the thread is reset. See "Deferred" below.
+**Idle skill reset.** A user-scope turn that starts `SKILL_IDLE_RESET` (3h) or more after the previous user-scope turn — or on a thread with no recorded last turn — starts with `active_skills` empty (`ask_jarvis` passes `set()` in the turn input and logs the reset). The conversation itself is untouched; the model re-activates what the new request needs, in the same turn. Seeing earlier calls in the conversation, the model often calls a reset skill's tool directly: that call does not run (the skill's rules are not in the prompt yet), but the refusal activates the skill, so the next call has its rules and tools and repeats it — one extra round, never a tool run ahead of its rules. Gemini caches tool declarations ahead of the system prompt, so any tool-set change costs the cache for one call; after 3h of silence the cache has expired anyway, so the reset costs nothing, and there is no mid-conversation reset to churn the prefix. The heartbeat has no thread to reset: each run starts with its tasks' warm-start skills. Telemetry shows a reset as an empty `active_skills_start` after a turn that ended with skills.
 
 ---
 
@@ -158,7 +160,7 @@ One graph, compiled once at startup. Bindings (system prompt + tool set) are reb
       tool = registry.find(tc.name, scope, active_skills)
       if tool is None: → ToolMessage("not available; activate the skill first")
       result = tool.invoke(tc.args)
-      if result signals _activate/_deactivate: mutate new_active
+      if result signals _activate: add to new_active
     return {messages: tool_messages, active_skills: new_active}
 ```
 
@@ -217,9 +219,9 @@ without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
 
 ## Contracts
 
-### `activate_skill` / `deactivate_skill` (`tools/core/activate_skill.py`)
+### `activate_skill` (`tools/core/activate_skill.py`)
 
-The only tools whose return value mutates state. They return a sentinel dict the `tool_node` interprets; every other tool returns a plain string.
+The only tool whose return value mutates state. It returns a sentinel dict the `tool_node` interprets; every other tool returns a plain string. There is no deactivate tool: the model called one 2 times in three months against 90 activations, and the idle reset replaced it.
 
 ```python
 @tool
@@ -229,11 +231,6 @@ def activate_skill(namespaces: list[str]) -> dict:
     become available immediately, in this same turn."""
     return {"_activate": [...validated against registry namespaces...],
             "content": "Activated: media. Tools are now available."}
-
-@tool
-def deactivate_skill(namespaces: list[str]) -> dict:
-    """Drop a skill's tools from this conversation to shrink the surface."""
-    return {"_deactivate": [...], "content": "Deactivated: media."}
 ```
 
 Unknown namespaces are reported back in `content` (the LLM is told what *is* available) and never silently activated.
@@ -250,7 +247,7 @@ def delete_sonarr_series_with_files(title: str) -> str: ...
 | Registry API | Returns / does |
 |---|---|
 | `get_tools(scope, active_skills) -> list[BaseTool]` | All `core` tools + all tools whose namespace ∈ `active_skills`, minus tools whose registered `scopes` excludes this turn's scope. This is what `llm.bind_tools` receives. |
-| `find(name, scope, active_skills) -> BaseTool \| None` | Resolve a tool call, honoring activation and `scopes`; `None` if its skill isn't active (drives the "activate the skill first" `ToolMessage`). |
+| `find(name, scope, active_skills) -> BaseTool \| None` | Resolve a tool call, honoring activation and `scopes`; `None` if its skill isn't active (the tool node then refuses the call and activates the skill). |
 | `compact_skill_list(scope, active_skills) -> str` | The prompt block: one line per top-level skill, sub-skills indented under an *active* parent, + the "currently active" line. |
 | `import_all()` | Imported once at startup; importing each `tools/<ns>/*.py` runs the `@tool_register` side-effects. Replaces the hand-maintained imports in `tools/__init__.py`. |
 
@@ -330,7 +327,6 @@ What you should **not** need to touch when adding a skill:
 
 | Item | Decision |
 |---|---|
-| `active_skills` idle-timeout (auto-clear after N hours, e.g. 12h) | Out of scope. Activations persist until explicitly deactivated or the thread resets; decay is a future enhancement, not built here. |
 | Per-scope deny-lists (true tool restriction) | Not built. Add only if a concrete need appears; scope stays informational. |
 | `home` namespace | Not created until home-automation tools exist. |
 | File-driven prompt content (SOUL / AGENTS / USER), prompt assembly order, per-scope content selection, hot-reload | Owned by the memory/identity layer ([MEMORY.md](MEMORY.md)). This layer owns only the skill block, slotted into the builder's output. |

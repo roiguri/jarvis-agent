@@ -10,7 +10,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 - **Single-user**: designed for one owner (no multi-tenant routing)
 - **Runtime**: Python, hand-rolled LangGraph `StateGraph` agent (scoped tool registry + same-turn skill activation), Google Gemini model
-- **Persistence**: SQLite (LangGraph thread state, telemetry), JSONL logs, Markdown memory files
+- **Persistence**: SQLite (LangGraph thread state, telemetry, episode store), JSONL logs, Markdown memory files
 
 ---
 
@@ -24,6 +24,11 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   (reminders and wakes; see docs/architecture/TRIGGERS.md)
 ├── heartbeat_state.py     # code-owned HEARTBEAT.md parser, due-gate (any_due), last_run stamps (kept in the trigger store)
 ├── turn_context.py        # ambient per-turn ContextVars (CURRENT_SCOPE) — set by ask_jarvis, read by tools
+├── compaction.py          # older owner turns → one validated record at the window's head (post-turn job,
+│                          #   /compact, /context); see docs/architecture/MEMORY.md "Compaction"
+├── dream.py               # the morning job (/dream): yesterday's daily log (daily_log.py) and memory
+│                          #   suggestions (memory_suggestions.py, sent to the owner; memory unchanged) —
+│                          #   two separate model calls; MEMORY.md "Daily log" / "Memory suggestions"
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
@@ -44,10 +49,14 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   core/ is always-on; every other dir is an activatable skill, and a parent skill
 │                          #   may own zero tools and nest sub-skills (see "Add a new tool" below)
 ├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
+├── episodes/              # The episode store: everything that happened, recorded by code; search_history
+│                          #   and the today view read it (see docs/architecture/MEMORY.md "Episode store")
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
 │                          #   golden/ snapshots the prompt and tool schemas (fixtures/ stands in for memory)
+├── evals/                 # real-model behaviour scenarios, run by hand (python -m evals.run); cases/ hold
+│                          #   synthetic data only (public repo); baseline.json = committed pass rates
 └── DEVELOPMENT.md         # Operational/dev runbook (env, constants, systemd, firewall, local testing)
 
 /app/jarvis_memory/        # ONLY genuine memory: markdown the agent both reads AND writes via memory tools
@@ -57,7 +66,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── HEARTBEAT.md           # Active heartbeat task list (protected; edited via manage_heartbeat_task)
 ├── heartbeat/             # Per-task NOTES files (agent narrative state; machine last_run → jarvis_data)
 │   └── *.md
-├── daily/                 # Daily context logs (written by heartbeat)
+├── daily/                 # Daily logs: one per finished day, model-written the next morning (daily_log.py)
 │   └── daily_YYYY-MM-DD.md
 ├── threads.sqlite(+-wal,-shm)  # LangGraph checkpointer — deny-listed exception (path owned by LangGraph)
 └── *.txt / *.md           # Persistent memory files (Jarvis writes freely)
@@ -69,8 +78,11 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── agent/mirror_cursor.json        # pending-mirror drain cursor (agent.py; last mirrored notification ts)
 ├── observability/telemetry.sqlite  # telemetry store: turns, llm_calls, tool_calls, bound_tools, prompts;
 │                                   #   180-day, app-only (observability/), agent never reads
+├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
+│                                   #   read via search_history and the today view
+├── dream/state.json                # the morning job's last run date (catch-up after a restart)
 └── logs/
-    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL, Jarvis-readable via history tools
+    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
 
 /app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
                                                  #   absolute paths from gateway/channels/telegram/media_cache.py)
@@ -115,16 +127,18 @@ Assembly order:
 SOUL.md            (memory dir — user-curated identity; agent-writable w/ confirmation)
 prompts/AGENTS.md  (code — operating rules; outside the memory sandbox, deploy-only)
 USER.md            (memory dir — durable user profile; agent-writable, no confirm)
-─ user scope ──────────  _USER_FRAMING + today's daily log (proactive sends reach the
-                         thread as mirrored history via the pending-mirror drain, not the prompt)
+MEMORY.md          (memory dir — index of memory files; agent-maintained)
+─ user scope ──────────  _USER_FRAMING + today view (heartbeat activity
+                         from the episode store; proactive sends reach the thread as mirrored
+                         history via the pending-mirror drain, not the prompt)
 ─ heartbeat scope ─────  _HEARTBEAT_FRAMING + prompts/heartbeat.md + HEARTBEAT.md
-                         + today's user chat + yesterday's daily log
+                         + today's user chat + today view + yesterday's daily log
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
 ```
 
-**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. The daily log is still injected (richer per-day narrative) but is no longer the **sole** awareness bridge.
+**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. Yesterday reaches the heartbeat as its daily log, written by the morning job from the episode store.
 
-`MEMORY.md` is **not** injected — the agent reads it on demand via the memory tools (AGENTS.md instructs it to consult the index). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
+`MEMORY.md` is injected in both scopes, so the agent knows what memory files exist without a tool call. USER.md and MEMORY.md have size targets (4,000 / 8,000 chars) that the nightly consolidation keeps them under; writes are never refused for size, and the prompt includes at most 3× a target (`CORE_FILE_TARGETS` in `agent.py`). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
 
 ---
 
@@ -147,13 +161,13 @@ Protected files (cannot be deleted; `SOUL.md` additionally requires confirmation
 Full reference: **[docs/architecture/HEARTBEAT.md](docs/architecture/HEARTBEAT.md)** (tick pipeline, task grammar, gate semantics, authoring tool). The short version — `heartbeat.py` runs on the shared scheduler (`triggers/scheduler.py`) at the top of every hour (UTC; the phase is fixed, so a restart never re-phases the schedule), and **code decides when the model runs**:
 
 1. **Pre-LLM gate** (`heartbeat_state.any_due`): a task is due iff its cadence has elapsed per its code-owned `last_run` stamp (in `/app/jarvis_data/triggers/triggers.json`) — measured raw or with both ends floored to the tick lattice, whichever comes due first — AND its optional `due:` time/day window (Israel time) is open. Nothing due → the tick returns without any model call. Gate errors fail open (model runs with every task except gated ones). Due tasks with a `| gate:` run in code instead (docs/architecture/TRIGGERS.md "Gates"); if only those are due, no model call either.
-2. **Due-only prompt**: the turn runs with `scope="heartbeat"` on the `heartbeat` thread; `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note) plus tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately
+2. **Due-only prompt, no saved conversation**: the turn runs with `scope="heartbeat"` on `stateless_executor` (a graph with no checkpointer), so a tick never replays earlier ticks. `build_system_prompt` injects only the due HEARTBEAT.md task blocks (non-due collapse to a one-line note), the due tasks' notes files, the today view (what earlier ticks and wakes did today, failures included), tick rules, today's user-thread chat (already-handled detection), and yesterday's daily log. A tick starts with the skills its due tasks ended their last stamped run with (warm start, kept next to `last_run`); it can activate more
 3. The agent works the due tasks (notes in `heartbeat/*.md`), ends the tick with a `heartbeat_respond(acted_tasks, notify, summary, notification_text, ...)` ack (the reply text is just a terse tick log). Delivery keys off the ack and goes through the gateway Outbox (`default_outbox().notify_owner(..., event="heartbeat")` — send + log-on-success); stamping runs **after** delivery settles — only acted tasks advance their stamp, and a failed send skips stamping so the tasks re-run next tick
-4. The daily log (`daily/daily_YYYY-MM-DD.md`, heartbeat activity + today's conversations + proactive sends) is its own `daily-log` task in HEARTBEAT.md (every 3h), not a side effect of every tick
+4. There is no daily log task: the morning job (`dream.py`) writes yesterday's daily log from the episode store in one model call; the heartbeat reads it as "yesterday", `/logs` shows it
 
 Task authoring goes through `manage_heartbeat_task` (validated before write, no confirmation; heartbeat turns may not `create`). Run timestamps are code-owned; the agent never writes a `last_run:` line.
 
-The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + today's chat; user gets conversational framing + today's daily log + today's heartbeat notifications. Awareness now flows both ways via live log injection (chat history into heartbeat, notifications into user); the daily log remains as a richer per-day narrative.
+The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool registry, but the prompt **differs by scope**: heartbeat gets the terse framing + `heartbeat.md` + today's chat; user gets conversational framing + the today view. Awareness flows both ways via live injection (today's chat into heartbeat, sends into the user thread as mirrored history), and the heartbeat also gets yesterday's daily log.
 
 ---
 
@@ -161,10 +175,10 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 
 | Thread ID | Purpose |
 |-----------|---------|
-| `owner` | The one owner conversation — all channels stamp it (50-message window) |
-| `heartbeat` | Scheduled background checks and scheduled wakes (separate window) |
+| `owner` | The one owner conversation — all channels stamp it (compacted past ~20k tokens to a record + the last 3 turns; 50-message trim as a backstop) |
+| `heartbeat` | Scheduled background checks and scheduled wakes — no saved conversation (each run starts fresh); the id still tags their records |
 
-Only user-scope turns write to `chat_history.jsonl` (tagged by `thread_id`); heartbeat and wake turns are not logged there. Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn), and the daily log adds a richer per-day narrative (heartbeat-written, lagging).
+Only user-scope turns write to `chat_history.jsonl` (tagged by `thread_id`); heartbeat and wake turns are not logged there. Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn), and the heartbeat also gets yesterday's daily log.
 
 ---
 

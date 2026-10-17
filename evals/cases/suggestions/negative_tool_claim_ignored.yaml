@@ -1,0 +1,10 @@
+description: "A complaint that a tool is broken is not suggested as memory."
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "10:00", owner: "the step counter tool is broken, it never shows my steps", jarvis: "Sorry about that — I'll check again later."}
+  - {time: "18:00", owner: "I've started learning Spanish, two lessons a week on Zoom", jarvis: "Nice — Spanish twice a week on Zoom."}
+expect:
+  sends: 1
+  message_contains: ["Spanish"]
+  message_not_matches: ["broken", "doesn't work", "does not work"]
