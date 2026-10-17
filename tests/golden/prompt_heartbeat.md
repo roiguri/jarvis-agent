@@ -93,12 +93,10 @@ Fixture preamble: kept verbatim above the task blocks.
 [08:15] user: already did the inbox check myself
 [08:16] assistant: Noted, skipping it.
 
---- Yesterday, Monday 2026-03-09 ---
-In the background:
-- 20:00 evening-check: sent the evening check-in [messaged you]
-Conversation (Roi's messages and what was sent to him):
-- 20:00 sent: Evening check-in: how did the day go?
-- 20:30 Roi: Good, long walk after work.
+--- Yesterday's log (daily_2026-03-09.md) ---
+# 2026-03-09 (fixture: yesterday's log, shown in the heartbeat scope)
+
+- 21:00 evening check-in.
 
 ## Available skills (call activate_skill to load tools for this conversation):
 - collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps

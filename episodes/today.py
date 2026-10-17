@@ -7,9 +7,10 @@ out. Shown in both scopes: the user conversation learns what happened in the
 background, and a tick (which keeps no conversation) learns what earlier ticks
 did today.
 
-The day view: the same background lines for any day, plus the owner's messages
-and what Jarvis sent him that day. The heartbeat reads yesterday's; /logs shows
-any day's.
+The day view: the same background lines for a day, plus the conversation —
+the owner's messages, Jarvis's replies and what Jarvis sent him. /logs shows
+today's; a finished day has its model-written daily log (daily_log.py), which
+also reads the background lines.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from timeutils import ISRAEL_TZ
 from episodes import store
 
 MAX_LINES = 20
-DAY_CONVERSATION_LINES = 40
+DAY_CONVERSATION_LINES = 60
 DAY_TEXT_CAP = 160
 
 logger = logging.getLogger(__name__)
@@ -103,17 +104,19 @@ def _background_lines(start: datetime, end: datetime | None) -> list[str]:
 
 
 def _conversation_lines(start: datetime, end: datetime) -> list[str]:
-    """The owner's messages and Jarvis's own sends between ``start`` and
-    ``end``, one shortened line each, the newest DAY_CONVERSATION_LINES."""
+    """The owner's messages, Jarvis's replies and its own sends between
+    ``start`` and ``end``, one shortened line each, the newest
+    DAY_CONVERSATION_LINES."""
     rows = store.rows(
         "SELECT ts, role, content FROM episodes WHERE ts >= ? AND ts < ? AND "
-        "((role = 'owner' AND scope = 'user' AND source <> 'slash_command') OR role = 'jarvis_sent') "
+        "((role IN ('owner', 'jarvis') AND scope = 'user' AND source <> 'slash_command') "
+        "OR role = 'jarvis_sent') "
         "ORDER BY ts, id",
         (start.isoformat(), end.isoformat()),
     )
     lines = []
     for r in rows[-DAY_CONVERSATION_LINES:]:
-        who = "Roi" if r["role"] == "owner" else "sent"
+        who = {"owner": "Roi", "jarvis": "Jarvis"}.get(r["role"], "sent")
         text = " ".join(r["content"].split())
         if len(text) > DAY_TEXT_CAP:
             text = text[:DAY_TEXT_CAP - 1] + "…"
@@ -126,24 +129,6 @@ def day_view(day: date) -> tuple[list[str], list[str]]:
     as bare text — each caller adds its own bullets."""
     start, end = _bounds(day)
     return _background_lines(start, end), _conversation_lines(start, end)
-
-
-def yesterday(now: datetime | None = None) -> str:
-    """Yesterday's day view as a prompt section, or "" when nothing happened."""
-    try:
-        day = (now or datetime.now(timezone.utc)).astimezone(ISRAEL_TZ).date() - timedelta(days=1)
-        background, conversation = day_view(day)
-    except Exception:
-        logger.exception("yesterday view failed; prompt goes without it")
-        return ""
-    if not (background or conversation):
-        return ""
-    parts = [f"--- Yesterday, {day:%A %Y-%m-%d} ---"]
-    if background:
-        parts += ["In the background:", *(f"- {line}" for line in background)]
-    if conversation:
-        parts += ["Conversation (Roi's messages and what was sent to him):", *(f"- {line}" for line in conversation)]
-    return "\n".join(parts)
 
 
 def _hm(ts: str) -> str:

@@ -1,5 +1,5 @@
 """Morning memory suggestions: what the model reads, when it is not called,
-the note, and the once-a-day schedule."""
+and the note."""
 
 import asyncio
 import json
@@ -122,20 +122,6 @@ def test_a_failed_call_is_reported_not_raised(model, fake_outbox):
     llm.script.append(RuntimeError("504"))
     assert asyncio.run(ms.send(DAY)) == "failed"
     assert fake_outbox.sent == []
-
-
-def test_runs_once_a_day_and_catches_up_after_a_restart(model, fake_outbox, monkeypatch):
-    seed_day()
-    model("Facts\n1. ...")
-    monkeypatch.setattr(ms, "datetime", type("D", (datetime,), {"now": classmethod(lambda c, tz=None: NOW)}))
-    assert ms.catch_up_due(NOW)
-    asyncio.run(ms.run_scheduled())
-    asyncio.run(ms.run_scheduled())
-    assert len(fake_outbox.sent) == 1, "the second run the same day does nothing"
-    assert not ms.catch_up_due(NOW)
-    assert not ms.catch_up_due(datetime(2026, 10, 17, 4, 0, tzinfo=timezone.utc)), "before 08:30"
-    assert ms.catch_up_due(datetime(2026, 10, 17, 6, 0, tzinfo=timezone.utc)), "a new day"
-    assert not ms.catch_up_due(datetime(2026, 10, 17, 9, 30, tzinfo=timezone.utc)), "past noon"
 
 
 def test_the_mirror_carries_the_whole_note():

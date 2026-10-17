@@ -60,7 +60,7 @@ def bootstrap() -> str:
 class Result:
     calls: list[dict] = field(default_factory=list)   # {"tool", "args"}
     ack: dict | None = None
-    reply: str = ""                                    # a chat case's reply text
+    reply: str = ""                                    # a chat case's reply, a daily_log case's log
     sends: list[dict] = field(default_factory=list)   # {"event", "text"}
     input_tokens: int = 0
     cache_read_tokens: int = 0
@@ -320,7 +320,7 @@ def run_case(case: dict) -> Result:
     now = case_now(case)
     _reset()
     _seed(case, now)
-    if case.get("kind") in ("chat", "suggestions"):
+    if case.get("kind") in ("chat", "suggestions", "daily_log"):
         _seed_chat(case, now)
     seeded_max = (episode_store.rows("SELECT MAX(id) AS m FROM episodes") or [{"m": 0}])[0]["m"] or 0
 
@@ -352,6 +352,12 @@ def run_case(case: dict) -> Result:
 
             patches.set(memory_suggestions, "datetime", frozen.datetime)
             asyncio.run(memory_suggestions.send(now.date()))
+        elif case.get("kind") == "daily_log":
+            import daily_log
+
+            patches.set(daily_log, "datetime", frozen.datetime)
+            asyncio.run(daily_log.write(now.date()))
+            result.reply = daily_log.read(now.date()) or ""
         elif case.get("kind", "tick") == "wake":
             from triggers import store as trigger_store
             from triggers.model import ORIGIN_JARVIS, At, Trigger, Turn

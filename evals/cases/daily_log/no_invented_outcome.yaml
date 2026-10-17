@@ -1,0 +1,8 @@
+description: A request left unanswered is logged as open, not as done.
+kind: daily_log
+time: "23:30"
+conversation:
+  - {time: "19:00", owner: "can you book me into the 07:00 crossfit class on Sunday?", jarvis: "I'll check the schedule and get back to you on the Sunday 07:00 class."}
+expect:
+  reply_matches: ["## Notes[\\s\\S]*(crossfit|class|sunday)"]
+  reply_not_matches: ["(was|been|is|got|successfully) (booked|registered|confirmed|reserved)", "booked (him|roi|you) into"]

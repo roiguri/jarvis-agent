@@ -250,11 +250,21 @@ after a week of suggestions the owner likes.
       entire conversation with quotes, and one turning a single Sunday run into a schedule change;
       the prompt now requires quotes to come from [owner] lines, forbids filling a quiet day, and
       says one event does not change a routine.
-- [x] The daily log becomes code-only: the heartbeat gets a code-built "yesterday" view from the
+- [x] ~~The daily log becomes code-only~~ (reversed below, owner 2026-10-17): the heartbeat gets a code-built "yesterday" view from the
       episode store instead of yesterday's daily file; the user scope stops injecting today's daily
       log (the today view covers it); no daily files are written (existing ones stay); `/logs`
       reads the store; the weekly memory audit stops writing its report into the log (deploy step
       below). The `daily_log_written_quietly` eval is removed with the task.
+- [x] The daily log is written by the morning job (owner, 2026-10-17, after the code-only view read
+      as a bare list of questions): `dream.py` at 08:30 makes two separate model calls for
+      yesterday, the daily log (`daily_log.py`, `prompts/daily_log.md`) and the suggestions. The log
+      reads the day's background lines and conversation from the episode store, goes to the same
+      `daily/daily_YYYY-MM-DD.md` files as before, and is what the heartbeat sees as "yesterday".
+      `/logs <date>` shows it; `/logs today` shows the code-built day view, now with Jarvis's
+      replies. `/dream` runs both. A cut-off answer (finish reason `MAX_TOKENS`) is not written.
+      Evals: 4 cases in `evals/cases/daily_log/`, all 3/3.
+- [ ] Decide the suggestions' output cap: the first staging note (2026-10-17) was cut off when 3,931
+      of its 4,096 output tokens went to thinking (owner: discuss after the daily log).
 - [x] AGENTS.md's daily-log line removed (it named the chat- and notification-history tools S2
       replaced with `search_history`, whose own description covers it); its "sliding window of the
       last 50 messages" line, wrong since S5, now says older conversation arrives as a summary; the
@@ -266,7 +276,7 @@ after a week of suggestions the owner likes.
       daily log AND send the report" to sending it only. Same edits on staging, with the owner's
       go-ahead.
 - [ ] Verify: on staging, a seeded day produces sensible suggestions in the morning note; a day with
-      no conversation sends "nothing new".
+      no conversation sends "nothing new"; `/dream yesterday` writes a log `/logs yesterday` shows.
 - *Later, in prod, after a week of suggestions the owner likes:* give the job the memory tools and
   let it apply them, running `backup_state.sh` before each run as the restore point. Decided then,
   on the evidence.

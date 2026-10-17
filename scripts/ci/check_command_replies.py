@@ -45,6 +45,8 @@ CASES: list[tuple[str, str]] = [
     ("/heartbeat morning", "raw"), # per-task notes verbatim
     ("/logs", "strict"),
     ("/logs 32.13", "strict"),     # invalid date → usage help
+    ("/logs 1.1.2026", "raw"),     # a finished day: its daily log verbatim
+    ("/logs 2.1.2026", "strict"),  # a finished day without a log
     ("/usage", "strict"),
     ("/usage week", "strict"),
     ("/usage today heartbeat", "strict"),
@@ -54,7 +56,7 @@ CASES: list[tuple[str, str]] = [
     ("/tz Nowhere/Nope", "strict"),  # invalid zone → usage help
     ("/context", "strict"),            # empty branch on a fresh root; the record itself is raw
     ("/compact", "strict"),
-    ("/dream", "strict"),              # no conversation on a fresh root: no model call
+    ("/dream", "strict"),              # nothing happened on a fresh root: no model call
     ("/dream someday", "strict"),      # invalid → usage help
     ("/triggers", "strict"),
     ("/triggers cancel nope", "strict"),  # unknown id
@@ -71,6 +73,7 @@ MEMORY_SEED = {
     "notes.md": "Some note.\n",
     "HEARTBEAT.md": "Heartbeat tasks.\n\n- morning · every 4h\n",
     "heartbeat/morning.md": "# morning\n\nlast_run: 2026-07-30T06:00:00Z\n",
+    "daily/daily_2026-01-01.md": "# Daily Log - Thursday, January 1, 2026\n\n## Conversations\n- A note.\n",
 }
 
 TURNS_SEED = [

@@ -1,5 +1,9 @@
 {
   "cases": {
+    "background_only_day": {
+      "passed": 3,
+      "runs": 3
+    },
     "chat_rule_followed": {
       "passed": 3,
       "runs": 3
@@ -24,6 +28,10 @@
       "passed": 3,
       "runs": 3
     },
+    "log_sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
     "morning_fact_recalled": {
       "passed": 3,
       "runs": 3
@@ -32,11 +40,19 @@
       "passed": 3,
       "runs": 3
     },
+    "no_invented_outcome": {
+      "passed": 3,
+      "runs": 3
+    },
     "one_off_ignored": {
       "passed": 3,
       "runs": 3
     },
     "open_request_survives": {
+      "passed": 3,
+      "runs": 3
+    },
+    "outcomes_recorded": {
       "passed": 3,
       "runs": 3
     },
@@ -105,6 +121,6 @@
       "runs": 3
     }
   },
-  "date": "2026-10-16",
+  "date": "2026-10-17",
   "model": "gemini-3-flash-preview"
 }
