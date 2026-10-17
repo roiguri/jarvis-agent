@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -55,6 +56,35 @@ class _Batch:
 # Message formatters (deterministic — Markdown, no LLM)
 # ---------------------------------------------------------------------------
 
+_EPISODE_CODE = re.compile(r"^S\d+E(\d+)\b")
+MAX_LISTED = 10   # entries past this collapse to "+N more"
+
+
+def _episode_list(items: list[str]) -> str:
+    """Which episodes a batch holds: numbers ascending, a run of three or more
+    as a range (E01–E08), then any episode without a number by its name."""
+    numbers, names = set(), []
+    for item in items:
+        m = _EPISODE_CODE.match(item)
+        if m:
+            numbers.add(int(m.group(1)))
+        else:
+            names.append(item)
+    runs: list[list[int]] = []
+    for n in sorted(numbers):
+        if runs and n == runs[-1][-1] + 1:
+            runs[-1].append(n)
+        else:
+            runs.append([n])
+    entries = []
+    for run in runs:
+        entries += [f"E{run[0]:02d}–E{run[-1]:02d}"] if len(run) >= 3 else [f"E{n:02d}" for n in run]
+    entries += names
+    if len(entries) > MAX_LISTED:
+        entries = entries[:MAX_LISTED] + [f"+{len(entries) - MAX_LISTED} more"]
+    return ", ".join(entries)
+
+
 def _format_batch_ready_message(key: str, batch: _Batch) -> str:
     count = len(batch.ready)
     nfail = len(batch.failed)
@@ -75,14 +105,15 @@ def _format_batch_ready_message(key: str, batch: _Batch) -> str:
             f"\nWatch at {JELLYFIN_PUBLIC}"
         )
 
+    episodes = _episode_list([name for name, _ in batch.ready])
     if batch.expected > 0 and nfail == 0 and count >= batch.expected:
         body = f"Season {season_num} is ready on Jellyfin. ({count} episodes)"
     elif batch.expected > 0:
-        body = f"Season {season_num} — {count} of {batch.expected} episodes ready on Jellyfin."
+        body = f"Season {season_num} — {count} of {batch.expected} episodes ready on Jellyfin: {episodes}."
         if nfail:
             body += f" ({nfail} failed)"
     else:
-        body = f"Season {season_num} — {count} episodes ready on Jellyfin."
+        body = f"Season {season_num} — {count} episodes ready on Jellyfin: {episodes}."
 
     return f"**{series}** — {body}\nWatch at {JELLYFIN_PUBLIC}"
 
@@ -106,7 +137,8 @@ def _format_batch_upgrade_message(key: str, batch: _Batch) -> str:
             f"\nWatch at {JELLYFIN_PUBLIC}"
         )
     return (
-        f"**{series}** — Season {season_num} — {count} episodes upgraded to better quality on Jellyfin."
+        f"**{series}** — Season {season_num} — {count} episodes upgraded to better quality on Jellyfin: "
+        f"{_episode_list([name for name, _ in batch.upgraded])}."
         f"\nWatch at {JELLYFIN_PUBLIC}"
     )
 
