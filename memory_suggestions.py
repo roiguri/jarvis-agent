@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 NOTHING = "Nothing to suggest."
 JOB = "memory_suggestions"          # names the send in its notification metadata
 TIMEOUT_S = 180
-MAX_TOKENS = 4096
+MAX_TOKENS = 16384   # the model's thinking counts against it too
 
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "memory_suggestions.md")
 
@@ -125,7 +125,8 @@ def build_input(day: date, today: date, transcript: str) -> str:
 def compose(day: date, now: datetime | None = None) -> str | None:
     """The note for ``day``, or None when there is nothing to send: no owner
     message that day, or the model found nothing worth suggesting. Raises if
-    the model call fails."""
+    the model call fails or stops at the output cap."""
+    import agent
     from observability import telemetry
 
     now = now or datetime.now(timezone.utc)
@@ -143,7 +144,10 @@ def compose(day: date, now: datetime | None = None) -> str | None:
         except Exception as e:
             telemetry.record_llm_call(None, latency_ms=_ms_since(t0), error=f"{type(e).__name__}: {e}")
             raise
-        telemetry.record_llm_call(response, latency_ms=_ms_since(t0))
+        reason = agent._finish_reason(response)
+        telemetry.record_llm_call(response, latency_ms=_ms_since(t0), finish_reason=reason)
+        if reason == "MAX_TOKENS":
+            raise RuntimeError(f"memory suggestions for {day} stopped at the output cap")
     text = _text(response.content).strip()
     if not text or text.rstrip(".").lower() == NOTHING.rstrip(".").lower():
         logger.info("memory suggestions: nothing to suggest for %s", day)

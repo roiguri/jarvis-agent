@@ -124,6 +124,14 @@ def test_a_failed_call_is_reported_not_raised(model, fake_outbox):
     assert fake_outbox.sent == []
 
 
+def test_a_cut_off_note_is_not_sent(monkeypatch, fake_outbox):
+    seed_day()
+    llm = FakeLLM([AIMessage(content="Facts\n1. USER.md: Add", response_metadata={"finish_reason": "MAX_TOKENS"})])
+    monkeypatch.setattr(ms, "_model", lambda: llm)
+    assert asyncio.run(ms.send(DAY)) == "failed"
+    assert fake_outbox.sent == []
+
+
 def test_the_mirror_carries_the_whole_note():
     note = "🧠 Memory suggestions\n" + "x" * 5000
     with open(pending_mirrors._NOTIF_LOG, "w", encoding="utf-8") as f:
