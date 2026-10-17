@@ -197,6 +197,9 @@ def _empty_bucket(key: str) -> dict:
         # records written before the field existed, and for non-thinking models.
         "reasoning_tokens": 0,
         "total_tokens": 0,
+        # Heartbeat ticks, and those that sent the owner nothing. Only a tick can
+        # be a no_action turn, so the count is read against ticks, not turns.
+        "heartbeat_turns": 0,
         "no_action_count": 0,
         # Turns that failed (outcome `failed`, or any error on rows older than
         # the outcome field). A budget stop is counted apart, not as an error.
@@ -221,7 +224,7 @@ def summarize_usage(
     scope_filter: str | None = None,
 ) -> list[dict]:
     """Group + roll up turns in [since, until). Returns rows sorted ascending
-    by group key. Each row also carries ``no_action_rate`` for convenience.
+    by group key.
 
     Rows carry ``unpriced_models`` (sorted list): models whose tokens fell
     through to _ZERO_PRICE and so contributed nothing to ``usd_cost``. A
@@ -244,6 +247,8 @@ def summarize_usage(
         key = _bucket_key(t, group_by)
         b = buckets.setdefault(key, _empty_bucket(key))
         b["turns"] += 1
+        if t.get("scope") == "heartbeat":
+            b["heartbeat_turns"] += 1
         b["llm_calls"] += int(t.get("llm_calls") or 0)
         b["tool_calls"] += int(t.get("tool_calls") or 0)
         b["input_tokens"] += int(t.get("input_tokens") or 0)
@@ -276,7 +281,6 @@ def summarize_usage(
         )
     rows = sorted(buckets.values(), key=lambda r: r["group"])
     for r in rows:
-        r["no_action_rate"] = (r["no_action_count"] / r["turns"]) if r["turns"] else 0.0
         r["unpriced_models"] = sorted(r["unpriced_models"])
     return rows
 
@@ -340,7 +344,7 @@ def _unpriced_note(models: list[str]) -> str:
 
 
 def _extras(
-    no_action: int, errors: int, unpriced: list[str],
+    no_action: int, ticks: int, errors: int, unpriced: list[str],
     wrapped_up: int = 0, exhausted: int = 0, exhausted_by: dict | None = None,
 ) -> list[str]:
     """The optional trailing annotations shared by the totals block and each
@@ -348,7 +352,7 @@ def _extras(
     block renders them as a standalone line, a row appends them inline."""
     parts = []
     if no_action:
-        parts.append(f"{no_action} NO_ACTION")
+        parts.append(f"{no_action} of {ticks} tick{'s' if ticks != 1 else ''} sent nothing")
     if errors:
         parts.append(f"{errors} error{'s' if errors != 1 else ''}")
     if exhausted:
@@ -371,7 +375,7 @@ def _row_line(r: dict) -> str:
     one line. Same reasoning as the /help handler.
     """
     parts = _extras(
-        r.get("no_action_count", 0), r.get("errors", 0), r.get("unpriced_models") or [],
+        r.get("no_action_count", 0), r.get("heartbeat_turns", 0), r.get("errors", 0), r.get("unpriced_models") or [],
         r.get("wrapped_up", 0), r.get("budget_exhausted", 0), r.get("exhausted_by"),
     )
     return (
@@ -393,7 +397,7 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
         - **N** turns · N LLM calls · N tool calls
         - **IN** in (P% cached) → **OUT** out (P% thinking)
         - **$USD** total
-        - N NO_ACTION · N errors · N stopped early (N steps, …) · N wrapped up
+        - N of N ticks sent nothing · N errors · N stopped early (N steps, …) · N wrapped up
                                             (each omitted when zero)
 
         **Breakdown**
@@ -414,7 +418,7 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
     ``telemetry_errors`` (model calls whose input could not be measured) adds a
     '⚠ N telemetry errors' line when non-zero, empty periods included.
 
-    `extras` carries NO_ACTION / error counts, the turn-budget outcomes (turns
+    `extras` carries the heartbeat ticks that sent nothing (out of all ticks), error counts, the turn-budget outcomes (turns
     stopped early by a limit, with the limit, and turns that wrapped up after
     the notice) and, when any model in the period
     is missing from MODEL_PRICES, an '⚠ unpriced' marker — without it a $0.00
@@ -440,6 +444,7 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
     totals_llm = sum(r["llm_calls"] for r in rows)
     totals_tools = sum(r["tool_calls"] for r in rows)
     totals_no_action = sum(r["no_action_count"] for r in rows)
+    totals_ticks = sum(r.get("heartbeat_turns", 0) for r in rows)
     totals_errors = sum(r["errors"] for r in rows)
     totals_wrapped = sum(r.get("wrapped_up", 0) for r in rows)
     totals_exhausted = sum(r.get("budget_exhausted", 0) for r in rows)
@@ -451,7 +456,7 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
 
     totals_unpriced = sorted({m for r in rows for m in (r.get("unpriced_models") or [])})
     extras_parts = _extras(
-        totals_no_action, totals_errors, totals_unpriced,
+        totals_no_action, totals_ticks, totals_errors, totals_unpriced,
         totals_wrapped, totals_exhausted, totals_exhausted_by,
     )
 
