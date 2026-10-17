@@ -44,7 +44,7 @@ The system prompt is rebuilt from files on **every LLM call** (`_llm_node` → `
 - **Estimated system-prompt totals:**
   - User scope: ≈ 1.7k + 3.9k + 1.4k + 1.7k (daily log) + skill block ≈ **9–10 KB, about 2.5k tokens**.
   - Heartbeat scope: adds heartbeat.md (3.6 KB), the filtered HEARTBEAT.md (≤5.4 KB) and the chat slice (up to 60×~250 B ≈ 15 KB on a heavy chat day) ≈ **12–30 KB, about 3–7.5k tokens**.
-  - Earlier reading for comparison: the 08-06 inventory put the system prompt at "~4.5k of a ~42.8k call". — [PROBLEMS.md E9 (L267-270)](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - Earlier reading for comparison: the 08-06 inventory put the system prompt at "~4.5k of a ~42.8k call". — [PROBLEMS.md E9 (L267-270)](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 - **Tool schemas sent every call** (golden snapshots, bytes of JSON):
 
   | Schema set | Bytes | When bound |
@@ -68,12 +68,12 @@ The system prompt is rebuilt from files on **every LLM call** (`_llm_node` → `
   | 2026-09-29..10-05 | heartbeat | 11.1 | 69.1k | 19.9k | — | — | 53% | — |
 
   In the 3-day window, 29 of 33 heartbeat turns had `no_action=true`. In the 7-day window, 72 of 78 did. — computed from `/app/jarvis_data/logs/turns.jsonl` (2,355 parseable rows, 1 malformed row skipped)
-- **PROBLEMS.md's own 10-03 reading, for comparison:** user 110.3k input/turn; heartbeat 62.1k input/turn and 3.29 LLM calls/turn; 49% cache-read share. — [PROBLEMS.md §0 (L41-52)](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+- **PROBLEMS.md's own 10-03 reading, for comparison:** user 110.3k input/turn; heartbeat 62.1k input/turn and 3.29 LLM calls/turn; 49% cache-read share. — [PROBLEMS.md §0 (L41-52)](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 - **Problems touched:**
-  - A4/A5: the full history and in-turn tool results are re-sent on every call. A4 measured the heartbeat checkpoint at ~63% of each call's input; A4+A5 together put ~81% of a call's input as already-seen material. — [PROBLEMS.md L82-88](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - A10: the heartbeat carries SOUL/USER/yesterday's log (`ASSERTED`). — [PROBLEMS.md L112-115](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - B1 is `RESOLVED`, and B2 is `ASSERTED`, with its after-deploy cache reading not yet taken. — [PROBLEMS.md L121-137](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - C1: injected files are uncapped. — [PROBLEMS.md L164-166](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - A4/A5: the full history and in-turn tool results are re-sent on every call. A4 measured the heartbeat checkpoint at ~63% of each call's input; A4+A5 together put ~81% of a call's input as already-seen material. — [PROBLEMS.md L82-88](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - A10: the heartbeat carries SOUL/USER/yesterday's log (`ASSERTED`). — [PROBLEMS.md L112-115](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - B1 is `RESOLVED`, and B2 is `ASSERTED`, with its after-deploy cache reading not yet taken. — [PROBLEMS.md L121-137](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - C1: injected files are uncapped. — [PROBLEMS.md L164-166](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 
 ### Inferences
 - The prompt is assembled per call but stays stable within a day, so the remaining cache-relevant churn comes from history growth inside a turn (each tool round appends) and from the turn-start trim, not from the system prompt.
@@ -101,7 +101,7 @@ Each thread keeps one LangGraph checkpoint holding a message list. A custom redu
 
   — [agent.py:45](/app/jarvis_staging/code/agent.py), [agent.py:137-162](/app/jarvis_staging/code/agent.py)
 - **Storage bound.** Stored state is "the cap plus up to two turns' traffic", because a turn's own traffic is never trimmed mid-turn. — [agent.py:42-44](/app/jarvis_staging/code/agent.py), [RUNTIME.md:125](/app/jarvis_staging/code/docs/architecture/RUNTIME.md)
-- **Why turn-boundary trimming.** It fixed B3. The old per-write slice evicted a turn's own HumanMessage at about 40 tool calls, causing `400 INVALID_ARGUMENT` (7 prod incidents 2026-09-09..09-20). Staging later completed a 101-tool-call turn. — [PROBLEMS.md L139-149](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md), [TURN_LIFECYCLE_PLAN.md slice 1 (L253)](/app/jarvis_staging/code/docs/plans/archive/TURN_LIFECYCLE_PLAN.md)
+- **Why turn-boundary trimming.** It fixed B3. The old per-write slice evicted a turn's own HumanMessage at about 40 tool calls, causing `400 INVALID_ARGUMENT` (7 prod incidents 2026-09-09..09-20). Staging later completed a 101-tool-call turn. — [PROBLEMS.md L139-149](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md), [TURN_LIFECYCLE_PLAN.md slice 1 (L253)](/app/jarvis_staging/code/docs/plans/archive/TURN_LIFECYCLE_PLAN.md)
 - **One checkpoint row per thread.** `PruningSqliteSaver.put` deletes all older checkpoints and writes for the thread after each put, so there is no checkpoint history to recover trimmed messages from. — [agent.py:203-218](/app/jarvis_staging/code/agent.py)
 - **Live checkpoint sizes** (prod `threads.sqlite`, `length(checkpoint)`):
 
@@ -113,7 +113,7 @@ Each thread keeps one LangGraph checkpoint holding a message list. A custom redu
   | `telegram_508317402` (stale pre-spine thread) | 48,106 |
   | `local_dev_test_01` | 23,218 |
 
-  On disk the DB is 101.7 MB with a 68.0 MB WAL, which is the disk-footprint issue #12 and is deliberately out of scope for A4. — sqlite read of `/app/jarvis_memory/threads.sqlite`; [PROBLEMS.md L351-353](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  On disk the DB is 101.7 MB with a 68.0 MB WAL, which is the disk-footprint issue #12 and is deliberately out of scope for A4. — sqlite read of `/app/jarvis_memory/threads.sqlite`; [PROBLEMS.md L351-353](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 - **What the model is told.** AGENTS.md says "Your short-term memory is a sliding window of the last 50 messages (~25 exchanges). Anything older is no longer in your context." It points to the daily log, the chat-history tool ("filter by start time") and the notification-history tool. — [prompts/AGENTS.md:17-22](/app/jarvis_staging/code/prompts/AGENTS.md)
 - **What survives trimming:**
   - `chat_history.jsonl` receives only the raw user text (before the stamp) and the final assistant reply text, both from `main.py`. Tool calls and results are never logged there. — [main.py:56-66](/app/jarvis_staging/code/main.py), [main.py:103-105](/app/jarvis_staging/code/main.py)
@@ -123,11 +123,11 @@ Each thread keeps one LangGraph checkpoint holding a message list. A custom redu
 - **Media stripping.** Base64 images become `[image attached]` and audio/video/PDF blobs are dropped (the text hint stays) once a message is in existing history. — [agent.py:101-134](/app/jarvis_staging/code/agent.py)
 - **Failed turns.** A failed turn writes a failure-note AIMessage, and the HumanMessage too if it was unsaved, into the thread so the next turn knows what happened. — [agent.py:978-1001](/app/jarvis_staging/code/agent.py)
 - **Problems touched:**
-  - A4: re-sent history. — [PROBLEMS.md L82-84](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - A4: re-sent history. — [PROBLEMS.md L82-84](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
   - B3: `RESOLVED`.
-  - C3: history beyond the window is reachable only by guessing a time range. — [PROBLEMS.md L172-174](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - F2: a polluted window re-seeds itself. — [PROBLEMS.md L286-289](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - #81: unrecoverable truncation, mapped as a complement of C1/C3. — [PROBLEMS.md L342-343](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - C3: history beyond the window is reachable only by guessing a time range. — [PROBLEMS.md L172-174](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - F2: a polluted window re-seeds itself. — [PROBLEMS.md L286-289](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - #81: unrecoverable truncation, mapped as a complement of C1/C3. — [PROBLEMS.md L342-343](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 
 ### Inferences
 - The window is count-based (messages), not token-based. One tool-heavy turn can hold most of the 50 slots and carry large tool results, which is consistent with a 439k-input user turn in the 3-day window.
@@ -180,10 +180,10 @@ Core memory is markdown in `/app/jarvis_memory/` (about 10 KB of protected files
 - **USER.md** is agent-writable without confirmation, and AGENTS.md says to keep it accurate. — [prompts/AGENTS.md:21](/app/jarvis_staging/code/prompts/AGENTS.md)
 - **Placement principle.** `jarvis_memory/` holds only markdown the agent both reads and writes. Code-owned or tool-opaque state lives in `jarvis_data/`, and deploy-only prompts live in `prompts/`. — [MEMORY.md:15-34](/app/jarvis_staging/code/docs/architecture/MEMORY.md)
 - **Problems touched:**
-  - C1: uncapped injection. — [PROBLEMS.md L164-166](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - C2: recall requires knowing the filename. — [PROBLEMS.md L168-170](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - C4: nothing pushes back on growth. — [PROBLEMS.md L176-181](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - D1: notes files drift. — [PROBLEMS.md L215-219](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - C1: uncapped injection. — [PROBLEMS.md L164-166](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - C2: recall requires knowing the filename. — [PROBLEMS.md L168-170](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - C4: nothing pushes back on growth. — [PROBLEMS.md L176-181](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - D1: notes files drift. — [PROBLEMS.md L215-219](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 
 ### Inferences
 - C4 as written in PROBLEMS.md says "USER.md and MEMORY.md are injected into every prompt in both scopes". That is **wrong for MEMORY.md** per the code (agent.py:424-429) and MEMORY.md:105. Only USER.md and SOUL.md are always-injected memory files, which weakens C4's premise for MEMORY.md. The redesign doc should correct this.
@@ -226,8 +226,8 @@ Three append-only JSONL logs with 90-day retention, plus 150 daily-log markdown 
 - **App-only telemetry.** `turns.jsonl`/`tool_calls.jsonl` are never agent-read, and tool args are deliberately not stored. — [OBSERVABILITY.md:118](/app/jarvis_staging/code/docs/architecture/OBSERVABILITY.md), [CLAUDE.md layout](/app/jarvis_staging/code/CLAUDE.md)
 - **Daily logs** are a narrative episodic layer reachable by filename (`read_memory("daily/daily_YYYY-MM-DD.md")`). AGENTS.md directs the agent there for "earlier today or yesterday". — [prompts/AGENTS.md:22](/app/jarvis_staging/code/prompts/AGENTS.md)
 - **Problems touched:**
-  - C2 and C3 (`ASSERTED`) — [PROBLEMS.md L168-174](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - #81, unrecoverable truncation — [PROBLEMS.md L342-343](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - C2 and C3 (`ASSERTED`) — [PROBLEMS.md L168-174](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - #81, unrecoverable truncation — [PROBLEMS.md L342-343](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
   - Phase 3 "history recall" candidates on record: transcript FTS (hermes) and hybrid search plus trigger phrases (OpenClaw). — [CONTEXT_PLAN.md L245-246](/app/jarvis_staging/code/docs/plans/archive/CONTEXT_PLAN.md)
 
 ### Inferences
@@ -267,14 +267,14 @@ Consolidation is done entirely by LLM-driven heartbeat tasks, with no code-side 
 - **Daily log.** It is "written by an ordinary task, `daily-log` … every 3h … whose prose folds in today's chat, today's proactive sends (`get_notification_history`) and the day's heartbeat activity". It used to be a rule on every tick and was moved to a task once crossfit went behind a gate. "Chat after the last run of the day (23:00) is not captured." — [HEARTBEAT.md doc L237-245](/app/jarvis_staging/code/docs/architecture/HEARTBEAT.md)
 - **Daily-log consumers.** The user scope injects today's log. The heartbeat scope injects yesterday's. — [agent.py:442-449](/app/jarvis_staging/code/agent.py)
 - **The tick prompt names today's daily-log file** in its imperative. — [heartbeat.py:83-88](/app/jarvis_staging/code/heartbeat.py)
-- **A7** (daily log rewritten on the hourly path) was measured when the rule ran every tick. The 09-30..10-02 acks still read "Updated daily log with today's conversations". — [PROBLEMS.md L95-96](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md), [PROBLEMS.md L107-110](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+- **A7** (daily log rewritten on the hourly path) was measured when the rule ran every tick. The 09-30..10-02 acks still read "Updated daily log with today's conversations". — [PROBLEMS.md L95-96](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md), [PROBLEMS.md L107-110](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 - **Notes files.** Each heartbeat task has a notes file (`heartbeat/<task>.md`) that the agent reads first and updates after acting (heartbeat.md steps 1–3). Code never parses them. — [prompts/heartbeat.md:36-38](/app/jarvis_staging/code/prompts/heartbeat.md), [HEARTBEAT.md doc "Three files, three owners"](/app/jarvis_staging/code/docs/architecture/HEARTBEAT.md)
 - **Proactive memory writes in user turns.** "Write to memory proactively whenever something important is established — do not wait to be asked"; USER.md is kept current; MEMORY.md is updated on file changes; "Files absent from the index are cleanup candidates." — [prompts/AGENTS.md:18-21](/app/jarvis_staging/code/prompts/AGENTS.md)
 - **Phase 2 (memory write pressure)** was filed with candidates and no decision: "write-time caps (hermes) vs gated batch consolidation (OpenClaw) vs a mix". — [CONTEXT_PLAN.md L242-244](/app/jarvis_staging/code/docs/plans/archive/CONTEXT_PLAN.md)
 - **Problems touched:**
-  - A6: retrieving about 325 tokens of notes cost about 3 `read_memory` round-trips. — [PROBLEMS.md L90-93](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - A6: retrieving about 325 tokens of notes cost about 3 `read_memory` round-trips. — [PROBLEMS.md L90-93](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
   - A7, C1, C4, D1.
-  - #106: a silent heartbeat action is invisible to the user scope. — [PROBLEMS.md L208-209](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - #106: a silent heartbeat action is invisible to the user scope. — [PROBLEMS.md L208-209](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 
 ### Inferences
 - Because daily logs are LLM-rewritten prose, they lose detail between 3-hour runs and after 23:00, and they cost a full heartbeat turn (about 20k tokens/call) each run.
@@ -334,13 +334,13 @@ An hourly APScheduler cron runs a code-side gate (cadence plus `due:` window, wi
   - Latest prod tick (2026-10-06 17:00Z): 69,605 input, 40,307 cache-read, 3 calls, 8 tools, `no_action=true`.
   - Source: computed from `/app/jarvis_data/logs/turns.jsonl`
 - **Problems touched:**
-  - A1–A3: heartbeat spend, per-tick cost and round-trip ceremony. — [PROBLEMS.md L67-80](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - A8: the gate rarely closes because of task definitions. — [PROBLEMS.md L98-102](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - A9: the empty-list check, now moved behind `gate: arbox_registrations`. — [PROBLEMS.md L104-110](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - A1–A3: heartbeat spend, per-tick cost and round-trip ceremony. — [PROBLEMS.md L67-80](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - A8: the gate rarely closes because of task definitions. — [PROBLEMS.md L98-102](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - A9: the empty-list check, now moved behind `gate: arbox_registrations`. — [PROBLEMS.md L104-110](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
   - A10.
-  - E6: a gated tick is indistinguishable from a dead service. — [PROBLEMS.md L249-251](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - E10: paused tasks distort readings. — [PROBLEMS.md L261-265](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
-  - C5: `RESOLVED` by the drain; #106 remains (silent action is invisible). — [PROBLEMS.md L183-209](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  - E6: a gated tick is indistinguishable from a dead service. — [PROBLEMS.md L249-251](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - E10: paused tasks distort readings. — [PROBLEMS.md L261-265](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
+  - C5: `RESOLVED` by the drain; #106 remains (silent action is invisible). — [PROBLEMS.md L183-209](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 
 ### Inferences
 - About 88% of model-reaching ticks (29/33) still end with no notification. Each costs about 70–80k input across 3–4 calls. Most of that is the replayed heartbeat thread plus tool schemas, not the task content.
@@ -366,8 +366,8 @@ A redesign must respect a set of explicit, documented decisions: the single owne
   - hermes "emits no explicit cache markers for Gemini at all: their entire Gemini strategy is prefix ordering for implicit caching"
   - cross-tick caching is "still effectively true [unreachable] for Gemini implicit caching at hourly cadence"
 
-  — [REFERENCE_ARCHITECTURES.md §5 (L139-163)](/app/jarvis_staging/code/docs/plans/context/REFERENCE_ARCHITECTURES.md)
-- B2's mechanism (cache prefix spans system instruction, then tools, then history) is `ASSERTED`, not re-verified against Gemini docs. — [PROBLEMS.md L129-137](/app/jarvis_staging/code/docs/plans/context/PROBLEMS.md)
+  — [REFERENCE_ARCHITECTURES.md §5 (L139-163)](/app/jarvis_staging/code/docs/plans/archive/context/REFERENCE_ARCHITECTURES.md)
+- B2's mechanism (cache prefix spans system instruction, then tools, then history) is `ASSERTED`, not re-verified against Gemini docs. — [PROBLEMS.md L129-137](/app/jarvis_staging/code/docs/plans/archive/context/PROBLEMS.md)
 - Measured cache-read share: 49% (09-30..10-02), 59% (10-03..05). — PROBLEMS §0; turns.jsonl
 - Hot-reloading prompt files is a feature, and "a restart is still recommended to flush the upstream prompt cache". — [MEMORY.md:138](/app/jarvis_staging/code/docs/architecture/MEMORY.md)
 
@@ -395,7 +395,7 @@ A redesign must respect a set of explicit, documented decisions: the single owne
 
 - "The thread keeps a mixed history of recent ticks under the same 50-message cap — the noise turns dilute the in-context pattern deliberately". — [CLAUDE.md Heartbeat §2](/app/jarvis_staging/code/CLAUDE.md)
 - Separate threads exist so "heartbeat's terse, machine-flavored turns never pollute the conversational sliding window". — [RUNTIME.md:100](/app/jarvis_staging/code/docs/architecture/RUNTIME.md)
-- F2: a polluted checkpoint re-seeds itself, and resetting the thread was the fix. — [RESEARCH.md §3.3](/app/jarvis_staging/code/docs/plans/context/RESEARCH.md)
+- F2: a polluted checkpoint re-seeds itself, and resetting the thread was the fix. — [RESEARCH.md §3.3](/app/jarvis_staging/code/docs/plans/archive/context/RESEARCH.md)
 
 **Code owns scheduling; the model owns judgement**
 
@@ -407,7 +407,7 @@ A redesign must respect a set of explicit, documented decisions: the single owne
   - stamp after success
   - time-shaped versus diff-shaped wakes are different mechanisms
 
-  — [RESEARCH.md §3.1 (L98-127)](/app/jarvis_staging/code/docs/plans/context/RESEARCH.md)
+  — [RESEARCH.md §3.1 (L98-127)](/app/jarvis_staging/code/docs/plans/archive/context/RESEARCH.md)
 
 **Confirmation pattern for SOUL.md**
 
@@ -424,21 +424,21 @@ A redesign must respect a set of explicit, documented decisions: the single owne
 
 **Behaviour drivers**
 
-- The tool docstring is the behavioural contract, not prompt prose (F1). Negative instructions were deliberately not added. — [RESEARCH.md §3.3](/app/jarvis_staging/code/docs/plans/context/RESEARCH.md)
+- The tool docstring is the behavioural contract, not prompt prose (F1). Negative instructions were deliberately not added. — [RESEARCH.md §3.3](/app/jarvis_staging/code/docs/plans/archive/context/RESEARCH.md)
 - Request-only notices exist so that "stop now" text is never imitated from history. — [agent.py:528-529](/app/jarvis_staging/code/agent.py)
 - No `get_current_time` tool, because docstring-driven tool use is unreliable (F1). — [TIME_GROUNDING_PLAN.md §2](/app/jarvis_staging/code/docs/plans/archive/TIME_GROUNDING_PLAN.md)
 
 **Single owner and deploy model**
 
 - Jarvis is single-user with no multi-tenant routing. — [CLAUDE.md "What Jarvis Is"](/app/jarvis_staging/code/CLAUDE.md)
-- Prod is deploy-only via `deploy/deploy.sh`, with the owner restarting manually; staging is where development happens. Continuous deploy was explicitly declined. — [CLAUDE.md "Deployment"](/app/jarvis_staging/code/CLAUDE.md), [RESEARCH.md §3.4 (L160-178)](/app/jarvis_staging/code/docs/plans/context/RESEARCH.md)
+- Prod is deploy-only via `deploy/deploy.sh`, with the owner restarting manually; staging is where development happens. Continuous deploy was explicitly declined. — [CLAUDE.md "Deployment"](/app/jarvis_staging/code/CLAUDE.md), [RESEARCH.md §3.4 (L160-178)](/app/jarvis_staging/code/docs/plans/archive/context/RESEARCH.md)
 - Every phase is bracketed by before/after readings, and cost claims need numbers (E-cluster). — [CONTEXT_PLAN.md L55-57](/app/jarvis_staging/code/docs/plans/archive/CONTEXT_PLAN.md)
 
 **Test suite and golden snapshots**
 
 - `tests/` is a required CI gate. `tests/golden/` snapshots both scope prompts (`prompt_user.md` 5,047 B, `prompt_heartbeat.md` 9,177 B), the skill block and every tool schema. Any change to prompt files or docstrings needs `pytest --update-golden` and a reviewed diff. — [CLAUDE.md "Key Files"](/app/jarvis_staging/code/CLAUDE.md), [tests/conftest.py:29-43](/app/jarvis_staging/code/tests/conftest.py)
 - Relevant suites: `test_prompt_snapshot.py`, `test_context_mirror.py`, `test_turn_lifecycle.py`, `test_heartbeat_state.py`, `test_time_boundaries.py`.
-- An LLM-judge eval framework was declined, with one narrow judge recognised as needed: whether a lighter heartbeat prompt yields blander or wronger briefings. — [RESEARCH.md §3.4](/app/jarvis_staging/code/docs/plans/context/RESEARCH.md)
+- An LLM-judge eval framework was declined, with one narrow judge recognised as needed: whether a lighter heartbeat prompt yields blander or wronger briefings. — [RESEARCH.md §3.4](/app/jarvis_staging/code/docs/plans/archive/context/RESEARCH.md)
 
 **Runtime limits**
 
