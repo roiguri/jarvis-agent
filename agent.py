@@ -526,9 +526,10 @@ def build_system_prompt(
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
-def _keep_db_small(conn: sqlite3.Connection) -> None:
+def keep_db_small(conn: sqlite3.Connection = conn) -> None:
     """Each turn replaces its thread's snapshot; without these SQLite keeps the
-    freed pages and the grown WAL. Turning auto_vacuum on takes one VACUUM."""
+    freed pages and the grown WAL. Turning auto_vacuum on takes one VACUUM.
+    Called by main.py at service start, once logging is set up."""
     conn.execute("PRAGMA journal_size_limit = 4194304")
     try:
         if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 1:
@@ -540,7 +541,6 @@ def _keep_db_small(conn: sqlite3.Connection) -> None:
         logger.warning("threads.sqlite not compacted: %s", e)
 
 
-_keep_db_small(conn)
 memory = PruningSqliteSaver(conn)
 
 # ---------------------------------------------------------------------------

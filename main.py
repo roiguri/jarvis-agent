@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Instance paths — first project import (validates JARVIS_ROOT, derives every path).
 import config
 
-from agent import ask_jarvis, ask_jarvis_once
+from agent import ask_jarvis, ask_jarvis_once, keep_db_small
 import heartbeat_state
 import dream
 from heartbeat import run_heartbeat
@@ -233,6 +233,7 @@ async def main() -> None:
         logger.info("Telemetry store trimmed: %s", telemetry_store.trim())
     except Exception:
         logger.exception("Telemetry store maintenance failed")
+    keep_db_small()
 
     async def log_notification(event: str, text: str, metadata: dict) -> None:
         """Every delivered proactive send: the JSONL log and the episode store."""

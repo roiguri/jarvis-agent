@@ -17,7 +17,7 @@ def test_a_bloated_file_is_compacted_once_and_then_stays_small(tmp_path):
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     bloated = os.path.getsize(path)
 
-    agent._keep_db_small(conn)
+    agent.keep_db_small(conn)
     assert conn.execute("PRAGMA auto_vacuum").fetchone()[0] == 1
     assert os.path.getsize(path) < bloated / 10
 
@@ -35,6 +35,6 @@ def test_a_locked_file_is_left_as_it_is(tmp_path):
     holder.execute("CREATE TABLE t (b BLOB)")
     holder.execute("BEGIN EXCLUSIVE")
     conn = sqlite3.connect(path, timeout=0)
-    agent._keep_db_small(conn)   # logs and returns instead of raising
+    agent.keep_db_small(conn)   # logs and returns instead of raising
     holder.rollback()
     assert conn.execute("PRAGMA auto_vacuum").fetchone()[0] == 0

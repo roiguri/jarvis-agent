@@ -289,7 +289,7 @@ Decisions that intentionally diverge from earlier plan sketches; recorded so the
 - **No env-var overrides for relocated paths.** `fitness.sqlite`, `triggers.json`, and the logs use hardcoded constants — no `FITNESS_DB_PATH` etc. A single Roi-operated LXC has no second deployment to parameterize for; an env knob would be dead configuration (YAGNI).
 - **AGENTS.md lives in code, not `jarvis_memory/`.** Operating rules change by deploy and must not be agent-mutable; putting them in the version-controlled, sandbox-external `prompts/` dir enforces that structurally rather than via a runtime guard.
 - **`MEMORY.md` is tool-read, not prompt-injected** (see Access Model) — a deliberate token trade, not an omission.
-- **`threads.sqlite*` stays in `jarvis_memory/`** as the one deny-listed exception, because LangGraph owns the path. It keeps itself small: `agent._keep_db_small` turns on `auto_vacuum=FULL` (freed pages go back on each commit; one VACUUM the first time) and caps the WAL at 4 MB.
+- **`threads.sqlite*` stays in `jarvis_memory/`** as the one deny-listed exception, because LangGraph owns the path. It keeps itself small: `agent.keep_db_small` (at service start) turns on `auto_vacuum=FULL` (freed pages go back on each commit; one VACUUM the first time) and caps the WAL at 4 MB.
 
 ---
 
