@@ -76,7 +76,12 @@ def due_task_costs(since: str) -> list[dict]:
 
 def episode_integrity(since: str) -> list[tuple[str, int, int]]:
     """(Israel day, finished turns in telemetry, of those missing from the episode
-    store) — a turn whose recording failed shows up here."""
+    store) — a turn whose recording failed shows up here. Turns from before the
+    store existed (its log import) reached it as imported rows without a turn id,
+    so they are not counted."""
+    started = episode_store.rows("SELECT value FROM meta WHERE key = 'log_import'")
+    if started:
+        since = max(since, started[0]["value"])
     turns = store.rows("SELECT turn_id, ts FROM turns WHERE ts >= ? AND ended_at IS NOT NULL "
                        "AND scope IN ('user', 'heartbeat')", (since,))
     recorded = {r["turn_id"] for r in episode_store.rows(
