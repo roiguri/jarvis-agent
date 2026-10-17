@@ -232,28 +232,6 @@ def test_today_view_is_empty_without_activity_and_in_both_prompts(use_llm):
         "a tick keeps no conversation; the today view tells it what earlier ticks did"
 
 
-# --- History import (TODO(#157): remove with the import) -------------------------
-
-def test_import_copies_logs_once():
-    with open(os.path.join(LOG_DIR, "chat_history.jsonl"), "w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-09-01T08:00:00+00:00", "thread_id": "owner", "role": "user",
-                            "content": "hi", "media": ["media/a.jpg"]}) + "\n")
-        f.write(json.dumps({"ts": "2026-09-01T08:00:05+00:00", "thread_id": "owner", "role": "assistant",
-                            "content": "hello"}) + "\n")
-        f.write("{broken\n")
-    with open(os.path.join(LOG_DIR, "notifications.jsonl"), "w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-09-01T09:00:00+00:00", "event": "reminder",
-                            "message": "Call", "trigger": "r1"}) + "\n")
-    paths = (os.path.join(LOG_DIR, "chat_history.jsonl"), os.path.join(LOG_DIR, "notifications.jsonl"))
-    assert store.import_logs(*paths) == {"chat": 2, "notifications": 1}
-    assert store.import_logs(*paths) == {"chat": 0, "notifications": 0}, "runs once"
-    got = rows()
-    assert [(r["role"], r["source"]) for r in got] == [("owner", "import"), ("jarvis", "import"),
-                                                         ("jarvis_sent", "import")]
-    assert got[0]["content"] == "hi\n[attached: media/a.jpg]"
-    assert json.loads(got[2]["meta"]) == {"trigger": "r1", "event": "reminder"}
-
-
 # --- Day view --------------------------------------------------------------------
 
 def test_day_view_shows_background_and_the_conversation():

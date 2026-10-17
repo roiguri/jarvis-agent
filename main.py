@@ -28,7 +28,7 @@ from tools.core import (
     NOTIFICATION_LOG,
 )
 from observability import store as telemetry_store
-from episodes import record as episodes_record, store as episodes_store
+from episodes import record as episodes_record
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -233,13 +233,6 @@ async def main() -> None:
         logger.info("Telemetry store trimmed: %s", telemetry_store.trim())
     except Exception:
         logger.exception("Telemetry store maintenance failed")
-    try:
-        # TODO(#157): one-time import of the JSONL logs into the episode store; remove after both instances ran it.
-        if not episodes_store.imported():
-            counts = episodes_store.import_logs(CHAT_LOG, NOTIFICATION_LOG)
-            logger.info("Episodes: imported JSONL history into the store: %s", counts)
-    except Exception:
-        logger.exception("Episode store import failed")
 
     async def log_notification(event: str, text: str, metadata: dict) -> None:
         """Every delivered proactive send: the JSONL log and the episode store."""
