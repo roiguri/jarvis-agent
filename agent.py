@@ -524,6 +524,23 @@ def build_system_prompt(
 # Initialize the SQLite Checkpointer
 # This gives the agent "short-term memory" by tracking conversation history per thread_id
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+def _keep_db_small(conn: sqlite3.Connection) -> None:
+    """Each turn replaces its thread's snapshot; without these SQLite keeps the
+    freed pages and the grown WAL. Turning auto_vacuum on takes one VACUUM."""
+    conn.execute("PRAGMA journal_size_limit = 4194304")
+    try:
+        if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 1:
+            conn.execute("PRAGMA auto_vacuum = FULL")
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            logger.info("threads.sqlite compacted; auto_vacuum on")
+    except sqlite3.OperationalError as e:   # another process holds the file
+        logger.warning("threads.sqlite not compacted: %s", e)
+
+
+_keep_db_small(conn)
 memory = PruningSqliteSaver(conn)
 
 # ---------------------------------------------------------------------------
