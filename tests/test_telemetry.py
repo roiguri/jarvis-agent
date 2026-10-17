@@ -238,3 +238,15 @@ def test_mirror_block_counts_as_this_turns_input(use_llm):
     [turn] = turn_rows()
     [call] = calls_of(turn["turn_id"])
     assert call["turn_messages"] == 2, "the mirror block and the message it precedes are one turn's input"
+
+
+def test_ticks_that_sent_nothing_are_counted_against_ticks_not_turns():
+    day = usage._empty_bucket("2026-10-17")
+    day.update(turns=5, heartbeat_turns=3, no_action_count=2)
+    chat = usage._empty_bucket("2026-10-18")
+    chat.update(turns=4)
+    table = usage.format_usage_table([day, chat])
+    assert "- 2 of 3 ticks sent nothing" in table, "totals line"
+    assert "**2026-10-17** — 5 turns" in table and "· 2 of 3 ticks sent nothing" in table, "the row"
+    assert table.count("sent nothing") == 2, "a chat-only row says nothing about ticks"
+    assert "NO_ACTION" not in table
