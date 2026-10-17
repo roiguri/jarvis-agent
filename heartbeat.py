@@ -17,7 +17,7 @@ TURN_LOCK = asyncio.Lock()
 
 
 async def run_heartbeat() -> None:
-    """Periodic agent turn. HEARTBEAT.md + yesterday's day view + tick rules are
+    """Periodic agent turn. HEARTBEAT.md + yesterday's daily log + tick rules are
     injected by the agent's build_system_prompt (scope='heartbeat'); this
     issues the imperative and delivers per the heartbeat_respond ack.
 

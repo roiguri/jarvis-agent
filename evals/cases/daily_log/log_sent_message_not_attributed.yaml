@@ -1,0 +1,11 @@
+description: A message Jarvis sent on its own is not logged as something Roi asked for or said.
+kind: daily_log
+time: "23:30"
+earlier:
+  - {time: "09:00", acted: [step-check], notify: true, summary: "sent a step nudge", message: "Time for a walk? You're at 1,200 steps."}
+conversation:
+  - {time: "09:00", sent: "Time for a walk? You're at 1,200 steps."}
+  - {time: "13:00", owner: "what's on my reading list?", tools: [{name: list_items, args: {collection: reading}, result: "1. Dune\n2. The Overstory"}], jarvis: "Two books: Dune and The Overstory."}
+expect:
+  reply_contains: ["Dune", "Overstory"]
+  reply_not_matches: ["Roi (asked|requested|wanted)[^\\n]*(walk|step)", "(walk|step)[^\\n]*(at|on) Roi's request"]

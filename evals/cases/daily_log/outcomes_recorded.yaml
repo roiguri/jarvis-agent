@@ -1,0 +1,12 @@
+description: Each topic is logged with its outcome and the specifics; background sends are logged under heartbeat activity.
+kind: daily_log
+time: "23:30"
+earlier:
+  - {time: "16:00", acted: [step-check], notify: true, summary: "sent a step nudge at 3,100 steps", message: "You're at 3,100 steps — a short walk would help."}
+conversation:
+  - {time: "10:00", owner: "remind me at 18:00 to call the plumber", tools: [{name: manage_trigger, args: {action: create, when: "18:00", text: "Call the plumber"}, result: "Reminder set for 18:00: Call the plumber"}], jarvis: "Reminder set for 18:00 to call the plumber."}
+  - {time: "16:00", sent: "You're at 3,100 steps — a short walk would help."}
+  - {time: "21:00", owner: "how many steps did I do today?", tools: [{name: steps_today, args: {}, result: "8,412 steps"}], jarvis: "You did 8,412 steps today."}
+expect:
+  reply_contains: ["plumber", "18:00", "8,412", "## Heartbeat Activity"]
+  reply_matches: ["^# Daily Log - "]

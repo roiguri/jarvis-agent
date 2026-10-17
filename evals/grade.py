@@ -12,8 +12,9 @@ Checks:
     message_contains / message_not_contains: [strings] — over the text of every
                   message sent to the owner, case-insensitive
     message_matches / message_not_matches: [regexes] — the same text, case-insensitive
-    reply_contains / reply_not_contains: [strings] — a chat case's reply, case-insensitive
-    reply_matches / reply_not_matches: [regexes] — a chat case's reply
+    reply_contains / reply_not_contains: [strings] — a chat case's reply (a daily_log
+                  case's log), case-insensitive
+    reply_matches / reply_not_matches: [regexes] — the same text
 """
 
 from __future__ import annotations

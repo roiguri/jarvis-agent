@@ -44,7 +44,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── MEMORY.md              # agent-maintained master index of memory files
 ├── HEARTBEAT.md           # recurring task list (edited via manage_heartbeat_task)
 ├── heartbeat/*.md         # per-task NOTES files (narrative state; machine last_run lives in jarvis_data)
-├── daily/daily_YYYY-MM-DD.md   # older daily logs, no longer written (the day view replaced them)
+├── daily/daily_YYYY-MM-DD.md   # daily logs, written the morning after (see "Daily log")
 ├── *.txt / *.md           # long-term memory the agent writes freely
 └── threads.sqlite(+-wal,-shm)  # deny-listed exception (LangGraph owns the path)
 
@@ -128,7 +128,7 @@ MEMORY.md          (jarvis_memory — index of memory files)
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
      (non-due tasks collapse to a one-line note; None = every task but gated ones)
    + today's user chat (live slice of chat_history.jsonl)
-   + today view + yesterday's day view (both from the episode store)
+   + today view (episode store) + yesterday's daily log (daily/)
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
 ```
 
@@ -147,9 +147,9 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
 - **`user`** — conversational framing + the **today view**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent.
-- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl`, every thread except `heartbeat` and `*_test`) + the today view + **yesterday's day view** (code-built from the episode store: background activity, the owner's messages, what was sent; older days via `search_history`). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
+- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl`, every thread except `heartbeat` and `*_test`) + the today view + **yesterday's daily log** (`daily/daily_YYYY-MM-DD.md`, written the morning after; older days via `read_memory` or `search_history`). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
-Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. The today and day views come from the episode store the same way.
+Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. The today view comes from the episode store the same way.
 
 ### The skill block is RUNTIME's
 
@@ -238,11 +238,30 @@ between them. The 50-message trim remains as a backstop and never evicts the rec
 
 Each compaction is a telemetry job row (`job = "compaction"`) with its model call.
 
+## The morning job
+
+`dream.py` runs each morning at 08:30 Israel time, when the heartbeat is enabled (a process started
+before noon catches up a missed run, tracked in `jarvis_data/dream/state.json`). For yesterday it
+writes the daily log and sends the memory suggestions: two separate model calls, neither sees the
+other's output. `/dream [yesterday|today]` runs both by hand.
+
+## Daily log
+
+`daily_log.py` writes a short summary of a finished day to `daily/daily_YYYY-MM-DD.md`, one model
+call reading the day as the episode store holds it: what the heartbeat did (the background lines of
+the today view, for that day) and the owner conversation (the owner's messages, Jarvis's replies
+and its own sends; tool traffic left out). The prompt (`prompts/daily_log.md`) asks for
+Conversations (each topic with its outcome), Heartbeat Activity and Notes (what is still open), and
+only what the input shows. A day where nothing happened writes nothing; an answer cut off at the
+output cap is not written; writing again replaces the file. The heartbeat reads yesterday's log as
+its "yesterday"; `/logs <date>` shows a finished day's log and `/logs today` the code-built day view
+(background activity and the conversation so far). Daily logs written before this job, by a
+heartbeat task, use the same files. Each run is a telemetry job row (`job = "daily_log"`).
+
 ## Memory suggestions
 
-`memory_suggestions.py` helps keep long-term memory current without writing it. Each morning at
-08:30 Israel time (when the heartbeat is enabled; a process started before noon catches up a missed
-run, tracked in `jarvis_data/memory_suggestions/state.json`) one model call reads:
+`memory_suggestions.py` helps keep long-term memory current without writing it. One model call
+reads:
 
 - yesterday's owner conversation, through compaction's transcript builder: the owner's messages,
   Jarvis's replies and Jarvis's own sends (`[owner]` / `[jarvis]` / `[jarvis-sent]`); tool traffic
@@ -257,7 +276,7 @@ judgement; code imposes no rules on memory. The note goes out as a `notification
 `job: "memory_suggestions"` in its metadata, which also lifts the pending-mirror's per-entry cap so
 the whole note reaches the conversation: the owner can answer "do 2 and 5" and Jarvis applies them
 with its memory tools. A day with no owner message makes no model call; "Nothing to suggest." sends
-nothing. `/dream [yesterday|today]` runs it by hand. Each run is a telemetry job row
+nothing. Each run is a telemetry job row
 (`job = "memory_suggestions"`).
 
 ---

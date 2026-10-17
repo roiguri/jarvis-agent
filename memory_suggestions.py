@@ -8,12 +8,11 @@ The input is compaction's transcript of the owner thread — the owner's
 messages, Jarvis's replies and Jarvis's own sends, tool traffic left out —
 plus the memory files the agent maintains. A day without an owner message
 makes no model call and sends nothing; neither does an answer of "Nothing to
-suggest."
+suggest." The morning job (dream.py) runs it for yesterday.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import date, datetime, time, timedelta, timezone
@@ -25,14 +24,11 @@ from timeutils import ISRAEL_TZ
 
 logger = logging.getLogger(__name__)
 
-RUN_AT = time(8, 30)            # Israel time: yesterday is complete
-CATCH_UP_UNTIL = time(12, 0)    # a process started after RUN_AT runs the missed job until then
 NOTHING = "Nothing to suggest."
 JOB = "memory_suggestions"          # names the send in its notification metadata
 TIMEOUT_S = 180
 MAX_TOKENS = 4096
 
-STATE_PATH = os.path.join(config.DATA_DIR, "memory_suggestions", "state.json")
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "memory_suggestions.md")
 
 READ_ONLY = {"SOUL.md"}
@@ -173,44 +169,6 @@ async def send(day: date) -> str:
         return "nothing"
     outcome = await default_outbox().notify_owner(note, event=EVENT_MEDIA, metadata={"job": JOB})
     return "sent" if outcome.ok else "failed"
-
-
-# ---------------------------------------------------------------------------
-# Schedule
-# ---------------------------------------------------------------------------
-
-def _last_run() -> date | None:
-    try:
-        with open(STATE_PATH, encoding="utf-8") as f:
-            return date.fromisoformat(json.load(f)["last_run"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-
-
-def _mark_run(today: date) -> None:
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    tmp = STATE_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"last_run": today.isoformat()}, f)
-    os.replace(tmp, STATE_PATH)
-
-
-def catch_up_due(now: datetime | None = None) -> bool:
-    """True when this morning's run was missed and there is still time for it
-    (a process started between RUN_AT and CATCH_UP_UNTIL)."""
-    local = (now or datetime.now(timezone.utc)).astimezone(ISRAEL_TZ)
-    return RUN_AT <= local.time() < CATCH_UP_UNTIL and _last_run() != local.date()
-
-
-async def run_scheduled() -> None:
-    """The morning job: yesterday's suggestions, once a day. A failed run is
-    not retried; tomorrow's covers its own day."""
-    today = datetime.now(timezone.utc).astimezone(ISRAEL_TZ).date()
-    if _last_run() == today:
-        return
-    outcome = await send(today - timedelta(days=1))
-    _mark_run(today)
-    logger.info("memory suggestions for %s: %s", today - timedelta(days=1), outcome)
 
 
 def _text(content) -> str:

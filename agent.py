@@ -281,6 +281,7 @@ llm = ChatGoogleGenerativeAI(
 # (developer-owned operating rules) is committed code under prompts/ and is
 # never in the Jarvis-writable memory surface.
 _MEMORY_DIR = config.MEMORY_DIR
+_DAILY_DIR = os.path.join(_MEMORY_DIR, "daily")
 _SOUL_PATH = os.path.join(_MEMORY_DIR, "SOUL.md")
 _USER_PATH = os.path.join(_MEMORY_DIR, "USER.md")
 _MEMORY_INDEX_PATH = os.path.join(_MEMORY_DIR, "MEMORY.md")
@@ -381,6 +382,16 @@ def _turn_stamp(now: _dt.datetime) -> str:
     return f"[{stamp}]"
 
 
+def _load_yesterday_daily_log() -> str:
+    """Yesterday's daily log (heartbeat scope), written the morning after.
+    Older days are reachable via read_memory on demand."""
+    yesterday = (_dt.datetime.now(_dt.timezone.utc).astimezone(_ISRAEL_TZ)
+                 - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    fname = f"daily_{yesterday}.md"
+    body = load_or_blank(os.path.join(_DAILY_DIR, fname))
+    return f"--- Yesterday's log ({fname}) ---\n{body}" if body else ""
+
+
 def _today_israel_start_utc() -> _dt.datetime:
     """Start of today (Israel time), expressed in UTC. Used to filter
     activity logs to 'today' regardless of the writer's clock."""
@@ -456,8 +467,8 @@ def build_system_prompt(
       mirrored history via the pending-mirror drain, not as a prompt slice.)
     - heartbeat: the heartbeat-only rules (prompts/heartbeat.md) + HEARTBEAT.md
       + today's user chat (so the tick can skip tasks Roi has already
-      addressed) + the today view + yesterday's day view (older days are
-      reachable via search_history). When ``due_tasks`` is a list, only those task
+      addressed) + the today view + yesterday's daily log (older days are
+      reachable via read_memory). When ``due_tasks`` is a list, only those task
       blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
       one-line note); None injects every task except gated ones.
     All files are read per turn (edits take effect next turn, no restart).
@@ -500,7 +511,7 @@ def build_system_prompt(
         chat = _load_recent_user_chat()
         if chat:
             parts.append(chat)
-        parts.append(episodes_today.yesterday(_dt.datetime.now(_dt.timezone.utc)))
+        parts.append(_load_yesterday_daily_log())
     else:
         parts.append(_USER_FRAMING)
         parts.append(episodes_today.background_today(_dt.datetime.now(_dt.timezone.utc)))

@@ -100,11 +100,11 @@ async def _compact(inbound: InboundMessage, args: list[str]) -> str:
 
 
 # TODO(#167): consider removing once memory suggestions end.
-@command("dream", "Send the memory suggestions now. Sub: /dream yesterday|today")
+@command("dream", "Write the daily log and send the memory suggestions now. Sub: /dream yesterday|today")
 async def _dream(inbound: InboundMessage, args: list[str]) -> str:
     import datetime as _dt
 
-    import memory_suggestions
+    import dream
     from timeutils import ISRAEL_TZ
 
     which = (args[0].lower() if args else "yesterday")
@@ -113,12 +113,15 @@ async def _dream(inbound: InboundMessage, args: list[str]) -> str:
     day = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
     if which == "yesterday":
         day -= _dt.timedelta(days=1)
-    outcome = await memory_suggestions.send(day)
-    return kv_section("Memory suggestions", [
+    log, suggestions = await dream.run(day)
+    return kv_section("Morning job", [
         ("Day", day.isoformat()),
-        ("Outcome", {"sent": "sent as a message",
-                     "nothing": "nothing to send (no conversation, or nothing worth suggesting)",
-                     "failed": "failed — see the log"}[outcome]),
+        ("Daily log", {"written": f"written — `/logs {day:%d.%m.%Y}`",
+                       "nothing": "nothing happened that day",
+                       "failed": "failed — see the log"}[log]),
+        ("Memory suggestions", {"sent": "sent as a message",
+                                "nothing": "nothing to send (no conversation, or nothing worth suggesting)",
+                                "failed": "failed — see the log"}[suggestions]),
     ])
 
 
@@ -353,12 +356,14 @@ _LOGS_USAGE = section(
 
 @command(
     "logs",
-    "Show a day: background activity and conversation. Sub: /logs today|yesterday|D[.M[.Y]]",
+    "Show a day: today so far, or an earlier day's daily log. Sub: /logs today|yesterday|D[.M[.Y]]",
 )
 async def _logs(inbound: InboundMessage, args: list[str]) -> str:
     import datetime as _dt
 
+    import daily_log
     from episodes import today as episodes_today
+    from timeutils import ISRAEL_TZ
 
     if not args:
         iso = _parse_log_date("today")
@@ -368,6 +373,9 @@ async def _logs(inbound: InboundMessage, args: list[str]) -> str:
             return join("Invalid date.", _LOGS_USAGE)
 
     day = _dt.date.fromisoformat(iso)
+    if day < _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date():
+        log = await asyncio.to_thread(daily_log.read, day)
+        return log or f"No daily log for {day:%A %Y-%m-%d} (a day's log is written the next morning)."
     background, conversation = await asyncio.to_thread(episodes_today.day_view, day)
     return join(
         f"**{day:%A %Y-%m-%d}**",

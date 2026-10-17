@@ -1,0 +1,12 @@
+description: A day with only background activity logs that activity and invents no conversation.
+kind: daily_log
+time: "23:30"
+earlier:
+  - {time: "08:00", acted: [morning-readiness], notify: true, summary: "sent the readiness briefing: slept 7h10m", message: "Morning readiness: slept 7h10m, resting HR 54."}
+  - {time: "20:00", kind: wake, task: evening-check, notify: false, summary: "checked the evening plan; nothing to send"}
+conversation:
+  - {time: "08:00", sent: "Morning readiness: slept 7h10m, resting HR 54."}
+expect:
+  reply_contains: ["## Heartbeat Activity", "7h10m"]
+  reply_not_contains: ["## Conversations"]
+  reply_not_matches: ["Roi (asked|said|told|replied|requested)"]

@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from langchain_core.messages import AIMessage
 
@@ -256,8 +256,7 @@ def test_import_copies_logs_once():
 
 # --- Day view --------------------------------------------------------------------
 
-def test_yesterday_view_shows_background_and_the_conversation():
-    now = datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)
+def test_day_view_shows_background_and_the_conversation():
     ack("2026-10-15T06:00:00+00:00", "y", ["step-check"], True, "sent a step nudge")
     ack("2026-10-15T07:00:00+00:00", "n", [], False, "nothing due")
     with store.write() as con:
@@ -269,20 +268,14 @@ def test_yesterday_view_shows_background_and_the_conversation():
                      scope="user", role="jarvis", source="chat", content="a reply")
         store.insert(con, ts="2026-10-15T10:00:00+00:00", turn_id="s", thread_id=OWNER_THREAD_ID,
                      scope="user", role="owner", source="slash_command", content="/usage")
+        store.insert(con, ts="2026-10-15T10:00:00+00:00", turn_id="s", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="jarvis", source="slash_command", content="usage reply")
         store.insert(con, ts="2026-10-16T09:00:00+00:00", turn_id="d", thread_id=OWNER_THREAD_ID,
-                     scope="user", role="owner", source="chat", content="today, not yesterday")
-    lines = today.yesterday(now).splitlines()
-    assert lines[:4] == [
-        "--- Yesterday, Thursday 2026-10-15 ---",
-        "In the background:",
-        "- 09:00 step-check: sent a step nudge [messaged you]",
-        "Conversation (Roi's messages and what was sent to him):",
-    ]
-    assert lines[4] == "- 09:00 sent: You're at 3,000 steps."
-    assert lines[5].startswith("- 12:00 Roi: walked to work x") and lines[5].endswith("…")
-    assert len(lines[5]) - len("- 12:00 Roi: ") == today.DAY_TEXT_CAP
-    assert len(lines) == 6, "no replies, slash commands, quiet ticks or other days"
-
-
-def test_yesterday_view_is_empty_on_a_quiet_day():
-    assert today.yesterday(datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)) == ""
+                     scope="user", role="owner", source="chat", content="the next day")
+    background, conversation = today.day_view(date(2026, 10, 15))
+    assert background == ["09:00 step-check: sent a step nudge [messaged you]"]
+    assert conversation[0] == "09:00 sent: You're at 3,000 steps."
+    assert conversation[1].startswith("12:00 Roi: walked to work x") and conversation[1].endswith("…")
+    assert len(conversation[1]) - len("12:00 Roi: ") == today.DAY_TEXT_CAP
+    assert conversation[2] == "12:00 Jarvis: a reply"
+    assert len(conversation) == 3, "no slash commands, quiet ticks or other days"

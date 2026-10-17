@@ -240,14 +240,13 @@ Guards:
   only write path. Roi's hand edits on disk remain possible; the lenient read
   side is the safety net for those.
 
-## Yesterday: the day view
+## Yesterday: the daily log
 
-A tick sees yesterday as the day view (`episodes/today.yesterday`), built by code
-from the episode store: what the heartbeat did (acting ticks, wakes, failures),
-the owner's messages, and what was sent to him. It replaced the model-written
-daily log (`daily/daily_YYYY-MM-DD.md`, a 3-hourly `daily-log` task), which was
-lagging, cost a tick every three hours, and missed chat after its last run of
-the day. Old daily files stay on disk; `/logs` shows any day's view.
+A tick sees yesterday as its daily log (`daily/daily_YYYY-MM-DD.md`), written the
+next morning by the morning job in one model call over the whole day (see
+MEMORY.md "Daily log"). It replaced a 3-hourly `daily-log` heartbeat task, which
+lagged, cost a tick every three hours, and missed chat after its last run of the
+day.
 
 ## Scheduled wakes (`run_wake`)
 

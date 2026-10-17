@@ -82,9 +82,9 @@ def clean_logs():
         os.remove(pending_mirrors.CURSOR_PATH)
     import compaction
 
-    import memory_suggestions
+    import dream
 
-    for path in (compaction.STATE_PATH, memory_suggestions.STATE_PATH):
+    for path in (compaction.STATE_PATH, dream.STATE_PATH):
         if os.path.exists(path):
             os.remove(path)
 
