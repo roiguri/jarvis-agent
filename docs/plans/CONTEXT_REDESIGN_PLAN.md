@@ -111,17 +111,17 @@ waits for the final merge.
 - [x] Integrity check in `scripts/context_report.py` (telemetry turns missing from the store, per
       day); the store is backed up with SQLite's online backup.
 - [x] Docs (MEMORY.md "Episode store", RUNTIME.md, CLAUDE.md), goldens, tests.
-- [ ] Verify on staging (steps in the PR): rows for a tool turn; today view after an acting tick;
-      `search_history` finds an earlier day; a full day passes the integrity check.
+- [x] Verify on staging (2026-10-17): rows for a tool turn; `search_history` finds an earlier day;
+      no turn missing since the store started (the one flagged turn ran before the store existed
+      and reached it through the log import; the check now starts at the import). The today view
+      after an acting tick waits for prod (staging runs without a heartbeat; final-merge item).
 
 **Final merge (after S7), deploy steps:**
 - [ ] Retire `chat_history.jsonl`: the heartbeat's today-chat slice and `scripts/trace.py` read the
       store; stop writing the log (owner, 2026-10-16: at the end of the redesign).
-- [ ] Prod `HEARTBEAT.md`, **before the restart onto the redesign**: in the `daily-log` task, replace
-      `(get_notification_history(limit=30), keeping today's)` with
-      `(search_history(kind="notifications", since=<today's date>))` — the old tool no longer
-      exists after S2. Skip if the task is removed in the same deploy (S6 makes the daily log
-      code-only). Staging's `HEARTBEAT.md` was changed this way on 2026-10-16.
+- [ ] Prod and staging `HEARTBEAT.md`, **before the restart onto the redesign**: remove the
+      `daily-log` task (the morning job writes the daily log now), and change `memory-index-audit`'s
+      step 7 to sending the report only (no "in the daily log"). See S6.
 - [ ] After both instances imported their logs: remove the import code (#157).
 - [ ] `backup_state.sh --prune` stops keeping every deploy tarball forever.
 - [ ] First live look at the today view (staging runs without a heartbeat, so S2's today view was
@@ -272,10 +272,10 @@ after a week of suggestions the owner likes.
       core-tool list says "history search".
 - [x] Jarvis keeps writing memory during conversations (owner, 2026-10-16); suggestions may point at
       those writes.
-- [ ] **Deploy step:** in prod `HEARTBEAT.md`, remove the `daily-log` task (replaces R4's "once a
-      night"), and change `memory-index-audit`'s step 7 from "Log a "System Integrity Report" in the
-      daily log AND send the report" to sending it only. Same edits on staging, with the owner's
-      go-ahead.
+- [ ] **Pre-deploy step** (owner, 2026-10-17: done at deploy, not now): in prod and staging
+      `HEARTBEAT.md`, remove the `daily-log` task (replaces R4's "once a night"), and change
+      `memory-index-audit`'s step 7 from "Log a "System Integrity Report" in the daily log AND send
+      the report" to sending it only.
 - [ ] Verify: on staging, a seeded day produces sensible suggestions in the morning note; a day with
       no conversation sends "nothing new"; `/dream yesterday` writes a log `/logs yesterday` shows.
 - *Later, in prod, after a week of suggestions the owner likes:* give the job the memory tools and
