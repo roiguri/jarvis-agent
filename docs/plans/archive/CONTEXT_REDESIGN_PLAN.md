@@ -103,7 +103,7 @@ waits for the final merge.
 - [x] Content: narrow credential scrub (API keys, GitHub tokens, Bearer, JWT, password/key/token
       fields); a row over 200k chars is cut; kept forever (§10 retention: forever for now, revisit
       only if size grows — ~80 KB of tool results a day in 2026-10).
-- [x] One-time import of `chat_history.jsonl` and `notifications.jsonl` (`TODO(#157)`).
+- [x] One-time import of `chat_history.jsonl` and `notifications.jsonl` (removed after both instances ran it, #157).
 - [x] `search_history` (FTS5; keywords or newest-in-range; `kind` chat/notifications/background/all;
       grouped by turn) replaces `get_chat_history` and `get_notification_history` outright, no
       aliases: S2 reaches prod only with the whole redesign.
@@ -241,7 +241,7 @@ after a week of suggestions the owner likes.
       in its metadata, owner 2026-10-16: no new event type); memory is not changed. No model call
       on a day with no owner message, and nothing sent then or on "Nothing to suggest." (owner).
       The pending mirror carries the whole note, so the owner can answer "do 2" in the conversation.
-      `/dream [yesterday|today]` runs it by hand (`TODO(#167)`: reconsider once suggestions end).
+      `/dream [yesterday|today]` runs it by hand (reconsider once suggestions end, #176).
 - [x] Prompt in `prompts/` with generic examples (public repo). Goals: carry forward what the owner
       said once, follow his preferences, stay current as time passes; the keep/drop rules in the
       report. Jarvis's own sends are context, and say something about the owner only where he

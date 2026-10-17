@@ -192,9 +192,10 @@ ties; prefix match; all terms, then any term), or the newest entries in a date r
 and reply. The user-scope prompt's **today view** lists today's heartbeat ticks that acted or
 messaged the owner, and wakes, from their `heartbeat_respond` calls (latest 20).
 
-**History before the store.** `chat_history.jsonl` and `notifications.jsonl` are imported once at
-startup (`source = import`; temporary code, `TODO(#157)`). Both logs are still written until the
-context redesign retires `chat_history.jsonl`.
+**History before the store.** Each instance imported `chat_history.jsonl` and `notifications.jsonl`
+once when the store arrived (rows with `source = import` and no turn id; the time is in the `meta`
+table as `log_import`, where the integrity check starts). Both logs are still written until
+`chat_history.jsonl` is retired.
 
 **Integrity.** `scripts/context_report.py` lists, per day, telemetry turns missing from the store.
 Backups copy the store with SQLite's online backup (`deploy/backup_state.sh`).

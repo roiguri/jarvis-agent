@@ -99,7 +99,7 @@ async def _compact(inbound: InboundMessage, args: list[str]) -> str:
     ])
 
 
-# TODO(#167): consider removing once memory suggestions end.
+# TODO(#176): consider removing once memory suggestions end.
 @command("dream", "Write the daily log and send the memory suggestions now. Sub: /dream yesterday|today")
 async def _dream(inbound: InboundMessage, args: list[str]) -> str:
     import datetime as _dt
