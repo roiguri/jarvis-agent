@@ -1,7 +1,9 @@
 # Context Redesign — Plan
 
-**Date:** 2026-10-07 · **Status:** S0 in prod since 2026-10-10 (#151); before-readings recorded
-2026-10-16 (§9); cache question answered; S1 next.
+**Date:** 2026-10-07 · **Status:** ARCHIVED 2026-10-17. S0 in prod since 2026-10-10 (#151);
+S1–S6 merged into `feat/context-redesign` and verified on staging, deployed with the final merge
+(owner, 2026-10-17: deploy S0–S6 first). S7 moved to #172. The final-merge deploy steps below are
+the deploy checklist; after-readings (§9) and phase 2 of the suggestions follow in prod.
 **Problems addressed:** [context/PROBLEMS.md](context/PROBLEMS.md) A4, A5, A6, A7, A10, C1, C2, C3,
 C4, D1, F2, plus #81 and #106, and the tool/skill cost the research measured (about half of every
 user call).
@@ -22,7 +24,7 @@ skeletons, and are not repeated here.
 ## Slices
 
 **Branch flow (owner, 2026-10-07):** each slice is a PR against `feat/context-redesign`, which
-merges to `main` only when all slices are done. The one exception is S0: it is measurement only, so
+merges to `main` only when all slices are done (S0–S6; S7 split off on 2026-10-17). The one exception is S0: it is measurement only, so
 it goes to `main` early and gives real prod baselines; `main` is then merged back into the redesign
 branch. Later slices are verified on staging and with dry runs, and read in prod after the final
 merge.
@@ -286,7 +288,7 @@ after a week of suggestions the owner likes.
   missed-run warning, the health footer, separate size-management and reorganize steps,
   `valid_until`, a seeding pass over old history, and a simulation on prod data.
 
-**S7 — Last, and gated.**
+**S7 — moved to #172 (owner, 2026-10-17), to be done after the deploy against prod readings.**
 - [ ] Embeddings over the episode store (sqlite-vec, fused with FTS5); keyword results still
       returned when embeddings are unavailable.
 - [ ] One home per rule: tool rules in docstrings; duplicates removed from AGENTS.md, heartbeat.md
@@ -296,7 +298,8 @@ after a week of suggestions the owner likes.
 - [ ] *Gated:* weekly replay (re-read 7 days for cross-day patterns; replaces `memory-index-audit`)
       only if nightly runs visibly miss such patterns.
 - [ ] *Gated:* flag topic files no turn has read for ~60 days, if stale files become a problem.
-- [ ] **Deploy step:** remove the `get_*_history` aliases once no task text names them.
+- [x] ~~**Deploy step:** remove the `get_*_history` aliases~~ — none were added (S2 replaced the
+      tools outright).
 
 ---
 
@@ -454,7 +457,7 @@ the review summary.
 | 7 | Search and history | FTS5 first, embeddings last; git for memory postponed (2026-10-07) |
 | 8 | Size limits | Targets USER.md 4,000 / MEMORY.md 8,000 chars, SOUL.md none; writes never refused; the nightly job moves detail down; prompt cut at 3× a target as a safety net (owner, 2026-10-16) |
 | 9 | Episode store | Replaces `chat_history.jsonl` in three steps (R5); forever; full tool results; all ticks |
-| 10 | Daily logs | Code-only from S6: the heartbeat's "yesterday" comes from the episode store; no daily files written (owner, 2026-10-16; replaced R4) |
+| 10 | Daily logs | Written by the morning job, one model call over the finished day; the heartbeat's "yesterday" (owner, 2026-10-17; replaced the code-only view of 2026-10-16, which replaced R4) |
 | 11 | Consolidator visibility | The suggestions arrive in a morning note; "nothing new" on a quiet day |
 | R2 | Skill unloading | After ~3h of owner silence, plus at compaction |
 | R6 | Weekly replay | Only if nightly runs miss cross-day patterns |

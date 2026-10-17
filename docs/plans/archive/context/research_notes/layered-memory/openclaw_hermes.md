@@ -2,7 +2,7 @@
 
 **Scope and pins.** This updates and extends the internal 2026-08-25 deep dives, which were pinned at
 `openclaw/openclaw@d7455529` (commit date 2026-08-24) and `NousResearch/hermes-agent@41447a6`
-(2026-08-25): see `docs/plans/context/reference/OPENCLAW_DEEP_DIVE.md`, `HERMES_DEEP_DIVE.md` and
+(2026-08-25): see `docs/plans/archive/context/reference/OPENCLAW_DEEP_DIVE.md`, `HERMES_DEEP_DIVE.md` and
 the synthesis `REFERENCE_ARCHITECTURES.md`. This pass reads:
 - **OpenClaw @ `cc7e664dfe34`** (main, 2026-10-06). The latest stable release is `v2026.9.8`, and
   `v2026.10.1-beta.1` is tagged. There are 23,803 commits since the earlier pin.
