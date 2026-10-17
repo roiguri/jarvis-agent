@@ -8,7 +8,7 @@ standardizes three things the call sites used to hand-roll:
 
 - notification logging: sends tagged with an event type are appended to
   notifications.jsonl via an injected sink (the gateway imports nothing from
-  the tools layer);
+  the tools layer). The tag is also handed to the channel, which may show it;
 - failure reporting: a send never raises — it returns a SendOutcome so the
   caller can decide what a failed delivery means for its own bookkeeping;
 - thread->event-loop bridging: module-level bind_loop()/submit() let sync
@@ -89,7 +89,7 @@ class Outbox:
         """Send text to the owner. Logs to the notification sink on success
         when an event type is given; never raises."""
         try:
-            await self._channel.send_to_owner(text)
+            await self._channel.send_to_owner(text, event=event)
         except Exception as e:
             logger.exception("Outbox: failed to send owner message (event=%s)", event)
             return SendOutcome(ok=False, error=str(e))
@@ -108,7 +108,7 @@ class Outbox:
         """Send media to the owner. Same logging/failure semantics as
         notify_owner; the caption is what gets logged."""
         try:
-            await self._channel.send_to_owner_media(kind, payload, caption)
+            await self._channel.send_to_owner_media(kind, payload, caption, event=event)
         except Exception as e:
             logger.exception("Outbox: failed to send owner media (event=%s)", event)
             return SendOutcome(ok=False, error=str(e))
@@ -129,7 +129,7 @@ class Outbox:
         channel.supports_block(); an unsupported kind surfacing here is still
         just a failed SendOutcome, never a raise."""
         try:
-            await self._channel.send_block(text, block)
+            await self._channel.send_block(text, block, event=event)
         except Exception as e:
             logger.exception(
                 "Outbox: failed to send owner block (kind=%s, event=%s)",

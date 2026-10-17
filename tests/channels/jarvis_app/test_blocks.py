@@ -213,7 +213,7 @@ class Hanging:
     def supports_block(self, kind):
         return True
 
-    async def send_block(self, text, block):
+    async def send_block(self, text, block, *, event=None):
         await asyncio.sleep(3600)
 
 
