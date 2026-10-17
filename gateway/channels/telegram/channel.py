@@ -100,11 +100,12 @@ class TelegramChannel(Channel):
             raise NotImplementedError(f"TelegramChannel cannot send media kind={kind!r}")
         await self._send_photo(int(chat_id), payload, caption)
 
-    async def send_to_owner(self, text: str) -> None:
+    async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         await self._send_text(self._owner_id, text)
 
     async def send_to_owner_media(
-        self, kind: str, payload: bytes, caption: str | None = None
+        self, kind: str, payload: bytes, caption: str | None = None,
+        *, event: str | None = None,
     ) -> None:
         if kind != "image":
             raise NotImplementedError(f"TelegramChannel cannot send media kind={kind!r}")

@@ -26,8 +26,27 @@ except ImportError:
 from gateway.base import Channel, OWNER_THREAD_ID
 from gateway.blocks import Form
 from gateway.channels.jarvis_app.client import HubClient
+from gateway.outbox import EVENT_HEARTBEAT, EVENT_LLM_MEDIA, EVENT_MEDIA, EVENT_REMINDER
 
 logger = logging.getLogger(__name__)
+
+# Outbox event tag -> the hub's `meta.source`. The hub accepts a closed set and
+# refuses anything else, so an event missing here sends no meta at all (the hub
+# then records "agent") rather than a value that would fail the send.
+_EVENT_SOURCE = {
+    EVENT_HEARTBEAT: "heartbeat",
+    EVENT_REMINDER: "reminder",
+    EVENT_MEDIA: "notifier",
+    EVENT_LLM_MEDIA: "notifier",
+}
+
+
+def _with_source(body: dict, event: str | None) -> dict:
+    source = _EVENT_SOURCE.get(event)
+    if source is not None:
+        body["meta"] = {"source": source}
+    return body
+
 
 # Longest edge of the blur-up placeholder thumbnail, matching the app's own
 # outbound encoder (AttachmentBlurEncoder): ~24px, JPEG quality 60.
@@ -132,16 +151,17 @@ class JarvisAppChannel(Channel):
         # One owner, one conversation — chat_id is not a routing key here.
         await self._upload_and_send(kind, payload, caption)
 
-    async def send_to_owner(self, text: str) -> None:
-        await self._client.send_message({"text": text})
+    async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
+        await self._client.send_message(_with_source({"text": text}, event))
 
     async def send_to_owner_media(
-        self, kind: str, payload: bytes, caption: str | None = None
+        self, kind: str, payload: bytes, caption: str | None = None,
+        *, event: str | None = None,
     ) -> None:
-        await self._upload_and_send(kind, payload, caption)
+        await self._upload_and_send(kind, payload, caption, event)
 
     async def _upload_and_send(
-        self, kind: str, payload: bytes, caption: str | None
+        self, kind: str, payload: bytes, caption: str | None, event: str | None = None
     ) -> None:
         # Raises NotImplementedError for an unrepresentable kind — before any
         # upload — so the Outbox reports a failed send with nothing half-sent.
@@ -154,12 +174,12 @@ class JarvisAppChannel(Channel):
         body: dict = {"attachment_ids": [att_id]}
         if caption:
             body["text"] = caption
-        await self._client.send_message(body)
+        await self._client.send_message(_with_source(body, event))
 
     def supports_block(self, kind: str) -> bool:
         return any(cls.kind == kind for cls in _BLOCK_WIRE)
 
-    async def send_block(self, text: str, block) -> None:
+    async def send_block(self, text: str, block, *, event: str | None = None) -> None:
         # One POST carries text and block together, so the all-or-nothing
         # contract holds without any compensation logic.
         to_wire = _BLOCK_WIRE.get(type(block))
@@ -167,7 +187,9 @@ class JarvisAppChannel(Channel):
             raise NotImplementedError(
                 f"jarvis-app cannot render block kind={getattr(block, 'kind', '?')!r}"
             )
-        await self._client.send_message({"text": text, "blocks": [to_wire(block)]})
+        await self._client.send_message(
+            _with_source({"text": text, "blocks": [to_wire(block)]}, event)
+        )
 
     def authorize(self, raw_user_id: str) -> bool:
         # The bot token scopes the hub to the single owner, so inbound updates are

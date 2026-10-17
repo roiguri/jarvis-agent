@@ -59,7 +59,7 @@ class FakeChannel:
     def __init__(self):
         self.texts = []
 
-    async def send_to_owner(self, text):
+    async def send_to_owner(self, text, *, event=None):
         self.texts.append(text)
 
 

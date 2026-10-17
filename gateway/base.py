@@ -67,18 +67,24 @@ class Channel(ABC):
         raise NotImplementedError; the caller downgrades or skips."""
 
     @abstractmethod
-    async def send_to_owner(self, text: str) -> None:
+    async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         """Proactive send to the channel's owner (Plane 2, proactive path).
 
         The decoupling seam for heartbeat / confirmation outcomes: callers have no
         chat_id. The channel reads its own owner-config env at construction and
-        addresses internally."""
+        addresses internally.
+
+        `event` is the Outbox's event tag (an outbox.EVENT_* value, None when
+        untagged). A channel with somewhere to show where a message came from
+        maps it onto its wire; any other channel ignores it."""
 
     @abstractmethod
     async def send_to_owner_media(
-        self, kind: str, payload: bytes, caption: str | None = None
+        self, kind: str, payload: bytes, caption: str | None = None,
+        *, event: str | None = None,
     ) -> None:
-        """Proactive media send to the channel's owner (e.g. Sonarr/Radarr posters)."""
+        """Proactive media send to the channel's owner (e.g. Sonarr/Radarr posters).
+        `event` as in send_to_owner."""
 
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool:
@@ -108,9 +114,9 @@ class Channel(ABC):
         here, and a send that still fails is an ordinary transient failure."""
         return False
 
-    async def send_block(self, text: str, block) -> None:
+    async def send_block(self, text: str, block, *, event: str | None = None) -> None:
         """Send `text` to the owner with `block` (a gateway.blocks.Block)
         attached. All-or-nothing: a channel must never deliver the text without
         the block, or the owner gets a dangling opener pointing at a card that
-        isn't there."""
+        isn't there. `event` as in send_to_owner."""
         raise NotImplementedError(f"{self.name} does not render blocks")

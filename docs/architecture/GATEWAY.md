@@ -74,7 +74,7 @@ sequenceDiagram
 Two flavors of outbound:
 
 1. **Reply to an inbound** — the channel router knows the originating `chat_id` and posts the reply back. This path uses `Channel.send(chat_id, text)` (or `send_media`) and stays inside the channel package.
-2. **Proactive send** — heartbeat, reminder, confirmation-outcome, or webhook-triggered messages. The caller has no `chat_id`. This path goes through the **Outbox** (`gateway/outbox.py`), the single domain→channel seam for owner-addressed sends; the Outbox calls `Channel.send_to_owner(text)` / `send_to_owner_media(...)`.
+2. **Proactive send** — heartbeat, reminder, confirmation-outcome, or webhook-triggered messages. The caller has no `chat_id`. This path goes through the **Outbox** (`gateway/outbox.py`), the single domain→channel seam for owner-addressed sends; the Outbox calls `Channel.send_to_owner(text)` / `send_to_owner_media(...)`, passing the send's `event` tag through (a channel that can show where a message came from maps it onto its wire — jarvis-app sets the hub's `meta.source`; Telegram ignores it).
 
 ```
 agent reply ─────▶ Channel.send(chat_id, text) ─────▶ External system
@@ -432,9 +432,9 @@ class Channel(ABC):
     async def send_media(self, chat_id: str, kind: str, payload: bytes, caption: str | None = None) -> None: ...
 
     @abstractmethod
-    async def send_to_owner(self, text: str) -> None: ...
+    async def send_to_owner(self, text: str, *, event: str | None = None) -> None: ...
     @abstractmethod
-    async def send_to_owner_media(self, kind: str, payload: bytes, caption: str | None = None) -> None: ...
+    async def send_to_owner_media(self, kind: str, payload: bytes, caption: str | None = None, *, event: str | None = None) -> None: ...
 
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool: ...
@@ -450,7 +450,7 @@ class Channel(ABC):
 
     # Interactive blocks (gateway/blocks/) — optional, kind-generic:
     def supports_block(self, kind: str) -> bool:          # default False
-    async def send_block(self, text: str, block) -> None: # default raises NotImplementedError
+    async def send_block(self, text: str, block, *, event: str | None = None) -> None: # default raises NotImplementedError
 ```
 
 | Method | Purpose | Notes |
