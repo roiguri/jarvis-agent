@@ -263,8 +263,9 @@ after a week of suggestions the owner likes.
       `/logs <date>` shows it; `/logs today` shows the code-built day view, now with Jarvis's
       replies. `/dream` runs both. A cut-off answer (finish reason `MAX_TOKENS`) is not written.
       Evals: 4 cases in `evals/cases/daily_log/`, all 3/3.
-- [ ] Decide the suggestions' output cap: the first staging note (2026-10-17) was cut off when 3,931
-      of its 4,096 output tokens went to thinking (owner: discuss after the daily log).
+- [x] The suggestions' output cap: the first staging note (2026-10-17) was cut off when 3,931 of
+      its 4,096 output tokens went to thinking. The cap is now 16,384 with thinking left on, and a
+      note that still stops at the cap is not sent (owner, 2026-10-17).
 - [x] AGENTS.md's daily-log line removed (it named the chat- and notification-history tools S2
       replaced with `search_history`, whose own description covers it); its "sliding window of the
       last 50 messages" line, wrong since S5, now says older conversation arrives as a summary; the

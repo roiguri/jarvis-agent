@@ -276,7 +276,7 @@ judgement; code imposes no rules on memory. The note goes out as a `notification
 `job: "memory_suggestions"` in its metadata, which also lifts the pending-mirror's per-entry cap so
 the whole note reaches the conversation: the owner can answer "do 2 and 5" and Jarvis applies them
 with its memory tools. A day with no owner message makes no model call; "Nothing to suggest." sends
-nothing. Each run is a telemetry job row
+nothing; a note cut off at the output cap is not sent. Each run is a telemetry job row
 (`job = "memory_suggestions"`).
 
 ---
