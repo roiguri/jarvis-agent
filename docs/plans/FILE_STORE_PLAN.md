@@ -16,7 +16,7 @@ shared links).
 - [x] **S0 — Prototype.** Done 2026-10-23 — the tool-result path works (see S0 results). No repo code. A throwaway script (run by the owner — it needs the API
       key) proves media in a tool result works with our library and model, and that stripping
       it from history afterwards does not break the next call. Records sizes and costs.
-- [ ] **S1 — Deploy backups.** Independent of everything else. Prune deploy-tagged snapshots
+- [x] **S1 — Deploy backups.** Independent of everything else. Prune deploy-tagged snapshots
       (keep the last few), and document that stored files are out of deploy snapshots and
       covered by the Proxmox container backup.
 - [ ] **S2 — Store core.** New top-level `files/` package: ids, on-disk layout, the index,

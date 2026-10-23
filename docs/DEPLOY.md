@@ -44,7 +44,7 @@ What it does, and why each step fails closed:
 7. **Import smoke check** — `JARVIS_ROOT=/app venv/bin/python -c "import main"`. The prefix is mandatory (config is fail‑closed).
 8. **Path‑isolation check** (`check_paths.py`) — no module hardcodes a prod path.
 9. **Unit assertion** — the installed `jarvis.service` still declares `JARVIS_ROOT` (a lost line would fail‑closed on the next boot, which the smoke check can't see).
-10. **Prunes old backups**, then **prints the restart hand‑off**.
+10. **Prunes old backups** (newest 10 plus the last 5 deploys' snapshots), then **prints the restart hand‑off**.
 
 Any failure aborts **before** the restart. After it succeeds:
 
@@ -100,13 +100,20 @@ JARVIS_ROOT=/app/jarvis_staging deploy/backup_state.sh staging-snap   # a differ
 # (never deletes), unpacks, hands off the restart
 deploy/backup_state.sh --restore /app/backups/state-pre-change-<ts>.tar.gz
 
-# prune: keep the newest N (default 10) plus every deploy-tagged tarball
+# prune: keep the newest N (default 10) plus the snapshots of the last 5 deploys
 deploy/backup_state.sh --prune
+deploy/backup_state.sh --prune --dry-run   # list what would go; delete nothing
 ```
 
 Take a snapshot with the service **stopped** for a consistent DB; a live snapshot may
 catch the DB `-wal` mid‑write (fine for restore‑to‑a‑point). `deploy.sh` calls it
 automatically; run it by hand before any risky manual edit.
+
+**Two backups, two jobs.** These snapshots undo the last few deploys: `rollback.sh`
+auto-picks the matching snapshot for any of the last 5 deploys, and lists what is left
+when an older one has none. Losing the disk or the container is covered by the Proxmox
+container backup, not by these (they sit on the same disk). Anything kept outside the two
+state trees is never in these snapshots and is covered by the container backup alone.
 
 ---
 
