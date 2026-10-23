@@ -13,7 +13,7 @@ shared links).
 
 ## Slices
 
-- [ ] **S0 — Prototype.** No repo code. A throwaway script (run by the owner — it needs the API
+- [x] **S0 — Prototype.** Done 2026-10-23 — the tool-result path works (see S0 results). No repo code. A throwaway script (run by the owner — it needs the API
       key) proves media in a tool result works with our library and model, and that stripping
       it from history afterwards does not break the next call. Records sizes and costs.
 - [ ] **S1 — Deploy backups.** Independent of everything else. Prune deploy-tagged snapshots
@@ -348,6 +348,46 @@ A scratch script, never committed, run by the owner from the code root. Answers:
 
 The fallback, for (1)/(2) failing or a long video: put the file in the next model call's input
 as a `media` block rather than in the tool result (inbound media already works that way).
+
+### S0 results (2026-10-23, `gemini-3-flash-preview`, `langchain-google-genai` 4.2.6)
+
+Run by the owner from a scratch script: a dummy `open_file` tool bound the way the agent binds
+tools; the model asked for the file, the file came back as a standard data block, then the same
+history with the file stripped to the plain-string marker was sent again.
+
+| Case | Size | B: seen in tool result | Input tokens | C1 same turn stripped | C2 next turn stripped |
+|---|---|---|---|---|---|
+| Image (generated, known text) | <0.1 MB | ✓ exact text read | 473 | ok | ok |
+| PDF (generated, known text) | <0.1 MB | ✓ exact code read | 720 | ok | ok |
+| Audio (voice-over of a recipe) | 0.3 MB | ✓ recipe followed | 1,160 | ok | ok |
+| Video (reel) | 0.9 MB | ✓ | 536 | ok | ok |
+| Video (same ~1-min recipe at 3 encodings) | 7.5 / 16.1 / 24.6 MB | ✓ all three | ~8,200 each | ok | ok |
+
+1. **Q1 — yes.** Image, audio, video and PDF are all seen inside a tool result as standard data
+   blocks; known details came back exactly. Per-part `media_resolution` (low) is accepted.
+2. **Q2 — yes.** Stripping the file afterwards breaks nothing, in the same turn or the next; no
+   thought-signature errors. After stripping, the model answers the follow-up from its own
+   earlier reply.
+3. **Q3 — 24.6 MB works** (11 s); the limit was not reached. 25–50 MB (the link-video cap) is
+   untested in a tool result; inbound inlining has read 42 MB before. Cost follows duration, not
+   file size: three encodings of one video cost the same.
+4. **Q4 — no clipping** (checked offline against the library's converter): no block shape
+   carries `video_metadata` into a tool result, and the legacy `{"type": "media"}` block turns
+   into base64 text inside the function response. Long videos take the fallback.
+5. **Q5 — background records are cheap.**
+
+   | Kind | Time | Input / output tokens | Cost |
+   |---|---|---|---|
+   | Image | 1.1 s | 334 / 42 | $0.0003 |
+   | PDF (one page) | 1.8 s | 327 / 31 | $0.0003 |
+   | Voice clip (0.3 MB) | 2.2 s | 1,013 / 200 | $0.0011 |
+   | Reel (0.9 MB) | 3.1 s | 391 / 82 | $0.0004 |
+   | ~1-min video (7.5 MB) | 8.3 s | 8,076 / 1,526 | $0.0086 |
+
+   A hundred photos and a few videos a month is a few cents.
+
+**Decision for S4:** the tool result is the main path for every kind. The fallback (next call's
+input) is used only for videos longer than the clip length, which need clipping.
 
 ### S1 — Deploy backups
 
