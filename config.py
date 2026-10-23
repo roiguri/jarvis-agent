@@ -22,6 +22,9 @@ def derive(root: str) -> dict:
         "ROOT": root,
         "MEMORY_DIR": os.path.join(root, "jarvis_memory"),
         "DATA_DIR": os.path.join(root, "jarvis_data"),
+        # Stored file bytes: outside both state trees, so deploy snapshots never copy
+        # them; derived here only (never .env, which is copied between instances).
+        "FILES_DIR": os.path.join(root, "jarvis_files"),
         "ENV_FILE": os.path.join(root, "secrets", ".env"),
         "INSTANCE": os.path.basename(root),  # log label only: "app", "jarvis_staging"
     }
@@ -54,6 +57,7 @@ _paths = _load()
 ROOT = _paths["ROOT"]
 MEMORY_DIR = _paths["MEMORY_DIR"]
 DATA_DIR = _paths["DATA_DIR"]
+FILES_DIR = _paths["FILES_DIR"]
 ENV_FILE = _paths["ENV_FILE"]
 INSTANCE = _paths["INSTANCE"]
 

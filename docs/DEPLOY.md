@@ -114,6 +114,10 @@ auto-picks the matching snapshot for any of the last 5 deploys, and lists what i
 when an older one has none. Losing the disk or the container is covered by the Proxmox
 container backup, not by these (they sit on the same disk). Anything kept outside the two
 state trees is never in these snapshots and is covered by the container backup alone.
+The file store's bytes (`$ROOT/jarvis_files/`) are such a case; its index is in the
+snapshot. After any `--restore`, run `JARVIS_ROOT=<root> venv/bin/python
+scripts/files_verify.py`: an older index can name files whose bytes were collected since,
+and those show up as missing.
 
 ---
 

@@ -65,7 +65,8 @@ cmd_backup() {
     # Written on every turn, so these go in as SQLite online-backup copies
     # (consistent while the service runs) in place of the live files.
     local stores=() rel
-    for rel in jarvis_data/observability/telemetry.sqlite jarvis_data/episodes/episodes.sqlite; do
+    for rel in jarvis_data/observability/telemetry.sqlite jarvis_data/episodes/episodes.sqlite \
+               jarvis_data/files/files.sqlite; do
         [[ -f "$ROOT/$rel" ]] && stores+=("$rel")
     done
     if (( ${#stores[@]} )); then

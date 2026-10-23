@@ -19,7 +19,7 @@ shared links).
 - [x] **S1 — Deploy backups.** Independent of everything else. Prune deploy-tagged snapshots
       (keep the last few), and document that stored files are out of deploy snapshots and
       covered by the Proxmox container backup.
-- [ ] **S2 — Store core.** New top-level `files/` package: ids, on-disk layout, the index,
+- [x] **S2 — Store core.** New top-level `files/` package: ids, on-disk layout, the index,
       add / get / remove with a safe write order, file states, the reference interface with a
       dry-run report, and a `verify` script. No callers yet.
 - [ ] **S3a — Channel switch-over.** New attachment shape (channels hand bytes), saving in one

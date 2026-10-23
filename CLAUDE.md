@@ -51,6 +51,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
 ├── episodes/              # The episode store: everything that happened, recorded by code; search_history
 │                          #   and the today view read it (see docs/architecture/MEMORY.md "Episode store")
+├── files/                 # The file store: every stored file by id — bytes in jarvis_files/, index in
+│                          #   jarvis_data/files/ (see docs/plans/FILE_STORE_PLAN.md)
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
@@ -80,11 +82,15 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                                   #   180-day, app-only (observability/), agent never reads
 ├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
 │                                   #   read via search_history and the today view
+├── files/files.sqlite              # file store index: one row per stored file, derived text, search chunks
 ├── dream/state.json                # the morning job's last run date (catch-up after a restart)
 ├── web/tmp/                        # fetch_url's video downloads — one temp dir per call, removed
 │                                   #   after it; leftovers older than an hour swept on next use
 └── logs/
     └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
+
+/app/jarvis_files/ab/cd/<sha256>   # file store bytes, named by content hash; outside both state trees
+                                   #   (never in deploy snapshots — the Proxmox backup covers them)
 
 /app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
                                                  #   absolute paths from gateway/channels/telegram/media_cache.py)
