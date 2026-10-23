@@ -8,9 +8,11 @@ from datetime import date, datetime, timezone
 import pytest
 from langchain_core.messages import AIMessage
 
+import agent
 import daily_log
 import dream
 import memory_suggestions
+import turn_budget
 from episodes import store
 from gateway.base import OWNER_THREAD_ID
 from tests.fakes import FakeLLM
@@ -94,7 +96,8 @@ def test_a_cut_off_answer_is_not_written(model):
 def test_the_morning_job_runs_once_a_day_and_catches_up(model, fake_outbox, monkeypatch):
     seed_day()
     model("## Conversations\n- Steps.")
-    model("Facts\n1. ...", module=memory_suggestions)
+    monkeypatch.setattr(agent, "ask_jarvis", lambda *a, **k: turn_budget.TurnOutcome(
+        kind=turn_budget.COMPLETED, text="Facts\n1. ..."))
     frozen = type("D", (datetime,), {"now": classmethod(lambda c, tz=None: NOW if tz is None else NOW.astimezone(tz))})
     for module in (dream, daily_log, memory_suggestions):
         monkeypatch.setattr(module, "datetime", frozen)

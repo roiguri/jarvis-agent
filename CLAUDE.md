@@ -28,7 +28,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   /compact, /context); see docs/architecture/MEMORY.md "Compaction"
 ├── dream.py               # the morning job (/dream): yesterday's daily log (daily_log.py) and memory
 │                          #   suggestions (memory_suggestions.py, sent to the owner; memory unchanged) —
-│                          #   two separate model calls; MEMORY.md "Daily log" / "Memory suggestions"
+│                          #   a model call and a background turn; MEMORY.md "Daily log" / "Memory suggestions"
 ├── timeutils.py           # shared Israel-time home: ISRAEL_TZ + Sunday-anchored week bounds
 ├── pending_mirrors.py     # pending-mirror drain: proactive sends → owner-thread history (cursor-stamped)
 ├── main.py                # Entry point
@@ -133,6 +133,7 @@ MEMORY.md          (memory dir — index of memory files; agent-maintained)
                          history via the pending-mirror drain, not the prompt)
 ─ heartbeat scope ─────  _HEARTBEAT_FRAMING + prompts/heartbeat.md + HEARTBEAT.md
                          + today's user chat + today view + yesterday's daily log
+─ dream scope ─────────  _DREAM_FRAMING only (the morning memory review; its input carries the rest)
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
 ```
 

@@ -395,6 +395,15 @@ def test_deadline(use_llm, set_budget):
                for t in timeouts), "every call got a capped timeout"
 
 
+def test_a_dream_call_gets_longer_than_a_chat_call(use_llm):
+    """The morning review's calls may run past the chat limit, up to its own."""
+    loop = use_llm(LoopingLLM(answer_at=1))
+    out = agent.ask_jarvis("review", "dream", scope="dream")
+    assert out.kind == turn_budget.COMPLETED
+    (timeout,) = [kw.get("timeout") for _, _, kw in loop.log]
+    assert agent.LLM_CALL_TIMEOUT_S < timeout <= turn_budget.POLICIES["dream"].budget.call_timeout_s
+
+
 def test_token_budget(use_llm, set_budget):
     """Cumulative input past the ceiling ends the turn."""
     set_budget("user", max_llm_calls=50, max_input_tokens=100_000)

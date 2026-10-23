@@ -1,0 +1,10 @@
+description: Things Jarvis put in a list or a reminder already have a home; none of them is suggested for memory, and nothing is written.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "09:00", owner: "add this to my reading list: https://example.com/long-read-on-sleep", jarvis: "Added \"A long read on sleep\" to your Reading List (#14)."}
+  - {time: "12:30", owner: "remind me friday at 10 to call the bank", jarvis: "Reminder set for Friday 10:00: call the bank."}
+  - {time: "18:00", owner: "add oat milk and eggs to the shopping list", jarvis: "Added oat milk and eggs to your Shopping list."}
+expect:
+  not_called: [write_memory]
+  message_not_matches: ["sleep", "bank", "oat milk", "eggs", "shopping"]

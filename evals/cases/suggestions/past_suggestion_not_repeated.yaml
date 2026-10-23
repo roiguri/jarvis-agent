@@ -1,0 +1,10 @@
+description: A suggestion from an earlier note that the owner did not take up is not made again without new reason.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "08:30", days_ago: 2, job: memory_suggestions, event: notification, sent: "🧠 Memory suggestions\n\nCorrections & preferences\n1. USER.md: in \"Standing preferences\", add \"Prefers aisle seats on flights.\" Roi said \"aisle please, always\"."}
+  - {time: "09:00", owner: "what's the weather tomorrow in Haifa?", jarvis: "Sunny, 27°C, light wind in the afternoon."}
+  - {time: "13:00", owner: "thanks. and what time does the sun set there?", jarvis: "Sunset in Haifa tomorrow is at 17:58."}
+expect:
+  not_called: [write_memory]
+  message_not_contains: ["aisle"]
