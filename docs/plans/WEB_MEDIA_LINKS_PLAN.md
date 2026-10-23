@@ -1,6 +1,6 @@
 # Web media links — let Jarvis read a shared reel or video
 
-**Date:** 2026-10-23 · **Status:** planned, not started · **Branch:** `feat/web-media-links`
+**Date:** 2026-10-23 · **Status:** S0 measured; S1 in progress · **Branch:** `feat/web-media-links`
 **Goal:** a link shared into Jarvis from Instagram, TikTok or YouTube is *read* — who posted it,
 the caption, what is shown and said — and filed where it belongs, instead of failing or being
 guessed at.
@@ -9,7 +9,7 @@ guessed at.
 
 ## Slices
 
-- [ ] **S0 — Measure.** No repo code. Answer the open facts below against the live APIs and
+- [x] **S0 — Measure.** No repo code. Answer the open facts below against the live APIs and
       record the numbers here before S1 starts.
 - [ ] **S1 — Instagram and TikTok.** `fetch_url` routes their links to a new media path: yt-dlp
       downloads the video, one side model call describes it, code adds the author and caption.
@@ -98,6 +98,26 @@ Scratch scripts only (scratchpad venv); nothing committed except the results rec
 4. **TikTok without login**: a public video downloads with uploader and caption.
 5. **Side-call cost**: input tokens and latency for a 30 s and a 90 s reel at low resolution.
 
+### S0 results (2026-10-23, yt-dlp 2026.10.21)
+
+| Check | Result |
+|---|---|
+| Allowlist (`--use-extractors TikTok,vm.tiktok,Instagram`) | `example.com`, `192.168.1.1`, `instagram.com.evil.lan` all refused — generic unreachable |
+| TikTok, no login | Works **only with `curl_cffi`** (impersonation); without it "Unexpected response". 88 s recipe: uploader, full ingredient caption, audio. Progressive h264 720p ≈ 16 MB; h265 540p ≈ 7 MB also carries audio |
+| Instagram recipe reel, no login | Works: uploader, channel handle, upload date, full caption. Progressive mp4 (h264, 720p, 7.3 MB) carries audio though metadata says "unknown"; DASH streams are split video/audio |
+| Instagram older test reels | Progressive formats silent, no audio stream — those posts simply have no sound |
+| Instagram duration | Not in metadata (`NA`) — size cap is the only pre-download bound |
+| Gemini + YouTube URL (`gemini-3-flash-preview`) | Works for watch and `/shorts/` URLs. Clipping applies to URLs: 22-min video 122,259 → 22,955 prompt tokens with `end_offset=600s, fps=0.2` (36 s vs 43 s latency). Short: 2,230 → 976 |
+| Tavily on YouTube | Returns title, channel ("J. Kenji López-Alt"), post date, description — S2 stays provider-only, no oEmbed |
+| Tavily on Instagram | Login-wall page (1,391 chars) that still contains the handle and caption — non-empty, so it would pass today's "no text" check. Confirms: no Tavily fallback for Instagram |
+| Inline reel cost (low res) | Instagram 7.3 MB reel: 3,494 prompt tokens, 9.7 s. TikTok 88 s: 8,050 tokens, ~14 s, for both the h265 7.5 MB and h264 16 MB files — h265 reads fine, so prefer the smaller file |
+| Output completeness | First run used a "short parts" prompt and a 1,500-token cap; two answers stopped at ~56 output tokens — thinking tokens count toward the cap. With `thinking_level=LOW` and a 4,096 cap both reels finished `STOP` (728 and 992 output tokens, 6–8 s) with a full transcript and on-screen text |
+| **Invented specifics** | The ramen reel's "Shown" section listed "1 tablespoon of red Thai curry paste", "1/4 can of coconut milk", "1–2 cloves" — none said, written, or in the caption. The model filled gaps. Every real quantity in both reels was in the transcript or on-screen text. Fix: a domain-neutral prompt that forbids unstated specifics (S1 "Side call"); re-measure on the ramen reel |
+
+Prior art found: OpenClaw's `clawdbites` skill does recipe extraction from public reels the same
+way (yt-dlp, no login): caption first, then Whisper on the audio, then frames via ffmpeg. Gemini
+reading the video directly replaces the Whisper and frame steps.
+
 ## S1 — Instagram and TikTok
 
 **Files:** new `tools/web/media.py` (private helpers, no `@tool_register`), `tools/web/fetch.py`
@@ -112,8 +132,12 @@ lazily.
 killed and its memory stays out of the main process.
 - `--use-extractors` set to the allowed list (generic is unreachable), no cookies, no
   post-processors, no `--exec`, fixed output template `%(id)s.%(ext)s`.
-- Format: one stream with both video and audio, http protocol, ≤480p:
-  `b[vcodec!=none][acodec!=none][protocol^=http][height<=480]/b[vcodec!=none][acodec!=none][protocol^=http]`.
+- Format (measured in S0): sort `-S "vcodec:h264,res:720,+size"`, select
+  `b[vcodec!=none][acodec!=none][protocol^=http]/b[protocol^=http][format_id!*=dash]` — a stream
+  known to carry both, else Instagram's progressive mp4, which lists its audio as unknown but
+  carries it. Never a DASH stream (video-only without ffmpeg). Whether sound is present is not
+  always known from metadata, so the side call is told to say when the video has none.
+- `curl_cffi` is required alongside yt-dlp: TikTok fails without browser impersonation.
 - `--max-filesize 50M`; `--write-info-json` for the metadata; mp4/webm only.
 - Temp dir: `tempfile.TemporaryDirectory` under `DATA_DIR/web/tmp/`, removed after use; anything
   older than an hour there is swept before each use (a killed subprocess leaves `.part` files).
@@ -125,11 +149,25 @@ download ≤ min(45 s, remaining − 90 s), side call ≤ min(90 s, remaining �
 remaining, the media path is skipped with a "not enough time left to watch it" result. This also
 covers heartbeat runs (120 s deadline) without a scope rule.
 
-**Side call.** One Gemini call with the video inline at low media resolution and
-`max_output_tokens` ≈ 1,500. The prompt asks for three parts — what is shown, the speech
-transcript, on-screen text — in the video's own language, and forbids naming the poster (code
-supplies that). Its own lazily built client, on the same model as the agent via a shared model-name
-constant (so `tools/` does not import `agent`).
+**Side call.** One Gemini call with the video inline at low media resolution,
+`thinking_level=LOW` and `max_output_tokens=4096` (thinking tokens count toward the cap; at 1,500
+answers were cut off in S0). A `finish_reason` other than `STOP` marks the record as cut off
+rather than presenting it as complete. Its own lazily built client, on the same model as the agent
+via a shared model-name constant (so `tools/` does not import `agent`).
+
+The prompt is the same for every video and names no domain — no "ingredients", no "steps". It
+asks for a faithful record, not a summary:
+- **Said** — everything spoken, word for word, in the original language.
+- **On-screen text** — all text that appears, verbatim, in order.
+- **Shown** — what happens, in order, with a specific detail (number, amount, name, place, price,
+  time) only if it is said or written; never estimated, and a judgement from the picture alone is
+  marked as a visual guess.
+- Say if there is no sound; never say who posted it (code supplies that).
+
+Shaping the record for a purpose — a recipe into a recipes collection, a place into travel — is
+the main model's job, as it already is for an article. An optional `focus` argument (the main
+model passing "the recipe") is a possible later addition; it does not help a bare share, where the
+purpose is decided after reading.
 
 **Telemetry.** The side call runs inside `telemetry.job("web_media")` and records via
 `record_llm_call`, so it lands on its own `scope=job` row and the user turn's `llm_calls` and
@@ -169,8 +207,11 @@ an ordinary deploy.
 **Tests** (offline; subprocess and Gemini mocked): routing matrix (share links, short links,
 lookalike hosts, non-media URLs still go to Tavily) · security assertions above · subprocess
 timeout → honest string and temp dir gone · size cap · video-only format → no transcript claimed ·
-side-call failure → metadata-only result · telemetry lands in a job row and the turn's count is
-unchanged · low remaining time skips the media path.
+side-call failure → metadata-only result · non-`STOP` finish → marked cut off · telemetry lands
+in a job row and the turn's count is unchanged · low remaining time skips the media path.
+
+**Eval (real model):** the ramen reel's record contains no amounts that are not said or written
+(the S0 failure); the S3 filing evals check the main model does not add them either.
 
 **Verify live (owner):** restart staging; share a public reel, a public TikTok, a photo carousel
 and a private post into Telegram.
