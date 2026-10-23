@@ -268,7 +268,7 @@ MIN_CALL_TIMEOUT_S = 15
 _NORMAL_FINISH_REASONS = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3-flash-preview",
+    model=config.MODEL,
     temperature=0.2, # Lower temperature for more deterministic tool usage
     max_retries=2,
     timeout=LLM_CALL_TIMEOUT_S,

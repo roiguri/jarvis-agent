@@ -1,6 +1,6 @@
 # Web media links — let Jarvis read a shared reel or video
 
-**Date:** 2026-10-23 · **Status:** S0 measured; S1 in progress · **Branch:** `feat/web-media-links`
+**Date:** 2026-10-23 · **Status:** S0 and S1 done; S2 next · **Branch:** `feat/web-media-links`
 **Goal:** a link shared into Jarvis from Instagram, TikTok or YouTube is *read* — who posted it,
 the caption, what is shown and said — and filed where it belongs, instead of failing or being
 guessed at.
@@ -11,7 +11,7 @@ guessed at.
 
 - [x] **S0 — Measure.** No repo code. Answer the open facts below against the live APIs and
       record the numbers here before S1 starts.
-- [ ] **S1 — Instagram and TikTok.** `fetch_url` routes their links to a new media path: yt-dlp
+- [x] **S1 — Instagram and TikTok.** `fetch_url` routes their links to a new media path: yt-dlp
       downloads the video, one side model call describes it, code adds the author and caption.
 - [ ] **S2 — YouTube.** `fetch_url` hands a YouTube link to Gemini directly (no download),
       clipped and at low frame rate so any length costs a bounded amount.
@@ -132,7 +132,8 @@ lazily.
 killed and its memory stays out of the main process.
 - `--use-extractors` set to the allowed list (generic is unreachable), no cookies, no
   post-processors, no `--exec`, fixed output template `%(id)s.%(ext)s`.
-- Format (measured in S0): sort `-S "vcodec:h264,res:720,+size"`, select
+- Format (measured in S0): sort `-S "res:540,+size"` (smallest near 540p — TikTok's 7 MB h265
+  rather than its 16 MB h264; Gemini reads both), select
   `b[vcodec!=none][acodec!=none][protocol^=http]/b[protocol^=http][format_id!*=dash]` — a stream
   known to carry both, else Instagram's progressive mp4, which lists its audio as unknown but
   carries it. Never a DASH stream (video-only without ffmpeg). Whether sound is present is not
@@ -210,11 +211,64 @@ timeout → honest string and temp dir gone · size cap · video-only format →
 side-call failure → metadata-only result · non-`STOP` finish → marked cut off · telemetry lands
 in a job row and the turn's count is unchanged · low remaining time skips the media path.
 
-**Eval (real model):** the ramen reel's record contains no amounts that are not said or written
-(the S0 failure); the S3 filing evals check the main model does not add them either.
+**Real-model check:** the ramen reel's record contains no amounts that are not said or written
+(the S0 failure). Run by hand with the S0 script, not as a committed eval — `evals/cases/` hold
+synthetic data only and a real video can't be committed. The S3 filing evals check the main
+model does not add amounts either.
 
-**Verify live (owner):** restart staging; share a public reel, a public TikTok, a photo carousel
-and a private post into Telegram.
+### S1 staging checklist
+
+Run on `feat/web-media-links` with the staging bot. A bare link may not be read until S3 changes
+the skill rule, so cases 2–6 send the link *with* a question.
+
+**Before**
+- [ ] Ramen reel through the S0 script with the shipped prompt — the record lists ingredients with
+      no amounts the video doesn't say or show:
+      `venv/bin/python <scratchpad>/s0_measure.py --full --video <scratchpad>/dl3/ramen_1.mp4`
+- [ ] `venv/bin/python -m pytest -q` passes.
+- [ ] Restart: `pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh` — the boot
+      block shows `root : /app/jarvis_staging` and branch `feat/web-media-links`.
+- [ ] In another terminal: `journalctl -u jarvis-staging -f`.
+
+**Cases** (send to the staging bot)
+
+| # | Send | Expect |
+|---|---|---|
+| 1 | "what's in this reel?" + `https://www.instagram.com/reel/De1X6FFP_tt/` | Names **@homemade_style_recipe**; describes the peanut-butter ramen; ingredients with **no invented amounts** |
+| 2 | Follow-up: "how much peanut butter does it use?" | Says the video doesn't give an amount — no guess |
+| 3 | "what's in this?" + `https://www.tiktok.com/@reviskitchenn/video/7699583492484582670` | Names **@reviskitchenn (Revi)**; quantities match the caption (1 lb ground beef, 1/2 cup Parmesan) |
+| 4 | "what's this?" + `https://www.instagram.com/reel/ZZZZZZZZZZZ/` | Says it couldn't read it; **no description**; offers to keep the bare URL or asks what it was |
+| 5 | "summarize this" + `https://en.wikipedia.org/wiki/Ramen` | Article read as before — the page path still works |
+| 6 | "what's this video?" + a YouTube link | Not handled until S2: reads the page (title, channel, description), no video record. Note what it says |
+| 7 | The ramen reel link alone, shared from the Instagram app | **Baseline for S3** — note whether it reads, files, or ignores it. No pass/fail |
+
+**After**
+- [ ] Every turn in 1–6 shows a `fetch_url` call:
+      `JARVIS_ROOT=/app/jarvis_staging venv/bin/python3 scripts/trace.py --last 8`.
+- [ ] Side calls landed as job rows, one per video watched (cases 1 and 3), about 3.5k–8k input
+      tokens each:
+      `JARVIS_ROOT=/app/jarvis_staging venv/bin/python -c "from observability import store; [print(r['ts'][:19], r['llm_calls'], r['input_tokens'], r['outcome']) for r in store.rows(\"SELECT * FROM turns WHERE job='web_media' ORDER BY ts DESC LIMIT 5\")]"`
+- [ ] Nothing kept: `ls -A /app/jarvis_staging/jarvis_data/web/tmp/` is empty.
+- [ ] No unexpected errors in the journal (a "video description failed" line means case 1 or 3
+      fell back to caption only — check which).
+- [ ] Each case took well under a minute; note any that came close to the turn deadline.
+- [ ] Stop staging: `pct exec 106 -- systemctl stop jarvis-staging.service`.
+
+### S1 staging results (2026-10-23, channel jarvis-app)
+
+| # | Result |
+|---|---|
+| 1+7 | ✅ The bare share was read even before S3 — the model activated `web` on its own. Named @homemade_style_recipe; record clean, no invented amounts. It asked whether to save rather than filing (S3 baseline) |
+| 2 | ⚠️ Said the video gives no amount, then searched the web and offered estimates, crediting "the generous spoonful shown in the video" — a phrase from a *different* video in the search results. Main-model behaviour, not the video path; a skill rule against it was considered and not taken for now |
+| 3 | ✅ @reviskitchenn (Revi); every quantity matches the caption |
+| 4 | ✅ "private, removed, or requires a login"; nothing described |
+| 5 | ✅ Page reading unchanged |
+| 6 | ✅ YouTube read as a page (title, channel, description), as expected before S2 |
+
+Side calls: one `web_media` job row per video — reel 3.6k input / 564 output tokens, 8 s;
+TikTok 8.1k / 2.0k, 11 s. `fetch_url` took 10–13 s end to end. `web/tmp/` empty afterwards.
+The record opened with "Certainly! Here's a record…" and closed with "I hope this helps!", so the
+prompt now asks for the three sections only.
 
 ## S2 — YouTube
 
@@ -284,5 +338,5 @@ recorded); a link with a question (answered, no forced filing).
 
 ## Open questions
 
-1. Where does the shared model-name constant live (`config.py` or a small module both `agent.py`
-   and `tools/web/media.py` import)? Decide in S1.
+None. Decided in S1: the shared model name is `config.MODEL`, read by `agent.py` and
+`tools/web/media.py`.

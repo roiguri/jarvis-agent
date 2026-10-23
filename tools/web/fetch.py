@@ -1,9 +1,13 @@
 """Read the page at a URL.
 
-Extraction is provider-side: the URL goes to Tavily and the markdown comes
-back. Jarvis never dereferences a model-supplied URL itself, so a URL naming a
-host on the home network is fetched from Tavily's infrastructure, which cannot
-reach it — there is no SSRF surface to guard.
+Pages are read provider-side: the URL goes to Tavily and the markdown comes
+back, so a URL naming a host on the home network is fetched from Tavily's
+infrastructure, which cannot reach it.
+
+Video links are the exception. Tavily cannot return video, so an Instagram or
+TikTok link is downloaded and watched here (``media.py``). That local fetch is
+bounded to those sites' extractors — any other URL, a home-network address
+included, still goes only to Tavily.
 """
 import os
 from urllib.parse import urlparse
@@ -11,6 +15,7 @@ from urllib.parse import urlparse
 from langchain_core.tools import tool
 
 from tools.registry import tool_register
+from tools.web import media
 
 # Below the references (OpenClaw 20k, hermes-agent 15k) on purpose: tool results
 # are re-sent verbatim on every following turn inside agent.py's 50-message
@@ -42,7 +47,9 @@ def _truncate(text: str) -> str:
 def fetch_url(url: str) -> str:
     """Read the page at a URL and return its text.
 
-    Use this whenever you are given a link — an article, a post, a repo, a PDF.
+    Use this whenever you are given a link — an article, a post, a repo, a PDF,
+    or a video such as an Instagram reel or a TikTok, which comes back as who
+    posted it, its caption, and a record of what is shown, said and written.
     Never try to identify a link by searching for it: a URL or a post id is an
     address, and web_search cannot look one up. Use web_search only when you do
     NOT have a URL and need to find one.
@@ -60,6 +67,17 @@ def fetch_url(url: str) -> str:
             f"Not a fetchable URL: {url!r}. Only http and https addresses can be read. "
             "Tell the user you could not read it rather than guessing its content."
         )
+
+    platform = media.match(url.strip())
+    if platform:
+        try:
+            return _truncate(media.read(url.strip(), platform))
+        except Exception as e:
+            return (
+                f"Could not read {url} ({type(e).__name__}: {e}). Tell the user you could not "
+                "read it and record the bare URL. Do not guess its content, and do not "
+                "search for it."
+            )
 
     try:
         from tavily import TavilyClient

@@ -57,6 +57,10 @@ DATA_DIR = _paths["DATA_DIR"]
 ENV_FILE = _paths["ENV_FILE"]
 INSTANCE = _paths["INSTANCE"]
 
+# The model every Jarvis call uses — the agent and the side calls a tool makes
+# itself, so a model swap is one edit and tools never import agent.
+MODEL = "gemini-3-flash-preview"
+
 
 # ---------------------------------------------------------------------------
 # Behavior toggles — read from the process environment (the service unit).

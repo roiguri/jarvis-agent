@@ -3,7 +3,7 @@
     "destructive": false,
     "name": "fetch_url",
     "schema": {
-      "description": "Read the page at a URL and return its text.\n\n    Use this whenever you are given a link — an article, a post, a repo, a PDF.\n    Never try to identify a link by searching for it: a URL or a post id is an\n    address, and web_search cannot look one up. Use web_search only when you do\n    NOT have a URL and need to find one.\n\n    If this returns an error, say you could not read the page and record the\n    bare URL. Do not guess what it contained, do not describe it from the\n    surrounding conversation, and do not fall back to web_search.\n\n    Args:\n        url: The full http(s) URL to read.",
+      "description": "Read the page at a URL and return its text.\n\n    Use this whenever you are given a link — an article, a post, a repo, a PDF,\n    or a video such as an Instagram reel or a TikTok, which comes back as who\n    posted it, its caption, and a record of what is shown, said and written.\n    Never try to identify a link by searching for it: a URL or a post id is an\n    address, and web_search cannot look one up. Use web_search only when you do\n    NOT have a URL and need to find one.\n\n    If this returns an error, say you could not read the page and record the\n    bare URL. Do not guess what it contained, do not describe it from the\n    surrounding conversation, and do not fall back to web_search.\n\n    Args:\n        url: The full http(s) URL to read.",
       "name": "fetch_url",
       "parameters": {
         "properties": {
