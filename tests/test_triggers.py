@@ -485,7 +485,9 @@ async def test_arbox_gate(sched, fake_outbox, arbox_fake):
     registered[:] = [cls(101, 30)]
     assert await gates.evaluate(TASK, arbox.GATE) is True, "a new class completes the task"
     k = by_key()
-    start = il(30)[2]
+    # In UTC: an Israel-local time in the repeated hour when the clocks go back
+    # never compares equal across zones, so a local start fails the night of the change.
+    start = il(30)[2].astimezone(timezone.utc)
     assert applied == [[101]], "DB synced with the fetched set"
     assert k["arbox:101:brief"].when.instant == start - timedelta(hours=2), "briefing 2h before the class"
     assert k["arbox:101:checkin"].when.instant == start + timedelta(minutes=60), "check-in when the class ends"

@@ -82,7 +82,7 @@ message instead of failing silently.
 |---|---|---|---|
 | `DB_PATH` | `agent.py` | `/app/jarvis_memory/threads.sqlite` | Conversation state — LangGraph owns the path; deny-listed from memory tools |
 | `MAX_MESSAGES` | `agent.py` | `50` | Sliding-window size per checkpoint (~25 exchanges) |
-| `LLM_MODEL` | `agent.py` | `gemini-3-flash-preview` | Update when upgrading the model |
+| `MODEL` | `config.py` | `gemini-3-flash-preview` | The model every Jarvis call uses (agent and tools' side calls); update when upgrading |
 | `LLM_TEMPERATURE` | `agent.py` | `0.2` | Low = deterministic tool use |
 | `LOG_RETENTION_DAYS` | `tools/core/history.py` | `90` | Chat + notification log retention |
 | `_LOG_DIR` | `tools/core/history.py` | `/app/jarvis_data/logs` | Chat + notification JSONL location |

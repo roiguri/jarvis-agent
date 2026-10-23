@@ -81,6 +81,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
 │                                   #   read via search_history and the today view
 ├── dream/state.json                # the morning job's last run date (catch-up after a restart)
+├── web/tmp/                        # fetch_url's video downloads — one temp dir per call, removed
+│                                   #   after it; leftovers older than an hour swept on next use
 └── logs/
     └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
 

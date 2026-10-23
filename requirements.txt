@@ -8,6 +8,7 @@ cffi==2.0.0
 charset-normalizer==3.4.6
 click==8.4.2
 cryptography==49.0.0
+curl_cffi==0.16.3
 distro==1.9.0
 fastapi==0.139.0
 filetype==1.2.0
@@ -71,4 +72,5 @@ uuid_utils==0.14.1
 uvicorn==0.34.3
 websockets==15.0.1
 xxhash==3.6.0
+yt-dlp==2026.10.21
 zstandard==0.25.0
