@@ -117,7 +117,11 @@ def tmp_entries():
     ("https://evil.lan/www.instagram.com/reel/x/", None),
     ("http://192.168.1.1/", None),
     ("https://example.com/article", None),
-    ("https://www.youtube.com/watch?v=jNQXAC9IVRw", None),
+    ("https://www.youtube.com/watch?v=jNQXAC9IVRw", "YouTube"),
+    ("https://youtu.be/jNQXAC9IVRw?si=abc", "YouTube"),
+    ("https://www.youtube.com/shorts/uoXhLoND1q4", "YouTube"),
+    ("https://www.youtube.com/@JKenjiLopezAlt", None),
+    ("https://youtube.com.evil.lan/watch?v=jNQXAC9IVRw", None),
     ("https://x.com/i/status/2085023484913012992", None),
 ])
 def test_match_claims_only_allowed_sites(url, platform):
@@ -284,3 +288,97 @@ def test_side_call_is_its_own_job_and_charges_the_turn(fake_run):
     assert (rows["job"]["job"], rows["job"]["llm_calls"]) == ("web_media", 1)
     assert rows["job"]["input_tokens"] == 3500
     assert tracker.input_tokens == 3500, "the turn's token budget sees the side call"
+
+
+# --- YouTube: watched from its URL, labelled from its page --------------------------
+
+KENJI = "https://youtu.be/AODAwMANijw?si=share"
+KENJI_CANONICAL = "https://www.youtube.com/watch?v=AODAwMANijw"
+KENJI_PAGE = ("# For Better Baked Ziti, Don't Boil Your Pasta: Soak It.\n"
+              "## Channel: J. Kenji López-Alt\nPosted: 2026-01-21\n### Description\nSoak the pasta.")
+
+
+@pytest.fixture
+def fake_page(monkeypatch):
+    from tools.web import fetch
+
+    seen = []
+
+    def install(page):
+        def read_page(url):
+            seen.append(url)
+            return (page, f"Source: {url}\n\n{page}") if page else (None, "Could not read")
+        monkeypatch.setattr(fetch, "_read_page", read_page)
+        return seen
+    return install
+
+
+@pytest.mark.parametrize("url", [
+    "https://youtu.be/AODAwMANijw?si=share",
+    "https://m.youtube.com/watch?v=AODAwMANijw&t=30",
+    "https://www.youtube.com/watch?v=AODAwMANijw&list=PL1",
+])
+def test_youtube_links_are_canonical(url):
+    assert media.youtube_url(url) == KENJI_CANONICAL
+
+
+def test_youtube_watched_from_url_and_labelled_from_page(fake_page, fake_run, fake_model):
+    seen = fake_page(KENJI_PAGE)
+    run = fake_run(FakeRun())
+    out = read(KENJI)
+    assert seen == [KENJI_CANONICAL]
+    assert run.calls == [], "YouTube is never downloaded"
+    assert "## Channel: J. Kenji López-Alt" in out
+    assert "first 10 minutes at most" in out and RECORD in out
+    [llm] = fake_model.instances
+    part = llm.messages[0].content[0]
+    assert part["file_uri"] == KENJI_CANONICAL
+    assert part["video_metadata"] == {"end_offset": "600s", "fps": media.YOUTUBE_FPS}
+
+
+def test_youtube_page_unreadable_still_watched(fake_page):
+    fake_page(None)
+    out = read(KENJI)
+    assert "who posted it is unknown" in out
+    assert RECORD in out
+
+
+def test_youtube_unwatchable(fake_page, fake_model):
+    fake_page(KENJI_PAGE)
+    fake_model.behaviour = ValueError("400 INVALID_ARGUMENT")
+    out = read(KENJI)
+    assert "## Channel: J. Kenji López-Alt" in out
+    assert "private, unlisted or age-restricted" in out
+    assert "not kept" not in out
+
+
+def test_youtube_long_page_is_cut(fake_page):
+    fake_page("x" * (media.YOUTUBE_PAGE_MAX_CHARS + 100))
+    assert "[…page truncated]" in read(KENJI)
+
+
+def test_youtube_page_transcript_kept_whole_under_the_cap(fake_page):
+    page = KENJI_PAGE + "\n### Transcript\n" + "soak the ziti " * 230
+    assert len(page) < media.YOUTUBE_PAGE_MAX_CHARS
+    fake_page(page)
+    out = read(KENJI)
+    assert page in out and "[…page truncated]" not in out
+
+
+def test_youtube_record_leaves_speech_to_the_transcript(fake_page, fake_run, fake_model):
+    fake_page(KENJI_PAGE)
+    read(KENJI)
+    fake_run(FakeRun(info=IG_INFO))
+    read(REEL)
+    youtube, reel = (llm.messages[0].content[1]["text"] for llm in fake_model.instances)
+    assert "Said:" not in youtube and "leave speech out" in youtube
+    assert "Said:" in reel
+    for prompt in (youtube, reel):
+        assert "Never estimate or fill in" in prompt and "Do not say who posted it" in prompt
+
+
+def test_youtube_full_page_and_record_fit_without_a_middle_cut(fake_page, fake_model):
+    fake_page("x" * (media.YOUTUBE_PAGE_MAX_CHARS + 3000))
+    fake_model.behaviour = ("w" * 2400, "STOP")  # ~400 words
+    out = read(KENJI)
+    assert "truncated" not in out.replace("[…page truncated]", ""), "no head+tail cut"

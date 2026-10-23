@@ -4,10 +4,12 @@ Pages are read provider-side: the URL goes to Tavily and the markdown comes
 back, so a URL naming a host on the home network is fetched from Tavily's
 infrastructure, which cannot reach it.
 
-Video links are the exception. Tavily cannot return video, so an Instagram or
-TikTok link is downloaded and watched here (``media.py``). That local fetch is
-bounded to those sites' extractors — any other URL, a home-network address
-included, still goes only to Tavily.
+Video links get a record of the video as well (``media.py``). A YouTube link
+is watched by the model provider from its URL, with its page read through
+Tavily. Tavily cannot return video, so an Instagram or TikTok link is
+downloaded and watched here; that local fetch is bounded to those sites'
+extractors — any other URL, a home-network address included, still goes only
+to providers.
 """
 import os
 from urllib.parse import urlparse
@@ -48,8 +50,9 @@ def fetch_url(url: str) -> str:
     """Read the page at a URL and return its text.
 
     Use this whenever you are given a link — an article, a post, a repo, a PDF,
-    or a video such as an Instagram reel or a TikTok, which comes back as who
-    posted it, its caption, and a record of what is shown, said and written.
+    or a video such as an Instagram reel, a TikTok or a YouTube video, which comes
+    back as who posted it, its caption, and a record of what is shown, said and
+    written.
     Never try to identify a link by searching for it: a URL or a post id is an
     address, and web_search cannot look one up. Use web_search only when you do
     NOT have a URL and need to find one.
@@ -68,17 +71,26 @@ def fetch_url(url: str) -> str:
             "Tell the user you could not read it rather than guessing its content."
         )
 
-    platform = media.match(url.strip())
-    if platform:
-        try:
-            return _truncate(media.read(url.strip(), platform))
-        except Exception as e:
-            return (
-                f"Could not read {url} ({type(e).__name__}: {e}). Tell the user you could not "
-                "read it and record the bare URL. Do not guess its content, and do not "
-                "search for it."
-            )
+    url = url.strip()
+    platform = media.match(url)
+    try:
+        if platform == "YouTube":
+            canonical = media.youtube_url(url)
+            page, _ = _read_page(canonical)
+            return _truncate(media.read_youtube(canonical, page))
+        if platform:
+            return _truncate(media.read(url, platform))
+    except Exception as e:
+        return (
+            f"Could not read {url} ({type(e).__name__}: {e}). Tell the user you could not "
+            "read it and record the bare URL. Do not guess its content, and do not "
+            "search for it."
+        )
+    return _read_page(url)[1]
 
+
+def _read_page(url: str) -> tuple[str | None, str]:
+    """Read a page through Tavily: (its text or None, the result for the model)."""
     try:
         from tavily import TavilyClient
         from tavily.errors import (
@@ -89,7 +101,7 @@ def fetch_url(url: str) -> str:
 
         api_key = os.environ.get("TAVILY_API_KEY")
         if not api_key:
-            return (
+            return None, (
                 "Page reading is unavailable: TAVILY_API_KEY is not configured. Tell the "
                 "user you could not read the page — do not guess what it contained."
             )
@@ -98,7 +110,7 @@ def fetch_url(url: str) -> str:
         response = client.extract(urls=[url], format="markdown")
         results = response.get("results", [])
         if not results:
-            return (
+            return None, (
                 f"Could not read {url} — the page could not be extracted (it may be "
                 "login-walled, removed, or fully script-rendered). Tell the user you "
                 "could not read it and record the bare URL. Do not guess its content, "
@@ -108,26 +120,26 @@ def fetch_url(url: str) -> str:
         result = results[0]
         text = (result.get("raw_content") or "").strip()
         if not text:
-            return (
+            return None, (
                 f"Read {url} but it contained no extractable text. Tell the user you "
                 "could not read it. Do not guess its content."
             )
 
         final_url = result.get("url") or url
-        return f"Source: {final_url}\n\n{_truncate(text)}"
+        return text, f"Source: {final_url}\n\n{_truncate(text)}"
 
     except UsageLimitExceededError:
-        return (
+        return None, (
             "Page reading quota exhausted for this month. Tell the user you could not "
             "read the page — do not guess what it contained."
         )
     except (InvalidAPIKeyError, MissingAPIKeyError):
-        return (
+        return None, (
             "Page reading is unavailable: invalid or missing API key. Tell the user you "
             "could not read the page — do not guess what it contained."
         )
     except Exception as e:
-        return (
+        return None, (
             f"Could not read {url} ({type(e).__name__}: {e}). Tell the user you could not "
             "read it and record the bare URL. Do not guess its content, and do not "
             "search for it."

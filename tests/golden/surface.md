@@ -20,7 +20,7 @@ Always on: 9 tools, ≈2546 tokens — activate_skill, delete_memory, list_memor
 | media/sonarr | 20 | ≈3576 | +11 tools, ≈+1030 |
 | media/system | 11 | ≈2713 | +2 tools, ≈+167 |
 | travel | 15 | ≈6518 | +6 tools, ≈+3972 |
-| web | 11 | ≈2906 | +2 tools, ≈+360 |
+| web | 11 | ≈2912 | +2 tools, ≈+366 |
 
 ## heartbeat
 
@@ -39,4 +39,4 @@ Always on: 10 tools, ≈2861 tokens — activate_skill, delete_memory, heartbeat
 | media/sonarr | 21 | ≈3891 | +11 tools, ≈+1030 |
 | media/system | 12 | ≈3028 | +2 tools, ≈+167 |
 | travel | 16 | ≈6833 | +6 tools, ≈+3972 |
-| web | 12 | ≈3221 | +2 tools, ≈+360 |
+| web | 12 | ≈3227 | +2 tools, ≈+366 |

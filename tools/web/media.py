@@ -1,12 +1,13 @@
-"""Read a video link — an Instagram reel or post, a TikTok — as text.
+"""Read a video link — an Instagram reel or post, a TikTok, a YouTube video — as text.
 
-The text provider behind ``fetch_url`` cannot return video, so for these hosts
-Jarvis fetches locally: yt-dlp downloads the video, one side model call writes a
-record of what is shown, said and written, and code puts the poster, date and
-caption on top — verbatim from the metadata, never from the model, because
-misattributing a link is the failure this skill was built against.
+One side model call writes a record of what is shown, said and written; code
+puts who posted it on top, never the model, because misattributing a link is the
+failure this skill was built against. For YouTube that comes from the page as
+Tavily reads it, and the model watches the video from its URL. Instagram and
+TikTok are downloaded here with yt-dlp, and the poster, date and caption come
+from its metadata.
 
-Local fetching is bounded to the extractors in ``_ALLOWED``: a URL reaches yt-dlp
+Local fetching is bounded to the extractors in ``_allowed()``: a URL reaches yt-dlp
 only when one of them claims it (a regex, no network), and yt-dlp is told it may
 use no others, so its generic extractor — which would fetch any address, home
 network included — is unreachable. Nothing is kept: the download lives in a
@@ -39,6 +40,14 @@ MIN_STEP_S = 15
 _ANSWER_RESERVE_S = 30
 DESCRIBE_MAX_TOKENS = 4096
 CAPTION_MAX_CHARS = 2500
+# YouTube is watched from its URL, never downloaded. Only the opening stretch,
+# at a low frame rate: that caps the cost of any length (about 40k input tokens).
+YOUTUBE_CLIP_S = 600
+YOUTUBE_FPS = 0.5
+# The page carries YouTube's own transcript, a better record of speech than the
+# model's (which misses voice-over mixed with music), so the YouTube record leaves
+# speech out. Page plus a ~400-word record stays under fetch_url's 8,000 chars.
+YOUTUBE_PAGE_MAX_CHARS = 5000
 
 # A stream known to carry both picture and sound; else Instagram's progressive
 # mp4, which lists its audio as unknown but carries it. Never a DASH stream:
@@ -49,14 +58,27 @@ _MIMES = {"mp4": "video/mp4", "webm": "video/webm"}
 # The finish reasons that mean the model was done, as agent.py reads them.
 _NORMAL_FINISH = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
 
-_PROMPT = (
-    "Make a faithful record of this video, for someone who will not watch it. Not a summary.\n"
-    "Said: everything spoken, word for word, in the original language.\n"
-    "On-screen text: all text that appears, verbatim, in order.\n"
+_INTRO = "Make a faithful record of this video, for someone who will not watch it. Not a summary.\n"
+_SAID = (
+    "Said: everything spoken, word for word, in the original language. If that would run "
+    "past about 600 words, instead give a detailed account of what is said, in order, that "
+    "keeps every specific detail.\n"
+)
+_ON_SCREEN = "On-screen text: all text that appears, verbatim, in order.\n"
+_SHOWN = (
     "Shown: what happens, in order. Include a specific detail (number, amount, name, place, "
     "price, time) only if it is said or written in the video. Never estimate or fill in a "
     "missing one; if you judge something from the picture alone, mark it as a visual guess.\n"
-    "If the video has no sound, say so. Do not say who posted it. Output only the three "
+)
+_PROMPT = (
+    _INTRO + _SAID + _ON_SCREEN + _SHOWN
+    + "If the video has no sound, say so. Do not say who posted it. Output only the three "
+    "sections, with no introduction or closing line."
+)
+_YOUTUBE_PROMPT = (
+    _INTRO + "What is said is covered by a separate transcript, so leave speech out.\n"
+    + _ON_SCREEN + _SHOWN
+    + "Keep the record under about 400 words. Do not say who posted it. Output only the two "
     "sections, with no introduction or closing line."
 )
 
@@ -78,17 +100,58 @@ def _allowed():
     )
 
 
+def _youtube_ie():
+    from yt_dlp.extractor.youtube import YoutubeIE
+
+    return YoutubeIE
+
+
 def match(url: str) -> str | None:
     """The platform whose extractor claims this URL, or None. No network."""
     try:
         allowed = _allowed()
+        youtube = _youtube_ie()
     except ImportError:
         logger.warning("yt-dlp is not installed; video links fall through to page reading")
         return None
     for platform, ie, _ in allowed:
         if ie.suitable(url):
             return platform
+    if youtube.suitable(url):
+        return "YouTube"
     return None
+
+
+def youtube_url(url: str) -> str:
+    """The canonical watch URL for any YouTube video link (short, mobile, Shorts)."""
+    return f"https://www.youtube.com/watch?v={_youtube_ie()._match_id(url)}"
+
+
+def read_youtube(url: str, page: str | None) -> str:
+    """Label a YouTube video from its page and describe it from its URL."""
+    if page:
+        cut = len(page) > YOUTUBE_PAGE_MAX_CHARS
+        head = page[:YOUTUBE_PAGE_MAX_CHARS] + (" […page truncated]" if cut else "")
+        header = f"Source: {url}\nYouTube page as published (its transcript is what is said):\n{head}"
+    else:
+        header = f"Source: {url}\nYouTube · the page could not be read, so who posted it is unknown"
+
+    describe_s = _step_budget(DESCRIBE_MAX_S, _remaining_s(), reserve=_ANSWER_RESERVE_S)
+    if describe_s is None:
+        return f"{header}\n[not enough time left in this turn to watch the video]"
+    part = {
+        "type": "media", "file_uri": url, "mime_type": "video/*",
+        "video_metadata": {"end_offset": f"{YOUTUBE_CLIP_S}s", "fps": YOUTUBE_FPS},
+    }
+    record, note = _describe(part, describe_s, prompt=_YOUTUBE_PROMPT, unwatched=(
+        "the video itself could not be watched (it may be private, unlisted or age-restricted)"))
+    if record is None:
+        return f"{header}\n[{note}]"
+    marker = (f"[Video described by a model from its first {YOUTUBE_CLIP_S // 60} minutes at most — "
+              "what is said is in the page's transcript above; the video itself is not kept]")
+    if note:
+        marker += f"\n[{note}]"
+    return f"{header}\n{marker}\n{record}"
 
 
 def read(url: str, platform: str) -> str:
@@ -126,8 +189,10 @@ def read(url: str, platform: str) -> str:
             return f"{header}\n[not enough time left in this turn to watch the video — only the caption was read]"
 
         with open(video, "rb") as f:
-            data = f.read()
-        record, note = _describe(data, mime, describe_s)
+            data = base64.b64encode(f.read()).decode("ascii")
+        part = {"type": "media", "mime_type": mime, "data": data}
+        record, note = _describe(part, describe_s, prompt=_PROMPT, unwatched=(
+            "the video itself could not be watched — only the caption was read"))
     if record is None:
         return f"{header}\n[{note}]"
     marker = "[Video described by a model — the video itself is not kept]"
@@ -244,8 +309,10 @@ def _header(url: str, platform: str, info: dict) -> str:
     return "\n".join(lines)
 
 
-def _describe(data: bytes, mime: str, timeout_s: float) -> tuple[str | None, str | None]:
-    """One side model call. Returns (record or None, a note on what was missed)."""
+def _describe(part: dict, timeout_s: float, *, prompt: str,
+              unwatched: str) -> tuple[str | None, str | None]:
+    """One side model call on a media part. Returns (record or None, a note on what
+    was missed); ``unwatched`` is the note when there is no record at all."""
     from langchain_core.messages import HumanMessage
     from langchain_google_genai import ChatGoogleGenerativeAI
     from google.genai.types import MediaResolution
@@ -257,10 +324,7 @@ def _describe(data: bytes, mime: str, timeout_s: float) -> tuple[str | None, str
         max_output_tokens=DESCRIBE_MAX_TOKENS, thinking_level="low",
         media_resolution=MediaResolution.MEDIA_RESOLUTION_LOW,
     )
-    message = HumanMessage(content=[
-        {"type": "media", "mime_type": mime, "data": base64.b64encode(data).decode("ascii")},
-        {"type": "text", "text": _PROMPT},
-    ])
+    message = HumanMessage(content=[part, {"type": "text", "text": prompt}])
     # Its own job row, so the turn's call count and call indexes stay the turn's.
     with telemetry.job("web_media"):
         t0 = time.perf_counter()
@@ -270,7 +334,7 @@ def _describe(data: bytes, mime: str, timeout_s: float) -> tuple[str | None, str
             latency = int((time.perf_counter() - t0) * 1000)
             telemetry.record_llm_call(None, latency_ms=latency, error=f"{type(e).__name__}: {e}")
             logger.warning("video description failed: %s: %s", type(e).__name__, e)
-            return None, "the video itself could not be watched — only the caption was read"
+            return None, unwatched
         latency = int((time.perf_counter() - t0) * 1000)
         finish = str((response.response_metadata or {}).get("finish_reason") or "")
         telemetry.record_llm_call(response, latency_ms=latency, finish_reason=finish)
@@ -278,7 +342,7 @@ def _describe(data: bytes, mime: str, timeout_s: float) -> tuple[str | None, str
 
     text = response.text.strip() if isinstance(response.text, str) else ""
     if not text:
-        return None, "the video itself could not be watched — only the caption was read"
+        return None, unwatched
     if finish not in _NORMAL_FINISH:
         return text, f"the record stops early ({finish}) — the end of the video may be missing"
     return text, None

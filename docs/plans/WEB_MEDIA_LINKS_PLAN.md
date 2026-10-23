@@ -1,6 +1,6 @@
 # Web media links — let Jarvis read a shared reel or video
 
-**Date:** 2026-10-23 · **Status:** S0 and S1 done; S2 next · **Branch:** `feat/web-media-links`
+**Date:** 2026-10-23 · **Status:** S0–S2 done; S3 next · **Branch:** `feat/web-media-links`
 **Goal:** a link shared into Jarvis from Instagram, TikTok or YouTube is *read* — who posted it,
 the caption, what is shown and said — and filed where it belongs, instead of failing or being
 guessed at.
@@ -13,7 +13,7 @@ guessed at.
       record the numbers here before S1 starts.
 - [x] **S1 — Instagram and TikTok.** `fetch_url` routes their links to a new media path: yt-dlp
       downloads the video, one side model call describes it, code adds the author and caption.
-- [ ] **S2 — YouTube.** `fetch_url` hands a YouTube link to Gemini directly (no download),
+- [x] **S2 — YouTube.** `fetch_url` hands a YouTube link to Gemini directly (no download),
       clipped and at low frame rate so any length costs a bounded amount.
 - [ ] **S3 — Shared links.** The `web` skill rule for a link shared with no text: read it,
       decide where it belongs, file it, reply in one line. Evals for the behaviour.
@@ -272,19 +272,104 @@ prompt now asks for the three sections only.
 
 ## S2 — YouTube
 
-**Files:** `tools/web/media.py`, `tools/web/fetch.py`, tests.
+**Files:** `tools/web/media.py`, `tools/web/fetch.py`, tests, `tests/golden/`.
 
-- `YoutubeIE.suitable(url)` routes watch, `youtu.be` and `/shorts/` links (pure regex — yt-dlp is
-  not used to fetch anything for YouTube).
-- One Gemini call with the URL as `file_data`, low media resolution, low `fps`, and
-  `end_offset` at 10 minutes (values from S0). No duration lookup is needed: the clip caps the cost
-  for any length. The result says "watched the first 10 minutes" when the video may be longer.
-- Title and channel from Tavily or oEmbed (per S0 item 2), copied into the header by code.
-- Same telemetry, time bounds, result shape and failure set as S1 (plus "private or unlisted").
+- `YoutubeIE.suitable(url)` routes watch, `youtu.be`, Shorts, mobile, music and live links (pure
+  regex — yt-dlp fetches nothing for YouTube); channel pages, playlists and lookalike hosts don't
+  match. Every link is rewritten to `https://www.youtube.com/watch?v=<id>` before use.
+- The page is read through Tavily (`fetch._read_page`, the page path factored out, behaviour
+  unchanged); its first 5,000 chars — title, channel, post date, description and YouTube's own
+  transcript, as published, unparsed — become the header. The transcript is the better record of
+  speech (see "Speech gap" below), so the YouTube record leaves speech out: a separate prompt asks
+  only for on-screen text and what is shown, under ~400 words. Page + labels + record ≈ 7.8k, so
+  `fetch_url`'s head+tail cut never lands in the middle. No parsing: the page text is the label, copied by code. If the page
+  can't be read, the header says who posted it is unknown.
+- One Gemini call with the URL as `file_uri` and `video_metadata = {end_offset: 600s, fps: 0.5}`
+  at low media resolution. 0.5 fps rather than S0's 0.2 so on-screen text isn't skipped; expected
+  ≈40k input tokens at most (measure in staging). No duration lookup: the clip caps any length,
+  and the result says "first 10 minutes at most".
+- Instagram/TikTok "Said" is word for word unless that would pass ~600 words, then a detailed
+  account in order that keeps every specific detail. Both prompts are built from shared pieces,
+  so the no-invented-specifics rule is the same.
+- Same telemetry, time bounds and result shape as S1. A failed call reads "may be private,
+  unlisted or age-restricted".
 
-**Later, not in this slice:** the full transcript of a long video via captions.
+**Later, not in this slice:** the full transcript of a long video — the page cap keeps only its
+opening stretch.
 
-**Verify live:** share a Short, a 5-minute video and a 1-hour talk.
+### Speech gap (found in staging, 2026-10-23)
+
+On the Short (`uoXhLoND1q4`) the record's "Said" held only the closing on-camera sentence; the
+opening voice-over ("first we melted some chocolate… yogurt, four eggs… 350 °F for 20 minutes")
+was missing, though the page's transcript had it. A one-off script (not committed) ran the side
+call six ways and scored "Said" against that transcript:
+
+| Variant | Coverage | Thinking tokens | Time |
+|---|---|---|---|
+| shipped (low thinking, 10-min clip, 0.5 fps) | 38% | — | 2.4 s |
+| shipped, again | ~38% (same 28 words) | — | 2.1 s |
+| + "include voice-over and narration" | 40% | — | 2.0 s |
+| no clip, default fps | 40% | — | 2.5 s |
+| default thinking | 40% | 1,585 | 8.6 s |
+| default thinking + narration line | 38% | 3,931 | 17.6 s, `MAX_TOKENS` |
+
+- Not variance, the prompt, the clip or thinking: every run returns the same sentence. Input
+  tokens match ~22 s of audio plus frames, so the audio reaches the model; it does not transcribe
+  voice-over mixed with music. YouTube's captions do.
+- Low thinking stays: default thinking was 3.5–7× slower, no better, and once exhausted the
+  4,096-token cap — the S0 cut-off cause, now measured.
+- Fix taken: the page (with its transcript) gets the room and the record drops speech (next
+  section). The narration line was not added.
+### Long video (staging rerun, 2026-10-23)
+
+Kenji's 13-min Amatriciana (`-AQvYk8DMlI`): side call 35k input / 2.9k output tokens, 36 s;
+`fetch_url` 40 s; turn 44.5 s. The result was cut: the description (mostly links) took ~2k of the
+4,000-char page, the record ignored the 600-word rule and transcribed word for word, and the
+16k-char total lost 8,747 chars from the middle — most of "Said", all on-screen text. The amounts
+("8 oz of pasta… about half this can") sat in the cut, so the follow-up "do we know amounts?"
+went to web_search. Speech appeared twice (page transcript and record). Fix: the YouTube record
+leaves speech out and the page cap is 5,000 (amounts at chars 3,323–3,381 of that page). A
+parsed header (description capped, transcript first) was considered and dropped as too complex;
+the cost is that a long description leaves less transcript, and a video without captions has no
+speech in the result at all.
+
+### S2 staging results (2026-10-23, after the fix)
+
+| Case | Result |
+|---|---|
+| Short `uoXhLoND1q4` | ✅ 1.6k input tokens, 5 s; page transcript carries the speech the record missed |
+| Bad id `xxxxxxxxxxx` | ✅ page unreadable + call rejected → "could not be watched"; nothing described |
+| 13-min `W9-rMbGLYzE` | ✅ no middle cut; page cut at 5,000 with transcript to ~6:22; record speech-free, 337 output tokens (2.9k before); side call 35k input, 39 s; turn 45 s |
+| "do we know amounts?" | ⚠️ Answered from the result, no search. Sausage 8 oz, 4 garlic cloves, ~1 tbsp oil, ladles of pasta water — all in the transcript. Chili flakes "½–1 tsp", "1 bunch" broccolini and "2-person serving" are in nothing it read, yet were given as "based on the video" |
+| TikTok `7698462032781184270` | ✅ prompt regression: clean record, full on-screen menu, 6.3k tokens, 8 s |
+
+Also seen: a "read it again" request answered from history with "I have re-examined the video" and
+no tool call. Both that and the unsourced amounts are the main model's answering, not the video
+path — carried to S3 as a candidate rule. The YouTube record once opened with "Sure! Here is a
+record…" despite the prompt; left as is.
+
+- **Known limit for Instagram/TikTok:** no captions exist, so narration over music in a reel may be
+  missed the same way. Both test reels transcribed fully because the speaker talks to camera. A
+  possible later fix, untested: send the separate audio stream both sites offer to a
+  transcription-only call.
+
+### S2 staging checklist
+
+**Before:** `venv/bin/python -m pytest -q` passes; restart staging; journal open.
+
+| # | Send | Expect |
+|---|---|---|
+| 1 | "what's this video?" + `https://www.youtube.com/watch?v=-AQvYk8DMlI` | Kenji's Amatriciana (13 min), channel **J. Kenji López-Alt** from the page; says it's from the first 10 minutes at most |
+| 2 | A follow-up question about a detail in it | Answered from the record or the page transcript; no outside recipe |
+| 3 | "what's in this?" + `https://www.youtube.com/shorts/uoXhLoND1q4` | The air-fryer cheesecake test, read from the video |
+| 4 | "what's this?" + `https://www.youtube.com/watch?v=xxxxxxxxxxx` | Couldn't read or watch it; nothing described |
+| 5 | "what's in this?" + `https://www.tiktok.com/@reviskitchenn/video/7698462032781184270` | Still as S1 (regression for the prompt change), record has no intro or closing line |
+
+Use links the conversation hasn't seen: on the first run, cases 1 and 5 reused links from the S1
+test and Jarvis answered from its history without fetching.
+
+**After:** `web_media` job rows for 1, 3, 5 — note case 1's input tokens (expected ≤ ~40k) and
+latency (S0: ~43 s at 0.2 fps); `fetch_url` per case in `trace.py`; stop staging.
 
 ## S3 — Shared links
 
