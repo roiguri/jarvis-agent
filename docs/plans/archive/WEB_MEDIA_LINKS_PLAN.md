@@ -1,6 +1,6 @@
 # Web media links — let Jarvis read a shared reel or video
 
-**Date:** 2026-10-23 · **Status:** S0–S2 done; S3 next · **Branch:** `feat/web-media-links`
+**Date:** 2026-10-23 · **Status:** ✅ complete, archived 2026-10-23 — S0–S2 shipped; S3 dropped · **Branch:** `feat/web-media-links`
 **Goal:** a link shared into Jarvis from Instagram, TikTok or YouTube is *read* — who posted it,
 the caption, what is shown and said — and filed where it belongs, instead of failing or being
 guessed at.
@@ -15,8 +15,7 @@ guessed at.
       downloads the video, one side model call describes it, code adds the author and caption.
 - [x] **S2 — YouTube.** `fetch_url` hands a YouTube link to Gemini directly (no download),
       clipped and at low frame rate so any length costs a bounded amount.
-- [ ] **S3 — Shared links.** The `web` skill rule for a link shared with no text: read it,
-      decide where it belongs, file it, reply in one line. Evals for the behaviour.
+- [~] **S3 — Shared links.** Dropped 2026-10-23 — the current behaviour is what the owner wants (see S3).
 
 S1 and S2 are independent of each other; both need S0. S3 is independent of both: on its own it
 already applies to articles, and an unreadable reel simply takes the existing "could not read,
@@ -30,10 +29,10 @@ record the bare URL" path until S1 lands.
   the URL (Instagram adds `?igsh=…`). No channel work is needed.
 - **`fetch_url` is text-only** (`tools/web/fetch.py`). Tavily `extract` returns markdown, capped at
   8,000 chars head+tail. It reads articles and x.com posts well (measured in
-  [URL_FETCH_PLAN](archive/URL_FETCH_PLAN.md)). A video yields nothing; Instagram is probably
+  [URL_FETCH_PLAN](URL_FETCH_PLAN.md)). A video yields nothing; Instagram is probably
   login-walled for Tavily (S0 confirms).
 - **Gemini already reads video.** `agent.py` inlines inbound video attachments; a 42 MB video was
-  measured to read correctly ([MEDIA_INGESTION_PLAN](archive/MEDIA_INGESTION_PLAN.md)).
+  measured to read correctly ([MEDIA_INGESTION_PLAN](MEDIA_INGESTION_PLAN.md)).
 - **yt-dlp works without login on public Instagram posts.** Measured 2026-10-23 with yt-dlp
   2026.10.21 in a scratch venv: `instagram.com/p/aye83DjauH/` downloaded (1 MB mp4) with
   uploader and caption. Extractor matching (`suitable()`, a regex, no network) accepts
@@ -213,8 +212,8 @@ in a job row and the turn's count is unchanged · low remaining time skips the m
 
 **Real-model check:** the ramen reel's record contains no amounts that are not said or written
 (the S0 failure). Run by hand with the S0 script, not as a committed eval — `evals/cases/` hold
-synthetic data only and a real video can't be committed. The S3 filing evals check the main
-model does not add amounts either.
+synthetic data only and a real video can't be committed. (No eval guards the main model adding
+amounts — S3, where that would have lived, was dropped.)
 
 ### S1 staging checklist
 
@@ -372,6 +371,15 @@ test and Jarvis answered from its history without fetching.
 latency (S0: ~43 s at 0.2 fps); `fetch_url` per case in `trace.py`; stop staging.
 
 ## S3 — Shared links
+
+**Dropped 2026-10-23.** Staging showed the existing behaviour already does the job: a bare shared
+reel was read (the model activated `web` on its own, despite the "not by itself a reason to fetch"
+rule) and Jarvis summarised it and asked whether to save it. The owner prefers that to filing by
+default, so no rule change and no evals. Considered with it and also not taken: a rule that every
+specific must come from what was read (invented amounts were seen three times in follow-ups — S1
+case 2, both Kenji runs) and one against claiming a re-read without a tool call (seen once). Both
+are recorded under the S1/S2 results; revisit if they cause real harm. The draft below is kept
+for reference.
 
 **Files:** `tools/web/SKILL.md`, `tools/web/fetch.py` (docstring mentions reels and videos),
 `tests/golden/` (regenerated, reviewed), `evals/cases/chat/` (new cases).
