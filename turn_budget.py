@@ -45,6 +45,8 @@ class TurnBudget:
     max_llm_calls: int
     # Cumulative input tokens across the turn's calls.
     max_input_tokens: float
+    # Seconds one LLM call may take; None uses agent.LLM_CALL_TIMEOUT_S.
+    call_timeout_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,23 @@ POLICIES: dict[str, ScopePolicy] = {
             "[System notice: this tick's limits are used up.] Do not call any tools. "
             "In one or two lines, state which due tasks you completed and which you "
             "did not."
+        ),
+    ),
+    # The morning memory review: one background turn over a whole day and
+    # every memory file, so it gets a user turn's time, not a tick's, and
+    # longer calls: the single call it replaced thought for up to 106s.
+    "dream": ScopePolicy(
+        budget=TurnBudget(deadline_s=300, max_llm_calls=15, max_input_tokens=600_000,
+                          call_timeout_s=180),
+        wrap_up_notice=(
+            # TODO(#176): when the review applies changes, this notice and the
+            # budget must leave room for the writes.
+            "[System notice: this run is close to its limits.] Stop looking things up. "
+            "Write the note now with the suggestions you have."
+        ),
+        exhaustion_ask=(
+            "[System notice: this run's limits are used up.] Do not call any tools. "
+            "In one line, say the review did not finish."
         ),
     ),
 }

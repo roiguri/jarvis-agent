@@ -354,6 +354,12 @@ _HEARTBEAT_FRAMING = (
     "You are a scheduled background tick, not a live chat — be terse and act "
     "only on tasks that are due."
 )
+# TODO(#176): when the review applies changes, drop "change nothing" here.
+_DREAM_FRAMING = (
+    "You are running the morning memory review in the background, not a live "
+    "chat. Look things up if you need to, but change nothing; your final answer "
+    "is the note Roi receives."
+)
 
 
 def load_or_blank(path: str) -> str:
@@ -471,6 +477,8 @@ def build_system_prompt(
       reachable via read_memory). When ``due_tasks`` is a list, only those task
       blocks of HEARTBEAT.md are injected (non-due blocks collapse to a
       one-line note); None injects every task except gated ones.
+    - dream: the morning memory review's framing line only; its turn input
+      carries the instruction and the material.
     All files are read per turn (edits take effect next turn, no restart).
     """
     # Date only: the clock lives in the turn's input stamp (_turn_stamp), so
@@ -512,6 +520,8 @@ def build_system_prompt(
         if chat:
             parts.append(chat)
         parts.append(_load_yesterday_daily_log())
+    elif scope == "dream":
+        parts.append(_DREAM_FRAMING)
     else:
         parts.append(_USER_FRAMING)
         parts.append(episodes_today.background_today(_dt.datetime.now(_dt.timezone.utc)))
@@ -680,7 +690,8 @@ def _llm_node(state: JarvisState) -> dict:
     try:
         response = runnable.invoke(
             [SystemMessage(content=prompt)] + messages,
-            timeout=max(MIN_CALL_TIMEOUT_S, min(LLM_CALL_TIMEOUT_S, tracker.remaining_s())),
+            timeout=max(MIN_CALL_TIMEOUT_S, min(tracker.policy.budget.call_timeout_s or LLM_CALL_TIMEOUT_S,
+                                                 tracker.remaining_s())),
         )
     except Exception as e:
         telemetry.record_llm_call(
@@ -842,7 +853,7 @@ def ask_jarvis(
         thread_id: conversation thread identifier
         media_attachments: optional generic media attachments, e.g.
             [{"kind": "image", "path": "media/image_abc.jpg"}]
-        scope: turn scope — "user" (default) or "heartbeat". Carried into
+        scope: turn scope — "user" (default), "heartbeat" or "dream". Carried into
             JarvisState; informational only at this stage (does not gate tools).
         turn_id: optional pre-minted turn identifier (uuid4 hex). If omitted,
             one is generated here. Propagated via TURN_ID ContextVar so the
@@ -861,7 +872,7 @@ def ask_jarvis(
             due tasks' warm start). Heartbeat turns keep no conversation: they
             run on ``stateless_executor`` and start from their input alone.
     """
-    stateless = scope == "heartbeat"
+    stateless = scope in ("heartbeat", "dream")
     executor = stateless_executor if stateless else agent_executor
     now = _dt.datetime.now(_dt.timezone.utc)
     raw_input = user_input
@@ -911,7 +922,8 @@ def ask_jarvis(
         trigger_id=getattr(trigger, "id", None),
         due_tasks=heartbeat_due_tasks if scope == "heartbeat" else None,
     )
-    episode_source = "chat" if scope == "user" else ("wake" if trigger is not None else "heartbeat")
+    episode_source = ("chat" if scope == "user" else "dream" if scope == "dream"
+                      else "wake" if trigger is not None else "heartbeat")
     episodes_record.turn_input(
         turn_id=turn_id, thread_id=thread_id, scope=scope, channel=channel,
         role=input_role or ("owner" if scope == "user" else "system"),

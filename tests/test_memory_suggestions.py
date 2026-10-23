@@ -1,5 +1,5 @@
-"""Morning memory suggestions: what the model reads, when it is not called,
-and the note."""
+"""Morning memory suggestions: what the turn reads, when it does not run, and
+the note."""
 
 import asyncio
 import json
@@ -7,26 +7,33 @@ import os
 from datetime import date, datetime, timezone
 
 import pytest
-from langchain_core.messages import AIMessage
 
+import agent
 import config
 import memory_suggestions as ms
 import pending_mirrors
+import turn_budget
 from episodes import store
 from gateway.base import OWNER_THREAD_ID
 from gateway.outbox import EVENT_MEDIA
-from tests.fakes import FakeLLM
+from tests.fakes import frozen_datetime
 
 DAY = date(2026, 10, 15)
 NOW = datetime(2026, 10, 16, 5, 30, tzinfo=timezone.utc)  # 08:30 Israel
 
 
 @pytest.fixture
-def model(monkeypatch):
-    def install(*replies):
-        llm = FakeLLM([AIMessage(content=r) for r in replies])
-        monkeypatch.setattr(ms, "_model", lambda: llm)
-        return llm
+def turn(monkeypatch):
+    """Stands in for the review turn: records its call and answers ``text``."""
+    calls = []
+
+    def install(text, kind=turn_budget.COMPLETED):
+        def fake(user_input, thread_id, **kwargs):
+            calls.append({"input": user_input, "thread_id": thread_id, **kwargs})
+            return turn_budget.TurnOutcome(kind=kind, text=text)
+        monkeypatch.setattr(agent, "ask_jarvis", fake)
+        monkeypatch.setattr(ms, "datetime", frozen_datetime(NOW))
+        return calls
     return install
 
 
@@ -55,8 +62,14 @@ def memory_files():
 def seed_day():
     with store.write() as con:
         common = dict(thread_id=OWNER_THREAD_ID, scope="user", source="chat")
+        store.insert(con, ts="2026-10-08T05:30:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"job": "memory_suggestions"}, content="🧠 Memory suggestions — 2026-10-07\n\nA WEEK-OLD NOTE")
+        store.insert(con, ts="2026-10-14T05:30:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"job": "memory_suggestions"}, content="🧠 Memory suggestions — 2026-10-13\n\n1. make a list file")
         store.insert(con, ts="2026-10-15T05:00:00+00:00", role="jarvis_sent", source="outbox",
                      content="Morning readiness: slept 7h.")
+        store.insert(con, ts="2026-10-15T05:30:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"job": "memory_suggestions"}, content="🧠 Memory suggestions — 2026-10-14\n\n1. YESTERDAYS NOTE")
         store.insert(con, ts="2026-10-15T09:00:00+00:00", turn_id="t", role="owner",
                      content="from now on keep briefings to two lines", **common)
         store.insert(con, ts="2026-10-15T09:00:01+00:00", turn_id="t", role="tool_call",
@@ -71,63 +84,58 @@ def seed_day():
                      content="a message from the next day", **common)
 
 
-def test_the_model_reads_the_conversation_and_the_memory_files(model, memory_files):
+def test_the_turn_reads_the_conversation_the_memory_files_and_past_notes(turn, memory_files, fake_outbox):
     seed_day()
-    llm = model("Corrections & preferences\n1. USER.md: add ...")
-    note = ms.compose(DAY, now=NOW)
-    system, user = (m.content for m in llm.sent[0])
-    assert system.startswith("You help maintain the long-term memory of Jarvis")
-    assert user.startswith("Today: Friday 2026-10-16, Israel time.")
-    assert "[2026-10-15 12:00 owner] from now on keep briefings to two lines" in user
-    assert "[2026-10-15 12:00 jarvis] Got it, two lines." in user
-    assert "[2026-10-15 08:00 jarvis-sent] Morning readiness: slept 7h." in user
+    calls = turn("Facts\n1. USER.md: add ...")
+    assert asyncio.run(ms.send(DAY)) == "sent"
+    (call,) = calls
+    assert call["thread_id"] == "dream" and call["scope"] == "dream"
+    text = call["input"]
+    assert text.startswith("Morning memory review.")
+    assert "Today: Friday 2026-10-16, Israel time." in text
+    assert "[2026-10-15 12:00 owner] from now on keep briefings to two lines" in text
+    assert "[2026-10-15 12:00 jarvis] Got it, two lines." in text
+    assert "[2026-10-15 08:00 jarvis-sent] Morning readiness: slept 7h." in text
     for absent in ("SECRET TOOL OUTPUT", "read_memory", "HEARTBEAT INNER WORK", "next day"):
-        assert absent not in user
-    assert "--- fitness/plan.md (changed " in user and "Runs on Tuesdays." in user
-    for absent in ("notes of a task", "an old daily log", "the task list"):
-        assert absent not in user
-    assert "SOUL.md (read-only)" in user and "(not shown: HEARTBEAT.md" in user
-    assert user.index("--- SOUL.md") < user.index("--- USER.md") < user.index("--- MEMORY.md") \
-        < user.index("--- fitness/plan.md")
-    assert note == "🧠 Memory suggestions — 2026-10-15\n\nCorrections & preferences\n1. USER.md: add ..."
+        assert absent not in text
+    assert "--- fitness/plan.md (changed " in text and "Runs on Tuesdays." in text
+    for absent in ("notes of a task", "an old daily log", "the task list", "--- SOUL.md", "USER.md body"):
+        assert absent not in text, "core files are in the system prompt; the heartbeat's own files are not shown"
+    assert "SOUL.md (read-only)" in text and "(not shown: HEARTBEAT.md" in text
+    notes = text[text.index("Your notes from the past 7 days:"):text.index("Conversation on")]
+    assert "--- sent 2026-10-14 ---" in notes and "make a list file" in notes
+    assert "YESTERDAYS NOTE" in notes and "A WEEK-OLD NOTE" not in text
+    assert text.count("YESTERDAYS NOTE") == 1, "a past note is shown once, not again in the transcript"
 
 
-def test_a_day_without_an_owner_message_makes_no_call(model):
+def test_a_day_without_an_owner_message_runs_no_turn(turn, fake_outbox):
     with store.write() as con:
         store.insert(con, ts="2026-10-15T05:00:00+00:00", role="jarvis_sent", source="outbox",
                      content="Morning readiness: slept 7h.")
-    llm = model()
-    assert ms.compose(DAY, now=NOW) is None
-    assert llm.sent == []
+    calls = turn("x")
+    assert asyncio.run(ms.send(DAY)) == "nothing"
+    assert calls == [] and fake_outbox.sent == []
 
 
-def test_nothing_to_suggest_sends_nothing(model, fake_outbox):
+def test_nothing_to_suggest_sends_nothing(turn, fake_outbox):
     seed_day()
-    model("Nothing to suggest.")
+    turn("Nothing to suggest.")
     assert asyncio.run(ms.send(DAY)) == "nothing"
     assert fake_outbox.sent == []
 
 
-def test_the_note_goes_through_the_outbox(model, fake_outbox):
+def test_the_note_goes_through_the_outbox(turn, fake_outbox):
     seed_day()
-    model("Facts\n1. ...")
+    turn("Facts\n1. ...")
     assert asyncio.run(ms.send(DAY)) == "sent"
-    assert fake_outbox.sent == [(EVENT_MEDIA, "🧠 Memory suggestions — 2026-10-15\n\nFacts\n1. ...")]
+    assert fake_outbox.sent == [(EVENT_MEDIA, "🧠 Memory suggestions — 2026-10-15\n\nFacts\n1. ...\n\n"
+                                              "Suggestions only — apply one only when Roi asks.")]
     assert fake_outbox.meta == [{"job": "memory_suggestions"}]
 
 
-def test_a_failed_call_is_reported_not_raised(model, fake_outbox):
+def test_an_unfinished_turn_is_reported_not_sent(turn, fake_outbox):
     seed_day()
-    llm = model()
-    llm.script.append(RuntimeError("504"))
-    assert asyncio.run(ms.send(DAY)) == "failed"
-    assert fake_outbox.sent == []
-
-
-def test_a_cut_off_note_is_not_sent(monkeypatch, fake_outbox):
-    seed_day()
-    llm = FakeLLM([AIMessage(content="Facts\n1. USER.md: Add", response_metadata={"finish_reason": "MAX_TOKENS"})])
-    monkeypatch.setattr(ms, "_model", lambda: llm)
+    turn("[This turn did not finish: out of time.]", kind=turn_budget.FAILED)
     assert asyncio.run(ms.send(DAY)) == "failed"
     assert fake_outbox.sent == []
 

@@ -245,10 +245,13 @@ def _seed_chat(case: dict, now: datetime) -> None:
     messages, pending_sent = [], []
     with episode_store.write() as con, open(CHAT_LOG, "w", encoding="utf-8") as chat:
         for i, turn in enumerate(turns):
-            ts = at(turn["time"]).astimezone(timezone.utc).isoformat()
+            ts = (at(turn["time"]) - timedelta(days=turn.get("days_ago", 0))).astimezone(timezone.utc).isoformat()
             if "sent" in turn:
+                meta = {"event": turn.get("event", "heartbeat")}
+                if turn.get("job"):
+                    meta["job"] = turn["job"]
                 episode_store.insert(con, ts=ts, role="jarvis_sent", source="outbox",
-                                     meta={"event": turn.get("event", "heartbeat")}, content=turn["sent"])
+                                     meta=meta, content=turn["sent"])
                 pending_sent.append(f"{pending_mirrors.PREFIX.get(turn.get('event', 'heartbeat'))} {turn['sent']}")
                 continue
             turn_id = f"chat{i}"

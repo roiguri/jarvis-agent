@@ -1,5 +1,5 @@
 """The morning job: for yesterday, write the daily log and send the memory
-suggestions — two separate model calls, neither sees the other's output. Runs
+suggestions — a model call and a background turn, neither sees the other's output. Runs
 once a day; a process started after RUN_AT catches up until CATCH_UP_UNTIL.
 """
 
@@ -15,6 +15,8 @@ from timeutils import ISRAEL_TZ
 
 logger = logging.getLogger(__name__)
 
+# TODO(#176): when the review applies changes, reconsider the time: an
+# overnight run would land them before the first chat of the day.
 RUN_AT = time(8, 30)            # Israel time: yesterday is complete
 CATCH_UP_UNTIL = time(12, 0)    # a process started after RUN_AT runs the missed job until then
 STATE_PATH = os.path.join(config.DATA_DIR, "dream", "state.json")

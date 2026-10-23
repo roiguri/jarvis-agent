@@ -243,8 +243,8 @@ Each compaction is a telemetry job row (`job = "compaction"`) with its model cal
 
 `dream.py` runs each morning at 08:30 Israel time, when the heartbeat is enabled (a process started
 before noon catches up a missed run, tracked in `jarvis_data/dream/state.json`). For yesterday it
-writes the daily log and sends the memory suggestions: two separate model calls, neither sees the
-other's output. `/dream [yesterday|today]` runs both by hand.
+writes the daily log (one model call) and sends the memory suggestions (one background turn); neither
+sees the other's output. `/dream [yesterday|today]` runs both by hand.
 
 ## Daily log
 
@@ -261,24 +261,35 @@ heartbeat task, use the same files. Each run is a telemetry job row (`job = "dai
 
 ## Memory suggestions
 
-`memory_suggestions.py` helps keep long-term memory current without writing it. One model call
-reads:
+`memory_suggestions.py` helps keep long-term memory current without writing it. It runs one Jarvis
+background turn in its own `dream` scope: no saved conversation, its usual tools, and a system prompt
+of the core files (SOUL.md, AGENTS.md, USER.md, the MEMORY.md index), one framing line and the skill
+list, without the heartbeat's tick rules, task list, today's chat or daily log. Its turn budget
+(`dream` in `turn_budget.POLICIES`) is a user turn's five minutes, since one review reads a whole
+day. The turn's input is the instruction in `prompts/dream.md`, followed by:
 
+- the memory files the agent maintains, each under its path with its size and last-changed date
+  (SOUL.md marked read-only; SOUL.md, USER.md and MEMORY.md are listed but not repeated, since the
+  system prompt already holds them); HEARTBEAT.md, `heartbeat/` notes and `daily/` are not shown;
+- its own suggestion notes from the past 7 days, so it does not repeat one the owner did not take
+  up without new reason;
 - yesterday's owner conversation, through compaction's transcript builder: the owner's messages,
-  Jarvis's replies and Jarvis's own sends (`[owner]` / `[jarvis]` / `[jarvis-sent]`); tool traffic
-  and the heartbeat's inner work are left out;
-- every memory file the agent maintains, each under its path with its size and last-changed date
-  (SOUL.md marked read-only); HEARTBEAT.md, `heartbeat/` notes and `daily/` are not shown.
+  Jarvis's replies and Jarvis's own sends (`[owner]` / `[jarvis]` / `[jarvis-sent]`), earlier notes
+  left out; tool traffic and the heartbeat's inner work are left out too.
 
-The prompt (`prompts/memory_suggestions.md`) asks for at most seven suggestions in sections
-(corrections and preferences, facts, out of date, organization, guesses), each with the file, the
-exact text and a quoted reason. What counts as organized, duplicated or too large is the model's
-judgement; code imposes no rules on memory. The note goes out as a `notification` event with
-`job: "memory_suggestions"` in its metadata, which also lifts the pending-mirror's per-entry cap so
-the whole note reaches the conversation: the owner can answer "do 2 and 5" and Jarvis applies them
-with its memory tools. A day with no owner message makes no model call; "Nothing to suggest." sends
-nothing; a note cut off at the output cap is not sent. Each run is a telemetry job row
-(`job = "memory_suggestions"`).
+Only the instruction says to change nothing; no code blocks a write. Memory is one of several places
+Jarvis keeps things (collections, reminders, heartbeat tasks, logs), and the instruction asks the
+turn not to suggest what already has a home elsewhere. It trusts what the conversation shows ("added
+to your Reading List") and uses a tool only when it can't tell. The instruction asks for at most seven
+suggestions in sections (corrections and preferences, facts, out of date, organization, guesses),
+each with the file, the exact change and a quoted reason. What counts as organized, duplicated or
+too large is the model's judgement; code imposes no rules on memory.
+
+The turn's final answer is the note, or "Nothing to suggest.", which sends nothing. Code adds a header and a closing line ("apply one only when Roi asks") and sends the
+note as a `notification` event with `job: "memory_suggestions"` in its metadata, which also lifts the
+pending-mirror's per-entry cap so the whole note reaches the conversation: the owner can answer
+"do 2 and 5" and Jarvis applies them with its memory tools. A day with no owner message runs no
+turn; a turn that does not finish sends nothing and is logged as failed.
 
 ---
 
