@@ -30,7 +30,7 @@ from tools.core import (
 )
 from observability import store as telemetry_store
 from episodes import record as episodes_record
-from files import inbound as file_inbound
+from files import attachments as file_attachments
 from files import startup as file_startup
 from gateway.factory import legacy_media_files
 
@@ -72,7 +72,7 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
     # the turn it arrived in.
     turn_id = uuid4().hex
     records, notes = await asyncio.to_thread(
-        file_inbound.save_attachments, inbound.attachments,
+        file_attachments.save_attachments, inbound.attachments,
         caption=inbound.user_text, turn_id=turn_id,
     )
     user_text = "\n".join([inbound.user_text, *notes]).strip()
@@ -248,6 +248,9 @@ async def main() -> None:
         """Every delivered proactive send: the JSONL log and the episode store."""
         await async_append_notification_log(event, text, metadata)
         await asyncio.to_thread(episodes_record.notification, event, text, metadata)
+
+    async def save_sent_file(attachment: dict, caption: str | None):
+        return await asyncio.to_thread(file_attachments.save_sent, attachment, caption)
     for log_path in (CHAT_LOG, NOTIFICATION_LOG):
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
@@ -277,6 +280,7 @@ async def main() -> None:
         on_message=process_inbound_message,
         on_confirmation_outcome=on_confirmation_outcome,
         log_sink=log_notification,
+        save_file=save_sent_file,
     )
 
     # Optional second channel: the jarvis-app hub, built only when APP_HUB_URL is
@@ -291,6 +295,7 @@ async def main() -> None:
                 on_message=process_inbound_message,
                 on_confirmation_outcome=on_confirmation_outcome,
                 log_sink=log_notification,
+                save_file=save_sent_file,
             )
         except Exception:
             logger.exception("jarvis-app channel misconfigured — continuing without it")

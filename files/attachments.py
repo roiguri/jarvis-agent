@@ -1,9 +1,10 @@
-"""Saving the files a message brings, before its turn runs.
+"""Saving the files that pass through a channel, in either direction.
 
-Channels hand over attachments as plain dicts — kind, mime_type, data (bytes),
-filename, source, origin_id — and never store anything themselves. Each one
-becomes a file record here. A file that can't be saved becomes a note in the
-message instead, so the reply can say so rather than ignore it.
+An attachment is a plain dict — kind, mime_type, data (bytes), filename, source,
+origin_id. Channels hand over the files a message brings in this shape before its
+turn runs; the Outbox builds the same shape for a file Jarvis sends. Each one
+becomes a file record here. An incoming file that can't be saved becomes a note in
+the message instead, so the reply can say so rather than ignore it.
 """
 
 from __future__ import annotations
@@ -43,3 +44,13 @@ def save_attachments(attachments: list[dict], *, caption: str = "",
             notes.append(f"[{article(what).capitalize()} {what} was sent but couldn't be "
                          f"saved ({type(e).__name__}).]")
     return records, notes
+
+
+def save_sent(attachment: dict, caption: str | None) -> tuple[str, str] | None:
+    """Save a file Jarvis sent: (file id, marker), or None when it couldn't be kept.
+    The send already happened, so a failure only logs."""
+    records, notes = save_attachments([attachment], caption=caption or "")
+    if not records:
+        logger.warning("a sent file was not kept: %s", " ".join(notes))
+        return None
+    return records[0].id, records[0].marker()

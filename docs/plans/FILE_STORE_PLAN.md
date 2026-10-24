@@ -459,6 +459,13 @@ it accepts a file id or bytes. The file id goes into the notification log, so th
 message's history entry and the pending-mirror drain carry the marker. Today's only caller of
 outbound media is the webhook notifier's posters.
 
+As built: the save step is `files.attachments.save_sent`, the same `save_attachments` path
+inbound files take. The Outbox sends first and saves only what was delivered; a failed save
+still logs the send, without a marker. Bytes only for now: sending a stored file by id comes
+with its first caller, `send_file` (S6). The drain keeps markers when it cuts a long caption.
+Staging runs without the webhook, so the live check is `send_file` (S6) on staging, or the first
+poster after a prod deploy, whichever comes first.
+
 ### S4 — `open_file`
 
 - Text kinds: pages by character offset and length. Text and code files get their kind from

@@ -39,6 +39,16 @@ ENTRY_CAP = 2000
 JOB_CAPS = {"memory_suggestions": 8000}
 
 
+def _cut(text: str, cap: int) -> str:
+    """`text` cut to `cap`, keeping the file markers that end it (a sent file's
+    handle), so a long caption never costs the file its id."""
+    lines = text.split("\n")
+    markers: list[str] = []
+    while lines and lines[-1].startswith("[file:"):
+        markers.insert(0, lines.pop())
+    return "\n".join(["\n".join(lines)[:cap].rstrip(), *markers]).strip()
+
+
 def drain_pending() -> tuple[str | None, str | None]:
     """(user-role block, cursor value to stamp after the turn) or (None, None).
 
@@ -72,7 +82,8 @@ def drain_pending() -> tuple[str | None, str | None]:
                         ts = ts.replace(tzinfo=_dt.timezone.utc)
                     if ts < since or (cursor and ts_s <= cursor):
                         continue
-                    text = (rec.get("message") or "").strip()[:JOB_CAPS.get(rec.get("job"), ENTRY_CAP)]
+                    text = _cut((rec.get("message") or "").strip(),
+                                JOB_CAPS.get(rec.get("job"), ENTRY_CAP))
                     if not text:
                         continue
                     entries.append(f"{PREFIX.get(event, '[Notification]')} {text}")

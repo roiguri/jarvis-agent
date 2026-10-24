@@ -480,13 +480,13 @@ def bind_loop(loop) -> None                       # host binds once at startup (
 def submit(coro) -> concurrent.futures.Future     # thread-safe scheduling onto the host loop
 
 class Outbox:
-    def __init__(self, channel: Channel, log_sink: LogSink | None): ...
+    def __init__(self, channel: Channel, log_sink: LogSink | None, save_file: SaveFile | None): ...
     async def notify_owner(text, *, event=None, metadata=None) -> SendOutcome
     async def notify_owner_media(kind, payload, caption=None, *, event=None, metadata=None) -> SendOutcome
     async def send_block_to_owner(text, block, *, event=None, metadata=None) -> SendOutcome
 ```
 
-The single seam for owner-addressed sends (see Plane 2). `default_outbox()` in `gateway/factory.py` is how domain code reaches it; `LogSink` is injected by the host (`async_append_notification_log`) so the gateway stays free of tools-layer imports.
+The single seam for owner-addressed sends (see Plane 2). `default_outbox()` in `gateway/factory.py` is how domain code reaches it; `LogSink` is injected by the host (`async_append_notification_log`) so the gateway stays free of tools-layer imports. `SaveFile` is injected the same way (`files.attachments.save_sent`): once media is delivered, the Outbox hands it over in the attachment shape (source `jarvis`), and the log entry is the caption plus the saved file's marker, with the id in its `media` field. A save that fails still logs the delivered send, without a marker.
 
 ### `Confirmation` ABC (`gateway/confirmation/base.py`)
 
@@ -560,7 +560,7 @@ Channel router (per-channel)
       })
         │
         ▼
-process_inbound_message (main.py) ── files.inbound.save_attachments ──▶ file store
+process_inbound_message (main.py) ── files.attachments.save_attachments ──▶ file store
         │                                         (records with ids; a file that
         ▼                                          can't be saved becomes a note)
 ask_jarvis(files=[records]) ── files.model_input.content_blocks ──▶ media + marker
@@ -590,6 +590,8 @@ Two outbound methods on the `Channel` ABC:
 
 - `send_media(chat_id, kind, payload: bytes, caption)` — reply-context. The channel uploads the bytes; the caller does not know how. Used when the agent wants to attach an image to a reply (no caller today, but the contract reserves the slot).
 - `send_to_owner_media(kind, payload: bytes, caption)` — proactive, reached via `outbox.notify_owner_media(...)`. Used by the media notifier (Sonarr/Radarr poster images) and any other proactive channel-pushed media.
+
+**Sent files are kept.** A proactive media send that is delivered is saved in the file store like an incoming file, so the notification log, the episode store and the pending-mirror drain carry its marker (the drain keeps markers even when it shortens a long caption). Reply-context `send_media` has no caller yet.
 
 **Bytes, not paths, for outbound.** The caller (e.g. the notifier) typically fetches the media from a third party (Jellyfin/Radarr) and hands the channel the raw bytes. The channel decides how to upload (Telegram: `send_photo` with multipart upload; future email: MIME attachment). Channels that can't represent a given `kind` (e.g. early email may not support video) raise `NotImplementedError`; the caller is responsible for downgrading or skipping.
 

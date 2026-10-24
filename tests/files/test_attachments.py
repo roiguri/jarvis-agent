@@ -7,7 +7,7 @@ import pytest
 import config
 from episodes import record as episodes_record
 from episodes import store as episodes_store
-from files import index, inbound, legacy, model_input, startup, store
+from files import attachments, index, legacy, model_input, startup, store
 
 JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"0" * 64
 OGG = b"OggS" + b"\x00" * 64
@@ -30,7 +30,7 @@ def att(data, kind="image", **kw):
 # --- saving ------------------------------------------------------------------
 
 def test_save_attachments():
-    recs, notes = inbound.save_attachments([att(JPEG, filename="a.jpg"), att(OGG, "audio")],
+    recs, notes = attachments.save_attachments([att(JPEG, filename="a.jpg"), att(OGG, "audio")],
                                            caption="look at these", turn_id="t1")
     assert notes == []
     assert [r.kind for r in recs] == ["image", "audio"]
@@ -40,7 +40,7 @@ def test_save_attachments():
 
 def test_unsaveable_files_become_notes(monkeypatch):
     monkeypatch.setattr(store, "MAX_FILE_BYTES", 10)
-    recs, notes = inbound.save_attachments([att(JPEG), att(b"", "video")])
+    recs, notes = attachments.save_attachments([att(JPEG), att(b"", "video")])
     assert recs == []
     assert notes == ["[A photo was sent but is too large to keep (0 MB).]",
                      "[A video was sent but arrived empty.]"]
@@ -50,7 +50,7 @@ def test_disk_failure_becomes_a_note(monkeypatch):
     def full(*a, **kw):
         raise OSError(28, "No space left on device")
     monkeypatch.setattr(store, "add", full)
-    recs, notes = inbound.save_attachments([att(OGG, "audio")])
+    recs, notes = attachments.save_attachments([att(OGG, "audio")])
     assert recs == [] and notes == ["[An audio was sent but couldn't be saved (OSError).]"]
 
 

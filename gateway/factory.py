@@ -25,7 +25,7 @@ from gateway import outbox as outbox_mod
 from gateway.base import Channel, OnMessage
 from gateway.confirmation.base import Confirmation
 from gateway.confirmation.store import InMemoryConfirmationStore
-from gateway.outbox import LogSink, Outbox
+from gateway.outbox import LogSink, Outbox, SaveFile
 from gateway.channels.telegram.channel import TelegramChannel
 from gateway.channels.telegram.confirmation import TelegramConfirmationUI
 from gateway.channels.telegram.host import TelegramHost
@@ -213,6 +213,7 @@ def _build_telegram_stack(
     on_message: OnMessage,
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
+    save_file: SaveFile | None = None,
 ) -> TelegramStack:
     """Construct and wire the Telegram channel, router, confirmation UI + store,
     outbox, and PTB host, and register the defaults for proactive sends /
@@ -223,6 +224,7 @@ def _build_telegram_stack(
     into a conversational acknowledgement (keeps the agent out of the gateway).
     log_sink: host-injected notification-log writer the Outbox records
     event-tagged sends through (keeps the gateway free of tools-layer imports).
+    save_file: host-injected step the Outbox keeps sent media through.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -233,7 +235,7 @@ def _build_telegram_stack(
     owner_id = int(owner_env)
 
     channel = TelegramChannel(owner_id)
-    outbox = Outbox(channel, log_sink)
+    outbox = Outbox(channel, log_sink, save_file)
     confirmation_ui = TelegramConfirmationUI(channel)
     store = InMemoryConfirmationStore(
         confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
@@ -255,6 +257,7 @@ def _build_jarvis_app_stack(
     on_message: OnMessage,
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
+    save_file: SaveFile | None = None,
 ) -> JarvisAppStack:
     """Construct and wire the jarvis-app channel — HubClient, channel, confirmation
     store/UI, outbox, and the poll-loop router — and register the channel for
@@ -278,7 +281,7 @@ def _build_jarvis_app_stack(
 
     client = HubClient(base_url, token)
     channel = JarvisAppChannel(client, owner)
-    outbox = Outbox(channel, log_sink)
+    outbox = Outbox(channel, log_sink, save_file)
     confirmation_ui = AppConfirmationUI(client)
     store = InMemoryConfirmationStore(
         confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
@@ -306,6 +309,7 @@ def build_stack(
     on_message: OnMessage,
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
+    save_file: SaveFile | None = None,
 ) -> Stack:
     """Build the named channel's stack and register its proactive/confirmation
     defaults. With one channel registered this is byte-identical to building it
@@ -314,4 +318,4 @@ def build_stack(
         builder = _STACK_BUILDERS[name]
     except KeyError:
         raise ValueError(f"Unknown channel: {name!r}") from None
-    return builder(on_message, on_confirmation_outcome, log_sink)
+    return builder(on_message, on_confirmation_outcome, log_sink, save_file)
