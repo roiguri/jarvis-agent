@@ -9,7 +9,8 @@ dropped. If another arrival of the same bytes already has the current record, it
 is copied without a model call.
 
 Each job runs in a fresh context, so its model call is never charged to a turn
-that happened to start it.
+that happened to start it. Between jobs the loop also collects unused bytes
+hourly, so a deleted file leaves the disk within the hour.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ JOB_KIND = store.RECORD_JOB
 BACKOFF_S = (60, 600, 3600, 6 * 3600, 24 * 3600)
 MAX_ATTEMPTS = len(BACKOFF_S)
 POLL_S = 60
+# Unused bytes (a deleted file's) are collected this often, not only at startup.
+COLLECT_EVERY_S = 3600
 # A breath between jobs, so a back-fill never runs model calls back to back.
 PAUSE_S = 2
 
@@ -179,7 +182,17 @@ def kick() -> None:
 
 
 async def _run_forever(wake: asyncio.Event) -> None:
+    loop = asyncio.get_running_loop()
+    collected_at = loop.time()  # startup has just collected
     while True:
+        if loop.time() - collected_at >= COLLECT_EVERY_S:
+            collected_at = loop.time()
+            try:
+                removed = await asyncio.to_thread(store.collect_unused)
+                if removed:
+                    logger.info("file store: collected %d unused files", len(removed))
+            except Exception:
+                logger.exception("file store: collecting unused bytes failed")
         try:
             job = await asyncio.to_thread(next_job)
             if job is not None:

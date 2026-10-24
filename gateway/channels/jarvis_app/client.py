@@ -13,6 +13,8 @@ import logging
 
 import httpx
 
+from gateway.base import media_upload_timeout_s
+
 logger = logging.getLogger(__name__)
 
 # The version the adapter was written against. The hub reports its own
@@ -125,11 +127,13 @@ class HubClient:
         width: int | None = None,
         height: int | None = None,
         blur_preview: str | None = None,
+        duration_ms: int | None = None,
     ) -> str:
         """Upload one blob and return its `att_…` id, to be referenced by a later
         send_message(attachment_ids=[…]). The hub infers kind from the mime type.
         Optional metadata lets the app render without reflow (width/height reserve
-        the aspect ratio) and show a blur-up placeholder (blur_preview); all are
+        the aspect ratio), show a blur-up placeholder (blur_preview) and a voice
+        note's or video's length (duration_ms); all are
         omitted when absent and the hub does not validate them. Raises
         HubUnavailable on a server error or transport failure so a proactive media
         send degrades to a failed send rather than crashing the caller."""
@@ -142,19 +146,26 @@ class HubClient:
             data["height"] = str(height)
         if blur_preview:
             data["blur_preview"] = blur_preview
+        if duration_ms is not None:
+            data["duration_ms"] = str(duration_ms)
+        limit = media_upload_timeout_s(len(payload))
         try:
             r = await self._client.post(
                 "/bot/v1/attachments",
                 files={"file": (filename, payload, mime_type)},
                 data=data or None,
+                timeout=httpx.Timeout(limit, connect=10.0),
             )
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
             if e.response.status_code >= 500:
                 raise HubUnavailable(f"hub returned {e.response.status_code}") from e
             raise
+        except httpx.TimeoutException as e:
+            raise HubUnavailable(f"the upload timed out after {limit:.0f}s "
+                                 f"({len(payload) / (1024 * 1024):.1f} MB)") from e
         except httpx.HTTPError as e:
-            raise HubUnavailable(str(e)) from e
+            raise HubUnavailable(str(e) or type(e).__name__) from e
         return r.json()["id"]
 
     async def download_attachment(self, attachment_id: str) -> bytes:

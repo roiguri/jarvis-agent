@@ -429,12 +429,12 @@ class Channel(ABC):
     async def send(self, chat_id: str, text: str, *, reply_to: str | None = None) -> None: ...
 
     @abstractmethod
-    async def send_media(self, chat_id: str, kind: str, payload: bytes, caption: str | None = None) -> None: ...
+    async def send_media(self, chat_id: str, kind: str, payload: bytes, caption: str | None = None, *, filename: str | None = None, mime_type: str | None = None) -> None: ...
 
     @abstractmethod
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None: ...
     @abstractmethod
-    async def send_to_owner_media(self, kind: str, payload: bytes, caption: str | None = None, *, event: str | None = None) -> None: ...
+    async def send_to_owner_media(self, kind: str, payload: bytes, caption: str | None = None, *, event: str | None = None, filename: str | None = None, mime_type: str | None = None) -> None: ...
 
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool: ...
@@ -590,9 +590,9 @@ core changes.
 Two outbound methods on the `Channel` ABC:
 
 - `send_media(chat_id, kind, payload: bytes, caption)` — reply-context. The channel uploads the bytes; the caller does not know how. Used when the agent wants to attach an image to a reply (no caller today, but the contract reserves the slot).
-- `send_to_owner_media(kind, payload: bytes, caption)` — proactive, reached via `outbox.notify_owner_media(...)`. Used by the media notifier (Sonarr/Radarr poster images) and any other proactive channel-pushed media.
+- `send_to_owner_media(kind, payload: bytes, caption, *, filename, mime_type)` — reached via `outbox.notify_owner_media(...)`. Used by the media notifier (Sonarr/Radarr poster images) and `send_file` (a stored file sent back). `kind` is image, audio, video, document or file; `filename` and `mime_type` are hints. Telegram sends a photo, a video, a voice note (ogg) or audio file, or else a document under its name; jarvis-app uploads images and audio as before and anything else as a `file` attachment under its name, with what the app shows before it downloads: an image's size and blur-up placeholder, a voice note's or video's length, a video's size (read from the file's own Ogg / MP4 headers, `jarvis_app/media_meta.py`). A video has no preview picture yet (#186). A media upload's time limit grows with its size (`gateway.base.media_upload_timeout_s`, about 10 s plus 4 s per MB), on both channels; whoever waits on the send waits longer (`media_send_wait_s`).
 
-**Sent files are kept.** A proactive media send that is delivered is saved in the file store like an incoming file, so the notification log, the episode store and the pending-mirror drain carry its marker (the drain keeps markers even when it shortens a long caption). Reply-context `send_media` has no caller yet.
+**Sent files are kept.** A proactive media send that is delivered is saved in the file store like an incoming file, so the notification log, the episode store and the pending-mirror drain carry its marker (the drain keeps markers even when it shortens a long caption). A file that is already stored (`send_file`) passes `kept=(id, marker)`: it is not saved again and keeps its id. Reply-context `send_media` has no caller yet.
 
 **Bytes, not paths, for outbound.** The caller (e.g. the notifier) typically fetches the media from a third party (Jellyfin/Radarr) and hands the channel the raw bytes. The channel decides how to upload (Telegram: `send_photo` with multipart upload; future email: MIME attachment). Channels that can't represent a given `kind` (e.g. early email may not support video) raise `NotImplementedError`; the caller is responsible for downgrading or skipping.
 

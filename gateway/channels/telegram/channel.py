@@ -12,7 +12,7 @@ import logging
 from telegram import Bot, BotCommand
 from telegram.error import BadRequest
 
-from gateway.base import Channel, OWNER_THREAD_ID
+from gateway.base import Channel, OWNER_THREAD_ID, media_upload_timeout_s
 from gateway.commands import list_commands as _list_slash_commands
 from gateway.channels.telegram.markdown_to_html import convert as md_to_html
 
@@ -31,6 +31,19 @@ def _truncate_markdown(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + _TRUNCATION_TAIL
+
+
+def _send_method(kind: str, mime_type: str | None) -> tuple[str, str]:
+    """The Bot method and its payload argument for a file of `kind`."""
+    if kind == "image":
+        return "send_photo", "photo"
+    if kind == "video":
+        return "send_video", "video"
+    if kind == "audio":
+        if (mime_type or "").startswith("audio/ogg"):
+            return "send_voice", "voice"
+        return "send_audio", "audio"
+    return "send_document", "document"
 
 
 class TelegramChannel(Channel):
@@ -71,18 +84,24 @@ class TelegramChannel(Channel):
                 return
             raise
 
-    async def _send_photo(self, chat_id: int, payload: bytes, caption: str | None) -> None:
+    async def _send_file(self, chat_id: int, kind: str, payload: bytes, caption: str | None,
+                         filename: str | None = None, mime_type: str | None = None) -> None:
+        """One file, as the Telegram message type that fits its kind: a photo, a video,
+        a voice note (ogg audio), an audio file, or else a document with its name."""
         bot = self._require_bot()
+        method, field = _send_method(kind, mime_type)
+        send = getattr(bot, method)
+        extra = {"filename": filename} if filename and method != "send_photo" else {}
+        extra["write_timeout"] = media_upload_timeout_s(len(payload))
         raw_caption = _truncate_markdown(caption, _CAPTION_LIMIT) if caption else ""
         html = md_to_html(raw_caption) if raw_caption else None
         try:
-            await bot.send_photo(chat_id=chat_id, photo=payload, caption=html, parse_mode="HTML")
+            await send(chat_id=chat_id, **{field: payload}, caption=html, parse_mode="HTML", **extra)
         except BadRequest as e:
             if "Can't parse entities" in str(e):
                 logger.warning("HTML caption parse failed for chat %s; sending plain: %s", chat_id, e)
-                await bot.send_photo(
-                    chat_id=chat_id, photo=payload, caption=raw_caption or None, parse_mode=None
-                )
+                await send(chat_id=chat_id, **{field: payload}, caption=raw_caption or None,
+                           parse_mode=None, **extra)
                 return
             raise
 
@@ -94,22 +113,19 @@ class TelegramChannel(Channel):
         await self._send_text(int(chat_id), text)
 
     async def send_media(
-        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None
+        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
+        *, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        if kind != "image":
-            raise NotImplementedError(f"TelegramChannel cannot send media kind={kind!r}")
-        await self._send_photo(int(chat_id), payload, caption)
+        await self._send_file(int(chat_id), kind, payload, caption, filename, mime_type)
 
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         await self._send_text(self._owner_id, text)
 
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
-        *, event: str | None = None,
+        *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        if kind != "image":
-            raise NotImplementedError(f"TelegramChannel cannot send media kind={kind!r}")
-        await self._send_photo(self._owner_id, payload, caption)
+        await self._send_file(self._owner_id, kind, payload, caption, filename, mime_type)
 
     def authorize(self, raw_user_id: str) -> bool:
         try:

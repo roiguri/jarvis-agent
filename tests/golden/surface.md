@@ -9,7 +9,8 @@ Always on: 10 tools, ≈2775 tokens — activate_skill, delete_memory, list_memo
 
 | Active skill | Tools | Tokens | Added |
 |---|---|---|---|
-| collections | 15 | ≈4534 | +5 tools, ≈+1759 |
+| collections | 15 | ≈4544 | +5 tools, ≈+1769 |
+| files | 13 | ≈3263 | +3 tools, ≈+488 |
 | fitness | 24 | ≈6124 | +14 tools, ≈+3349 |
 | github | 18 | ≈3492 | +8 tools, ≈+717 |
 | google_health | 13 | ≈3322 | +3 tools, ≈+547 |
@@ -28,7 +29,8 @@ Always on: 11 tools, ≈3090 tokens — activate_skill, delete_memory, heartbeat
 
 | Active skill | Tools | Tokens | Added |
 |---|---|---|---|
-| collections | 16 | ≈4849 | +5 tools, ≈+1759 |
+| collections | 16 | ≈4859 | +5 tools, ≈+1769 |
+| files | 14 | ≈3578 | +3 tools, ≈+488 |
 | fitness | 25 | ≈6439 | +14 tools, ≈+3349 |
 | github | 19 | ≈3807 | +8 tools, ≈+717 |
 | google_health | 14 | ≈3637 | +3 tools, ≈+547 |

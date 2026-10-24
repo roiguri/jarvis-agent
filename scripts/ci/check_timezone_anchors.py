@@ -47,6 +47,8 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "episodes/search.py": ("home", "search_history's plain-date bounds are Israel days, as the logs it replaced"),
     "episodes/today.py": ("home", "the today and day views are Israel days"),
     "tools/core/files.py": ("home", "open_file shows when a file arrived in Israel time, as search_history does"),
+    "files/search.py": ("home", "find_files dates and shows arrivals in Israel time, as search_history does"),
+    "tools/files/library.py": ("home", "delete_file's confirmation shows arrivals in Israel time"),
     "compaction.py": ("both", "record times in Israel time, plus the owner's local time in away mode, as the turn stamp"),
     "evals/harness.py": ("home", "cases pin Israel wall-clock times, like the heartbeat they exercise"),
     "tools/fitness/_adherence.py": ("home", "adherence weeks are Israel-Sunday-anchored counting windows by design"),

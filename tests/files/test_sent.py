@@ -37,7 +37,8 @@ class MediaChannel:
         self.fail = fail
         self.sent = []
 
-    async def send_to_owner_media(self, kind, payload, caption=None, *, event=None):
+    async def send_to_owner_media(self, kind, payload, caption=None, *, event=None,
+                                  filename=None, mime_type=None):
         if self.fail:
             raise ConnectionError("offline")
         self.sent.append((kind, caption))

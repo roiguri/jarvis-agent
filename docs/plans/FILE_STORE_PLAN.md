@@ -32,7 +32,7 @@ shared links).
       images, audio, video and PDFs shown again; clear answers for removed files.
 - [x] **S5 — Background records.** A restart-safe job queue that writes a description,
       transcript or extracted text for each file after the turn, indexed for search in chunks.
-- [ ] **S6 — `files` skill.** `find_files`, `send_file`, `delete_file`, and a `file` field type
+- [x] **S6 — `files` skill.** `find_files`, `send_file`, `delete_file`, and a `file` field type
       for collections.
 - [ ] **S7 — `fetch_url` keeps what it fetched.** Overflow page text saved as a temporary file
       the result points to (with a cleanup for temporary files only); link videos saved with
@@ -462,8 +462,8 @@ As built: the save step is `files.attachments.save_sent`, the same `save_attachm
 inbound files take. The Outbox sends first and saves only what was delivered; a failed save
 still logs the send, without a marker. Bytes only for now: sending a stored file by id comes
 with its first caller, `send_file` (S6). The drain keeps markers when it cuts a long caption.
-Staging runs without the webhook, so the live check is `send_file` (S6) on staging, or the first
-poster after a prod deploy, whichever comes first.
+Staging runs without the webhook, so the live check is the first poster after a prod deploy
+(`send_file` in a chat turn doesn't take this path; see S6).
 
 ### S4 — `open_file`
 
@@ -579,10 +579,72 @@ here's a record of the video.") despite the prompt; fix with `fetch_url`'s share
 
 ### S6 — `files` skill
 
-`tools/files/` with `find_files`, `send_file`, `delete_file` (confirmation via
-`get_confirmation()`, where-used from the reference functions, including other arrivals of the
-same bytes — deleting one arrival keeps bytes another still uses). Collections gain a `file`
-field type (validates the id exists, shows state) and register their reference function.
+`tools/files/`, a skill (no per-turn cost until activated).
+
+- **`find_files(query, kind, source, since, until, limit)`** — one entry per file: marker,
+  arrival time (Israel) and source, the message it came with, and the best matching snippet;
+  a text file's match also says where to `open_file(…, start=…)`. Dates as `search_history`
+  takes them (`episodes.search.parse_bound`). No query lists the newest files. Expired files
+  match by their record and are marked; deleted files never match.
+- **Search index:** `chunks_fts` uses SQLite's trigram tokenizer, so a Hebrew word matches with
+  a prefix attached ("חוזה" finds "והחוזה"); all terms first, then any term; terms under 3
+  characters are dropped. An index built with the old tokenizer is rebuilt at first use (it
+  is derived from `chunks`). History search keeps its own tokenizer for now.
+- **`send_file(file_id, caption)`** — to the turn's origin channel, through the Outbox, as
+  `send_form` does (tagged as a heartbeat send on a tick). The Outbox is handed the file's id
+  and marker, so it is not stored a second time. Channels send every kind: the Channel
+  methods gain optional `filename` and `mime_type`; Telegram sends video, audio (ogg as a
+  voice note) and anything else as a document with its filename; the app sends images and
+  audio as now and anything else as a `file` attachment.
+- **`delete_file(file_ids)`** — destructive, confirmed. The confirmation lists each file,
+  every other arrival of the same bytes (deleted with it: "delete that photo" means it is
+  gone), and where each is used. If the where-used scan fails, nothing is deleted.
+- **Bytes go within the hour:** the worker also collects unused bytes hourly, not only at
+  startup.
+- **Collections `file` field:** one file id per field; unknown or deleted ids are refused;
+  shown as the file's marker (so a removed file reads as removed). Collections register as a
+  strong reference holder; so do memory files (ids Jarvis wrote into them).
+- **S3b's live check is not here:** a chat-turn send is already in the conversation as the tool
+  result, so it is not logged as a notification (as with `send_form`); S3b waits for the first
+  proactive poster on prod.
+
+**As built:** `files/search.py` (the search, with a substring fallback for words under 3
+characters, and the start of a file's record shown when there is no match snippet),
+`tools/files/` (`library.py` + `SKILL.md`), the index's `PRAGMA user_version` (1 = trigram
+built; an interrupted rebuild runs again), `Outbox.notify_owner_media(..., filename,
+mime_type, kept)`, holders in `tools/collections/references.py` and `tools/core/memory.py`.
+Always-on cost: the skill's one line in the skill list. Seen on staging: files sent to the app
+had no length (voice notes, videos) and no preview picture (videos); the app channel now reads
+length and size from the Ogg / MP4 headers (`jarvis_app/media_meta.py`); the preview is #186,
+its fix (Jarvis or app side) undecided. Collections file fields in the app: jarvis-app#36.
+
+### S6 staging checklist
+
+1. **Upgrade:** after the restart, `find_files` works on the existing index (it is rebuilt
+   with the new tokenizer on first open; the log shows no error).
+2. **Find:** "find the cinema tickets" and a Hebrew word from a PDF (e.g. "הזמנה") each find
+   the right file; "what voice notes did I send today?" lists them with their transcripts.
+3. **Send back, app:** "send me the Cinematheque PDF" arrives as a file named
+   `Cinematheque Tel Aviv.pdf`; a photo arrives as an image.
+4. **Send back, Telegram:** the same from Telegram: the PDF as a document with its name, a
+   voice note as a voice message, the video as a video.
+5. **Same id:** after a send, the files table has no new row (`files_verify.py` record count
+   unchanged).
+6. **Collection field:** add a `photo` file field to a test collection and attach a photo by
+   id; listing the item shows the file's marker.
+7. **Delete:** delete a photo that is in that collection; the confirmation lists it and says
+   "used in: collections"; cancel once (nothing changes), then confirm; the item now shows
+   the marker as deleted, and `open_file` says it was deleted.
+
+**Result (2026-10-24):** passed on both channels. Find: `find_files` found the newest image,
+document, voice note and video by kind; before the skill was active, "find the cinema tickets"
+went through `search_history` (it finds files by their markers), which also worked. Send back:
+app and Telegram, PDF, voice note, photo, video, each under its own id (no new rows after 12
+sends). The 21 MB video first timed out on the app's 10 s request limit; uploads now get a
+size-based limit, and it then sent in about 19 s. Collection: a `file` field created, a photo
+attached; after deleting the photo (the confirmation said "used in: collections") the item
+shows it as deleted. Not run live: cancelling a delete (tested), the 21 MB video over
+Telegram.
 
 ### S7 — `fetch_url`
 

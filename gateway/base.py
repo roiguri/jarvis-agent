@@ -19,6 +19,21 @@ from typing import AsyncIterator, Awaitable, Callable
 # channel travels separately (InboundMessage.channel -> CURRENT_CHANNEL).
 OWNER_THREAD_ID = "owner"
 
+# How long a channel lets one media upload take: a base plus time per MB, so a
+# large video isn't cut off by a limit sized for messages. A caller waiting on a
+# media send waits longer than this (media_send_wait_s).
+_UPLOAD_BASE_S = 10.0
+_UPLOAD_S_PER_MB = 4.0
+
+
+def media_upload_timeout_s(n_bytes: int) -> float:
+    return _UPLOAD_BASE_S + _UPLOAD_S_PER_MB * n_bytes / (1024 * 1024)
+
+
+def media_send_wait_s(n_bytes: int) -> float:
+    """Upload limit plus room for the message that carries it."""
+    return media_upload_timeout_s(n_bytes) + 30.0
+
 
 @dataclass
 class InboundMessage:
@@ -64,10 +79,13 @@ class Channel(ABC):
 
     @abstractmethod
     async def send_media(
-        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None
+        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
+        *, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        """Reply with media to a known chat. Channels that can't represent `kind`
-        raise NotImplementedError; the caller downgrades or skips."""
+        """Reply with media to a known chat. `kind` is image, audio, video,
+        document or file; `filename` and `mime_type` are hints a channel may use
+        (a document's name). Channels that can't represent `kind` raise
+        NotImplementedError; the caller downgrades or skips."""
 
     @abstractmethod
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
@@ -84,10 +102,10 @@ class Channel(ABC):
     @abstractmethod
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
-        *, event: str | None = None,
+        *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        """Proactive media send to the channel's owner (e.g. Sonarr/Radarr posters).
-        `event` as in send_to_owner."""
+        """Media send to the channel's owner (posters, a stored file sent back).
+        `event` as in send_to_owner; `kind`, `filename`, `mime_type` as in send_media."""
 
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool:

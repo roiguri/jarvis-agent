@@ -76,7 +76,8 @@ def manage_collection(
         action: list | create | edit_schema | archive | unarchive | delete
         name: the collection's exact name (required except for list).
         fields: custom fields, each {name, type, options?}. type is one of text,
-            url, number, money, date, rating (1-5), choice (needs options), tags.
+            url, number, money, date, rating (1-5), choice (needs options), tags,
+            file (a stored file's id).
             Names are snake_case. A number field carries its unit in the name
             (weight_kg); money stores a currency per value, so 'price', never
             'price_ils'. On create: the fields; on edit_schema: fields to add.

@@ -116,16 +116,21 @@ class Outbox:
         *,
         event: str | None = None,
         metadata: dict | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+        kept: tuple[str, str] | None = None,
     ) -> SendOutcome:
         """Send media to the owner. Same logging/failure semantics as
         notify_owner. Once delivered, the file is saved and the log entry is the
-        caption plus the file's marker."""
+        caption plus the file's marker. `kept` is (id, marker) for a file that is
+        already stored: it is not saved again, and its own marker is logged."""
         try:
-            await self._channel.send_to_owner_media(kind, payload, caption, event=event)
+            await self._channel.send_to_owner_media(kind, payload, caption, event=event,
+                                                    filename=filename, mime_type=mime_type)
         except Exception as e:
             logger.exception("Outbox: failed to send owner media (event=%s)", event)
-            return SendOutcome(ok=False, error=str(e))
-        saved = await self._save(kind, payload, caption)
+            return SendOutcome(ok=False, error=str(e) or type(e).__name__)
+        saved = kept if kept is not None else await self._save(kind, payload, caption)
         if saved is None:
             await self._log(event, caption or f"[{kind}]", metadata)
         else:

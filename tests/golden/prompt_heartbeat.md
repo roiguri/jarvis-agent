@@ -100,6 +100,7 @@ Fixture preamble: kept verbatim above the task blocks.
 
 ## Available skills (call activate_skill to load tools for this conversation):
 - collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps
+- files: find stored files (photos, voice notes, videos, documents the owner sent or you sent), send one back, delete them
 - fitness: gym attendance, workout logs, running sessions
 - github: GitHub project management — repos, issues, PRs
 - google_health: Pixel Watch daily health status (steps, activity, recovery, vitals), sleep and workouts (Google Health API)

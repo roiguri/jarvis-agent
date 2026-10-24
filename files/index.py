@@ -8,6 +8,8 @@ Tables:
                producer and version say what made it, so it can be redone.
   chunks       searchable text split into pieces with their position, indexed
                by chunks_fts. Derived from the tables above and rebuildable.
+               Trigram-tokenized: a word matches inside a longer one, so a
+               Hebrew word is found with a prefix attached.
   jobs         background work still to do for a file.
   legacy_paths old channel-cache paths → the file ids they became.
 
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-    text, content='chunks', content_rowid='id'
+    text, content='chunks', content_rowid='id', tokenize='trigram'
 );
 CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
     INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
@@ -121,8 +123,26 @@ def connect() -> sqlite3.Connection:
             with closing(_open(INDEX_PATH)) as con:
                 con.execute("PRAGMA journal_mode = WAL")
                 con.executescript(_SCHEMA)
+                _upgrade(con)
             _initialized.add(INDEX_PATH)
     return _open(INDEX_PATH)
+
+
+# PRAGMA user_version: 1 = chunks_fts is trigram-tokenized and built.
+_VERSION = 1
+
+
+def _upgrade(con: sqlite3.Connection) -> None:
+    """Bring an older index up to _VERSION. Version 1 rebuilds the search table
+    with the trigram tokenizer from `chunks`. The version is set last, so an
+    interrupted upgrade runs again on the next open."""
+    if con.execute("PRAGMA user_version").fetchone()[0] >= _VERSION:
+        return
+    con.execute("DROP TABLE IF EXISTS chunks_fts")
+    con.executescript(_SCHEMA)
+    con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+    con.execute(f"PRAGMA user_version = {_VERSION}")
+    con.commit()
 
 
 @contextmanager
