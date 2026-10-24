@@ -89,7 +89,7 @@ def content_blocks(records: list[store.FileRecord]) -> list[dict]:
         if rec.kind == "text" and rec.state in ("available", "trash"):
             out.append({"type": "text", "text": f"\n{rec.marker()}\n{text_page(rec)}"})
             continue
-        media, note = _media_block(rec)
+        media, note = media_block(rec)
         if media is not None:
             out.append(media)
         out.append({"type": "text", "text": f"\n{rec.marker()}" + (f" {note}" if note else "")})
@@ -104,24 +104,31 @@ def text_page(rec: store.FileRecord, start: int = 0, length: int = PAGE_CHARS) -
     except (LookupError, OSError) as e:
         logger.warning("could not read %s: %s", rec.id, e)
         return "— the original could not be read."
+    return page(text, rec.id, start, length)
+
+
+def page(text: str, file_id: str, start: int = 0, length: int = PAGE_CHARS, *,
+         tag: str = "file content") -> str:
+    """One page of `text` inside <tag> tags, ending with how to read on with
+    open_file when there is more."""
     start = max(0, start)
     length = max(1, min(length, MAX_PAGE_CHARS))
     if start >= len(text):
-        return f"— the file has {len(text):,} characters; nothing from {start:,}."
+        return f"— it has {len(text):,} characters; nothing from {start:,}."
     end = min(len(text), start + length)
-    page = f"<file content>\n{text[start:end]}\n</file content>"
+    body = f"<{tag}>\n{text[start:end]}\n</{tag}>"
     if start == 0 and end == len(text):
-        return page
+        return body
     tail = f"Showing characters {start:,}–{end:,} of {len(text):,}."
     if end < len(text):
-        tail += f' If you need the rest: open_file("{rec.id}", start={end}).'
-    return f"{page}\n{tail}"
+        tail += f' If you need the rest: open_file("{file_id}", start={end}).'
+    return f"{body}\n{tail}"
 
 
 _BLOCK_TYPE = {"image": "image", "audio": "audio", "video": "video", "document": "file"}
 
 
-def _media_block(rec: store.FileRecord) -> tuple[dict | None, str | None]:
+def media_block(rec: store.FileRecord) -> tuple[dict | None, str | None]:
     """(media block, None) for a file the model can read, else (None, note)."""
     if rec.state not in ("available", "trash"):
         return None, "— the original is no longer stored."

@@ -196,7 +196,7 @@
     "destructive": false,
     "name": "open_file",
     "schema": {
-      "description": "Open a stored file by its id (the `file:…` in a marker such as\n    `[file:k7m2q9xd · image · photo.jpg · 1.2 MB]`). Use it only if necessary: when\n    a question needs the file's contents and your earlier reply about it isn't\n    enough. You see the file in your next step only; open it again if you need it\n    later.\n\n    Images, audio, video and PDFs come back whole. A text file comes back one page\n    at a time: the result says which characters it shows, and if you need more,\n    call again with `start` where it stopped. `length` is the page size in\n    characters (up to 20,000).",
+      "description": "Open a stored file by its id (the `file:…` in a marker such as\n    `[file:k7m2q9xd · image · photo.jpg · 1.2 MB]`). Use it only if necessary: when\n    a question needs the file's contents and your earlier reply about it isn't\n    enough. You see the file in your next step only; open it again if you need it\n    later.\n\n    Images, audio, video and PDFs come back whole, with their written record. A text\n    file, or the record of a file that is no longer stored, comes back one page at a\n    time: the result says which characters it shows, and if you need more, call\n    again with `start` where it stopped. `length` is the page size in characters\n    (up to 20,000).",
       "name": "open_file",
       "parameters": {
         "properties": {

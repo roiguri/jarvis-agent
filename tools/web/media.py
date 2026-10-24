@@ -25,6 +25,7 @@ import tempfile
 import time
 
 import config
+from files import records
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ DESCRIBE_MAX_S = 90
 MIN_STEP_S = 15
 # Left for the model to answer after the tool returns.
 _ANSWER_RESERVE_S = 30
-DESCRIBE_MAX_TOKENS = 4096
+DESCRIBE_MAX_TOKENS = records.VIDEO_MAX_TOKENS
 CAPTION_MAX_CHARS = 2500
 # YouTube is watched from its URL, never downloaded. Only the opening stretch,
 # at a low frame rate: that caps the cost of any length (about 40k input tokens).
@@ -55,29 +56,11 @@ YOUTUBE_PAGE_MAX_CHARS = 5000
 _FORMAT_SORT = "res:540,+size"
 _FORMAT = "b[vcodec!=none][acodec!=none][protocol^=http]/b[protocol^=http][format_id!*=dash]"
 _MIMES = {"mp4": "video/mp4", "webm": "video/webm"}
-# The finish reasons that mean the model was done, as agent.py reads them.
-_NORMAL_FINISH = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
 
-_INTRO = "Make a faithful record of this video, for someone who will not watch it. Not a summary.\n"
-_SAID = (
-    "Said: everything spoken, word for word, in the original language. If that would run "
-    "past about 600 words, instead give a detailed account of what is said, in order, that "
-    "keeps every specific detail.\n"
-)
-_ON_SCREEN = "On-screen text: all text that appears, verbatim, in order.\n"
-_SHOWN = (
-    "Shown: what happens, in order. Include a specific detail (number, amount, name, place, "
-    "price, time) only if it is said or written in the video. Never estimate or fill in a "
-    "missing one; if you judge something from the picture alone, mark it as a visual guess.\n"
-)
-_PROMPT = (
-    _INTRO + _SAID + _ON_SCREEN + _SHOWN
-    + "If the video has no sound, say so. Do not say who posted it. Output only the three "
-    "sections, with no introduction or closing line."
-)
+_PROMPT = records.VIDEO_PROMPT
 _YOUTUBE_PROMPT = (
-    _INTRO + "What is said is covered by a separate transcript, so leave speech out.\n"
-    + _ON_SCREEN + _SHOWN
+    records.VIDEO_INTRO + "What is said is covered by a separate transcript, so leave speech out.\n"
+    + records.VIDEO_ON_SCREEN + records.VIDEO_SHOWN
     + "Keep the record under about 400 words. Do not say who posted it. Output only the two "
     "sections, with no introduction or closing line."
 )
@@ -313,37 +296,16 @@ def _describe(part: dict, timeout_s: float, *, prompt: str,
               unwatched: str) -> tuple[str | None, str | None]:
     """One side model call on a media part. Returns (record or None, a note on what
     was missed); ``unwatched`` is the note when there is no record at all."""
-    from langchain_core.messages import HumanMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from google.genai.types import MediaResolution
-
-    from observability import telemetry
-
-    llm = ChatGoogleGenerativeAI(
-        model=config.MODEL, temperature=0, max_retries=1, timeout=timeout_s,
-        max_output_tokens=DESCRIBE_MAX_TOKENS, thinking_level="low",
-        media_resolution=MediaResolution.MEDIA_RESOLUTION_LOW,
-    )
-    message = HumanMessage(content=[part, {"type": "text", "text": prompt}])
-    # Its own job row, so the turn's call count and call indexes stay the turn's.
-    with telemetry.job("web_media"):
-        t0 = time.perf_counter()
-        try:
-            response = llm.invoke([message])
-        except Exception as e:
-            latency = int((time.perf_counter() - t0) * 1000)
-            telemetry.record_llm_call(None, latency_ms=latency, error=f"{type(e).__name__}: {e}")
-            logger.warning("video description failed: %s: %s", type(e).__name__, e)
-            return None, unwatched
-        latency = int((time.perf_counter() - t0) * 1000)
-        finish = str((response.response_metadata or {}).get("finish_reason") or "")
-        telemetry.record_llm_call(response, latency_ms=latency, finish_reason=finish)
-    _charge_turn(response)
-
-    text = response.text.strip() if isinstance(response.text, str) else ""
-    if not text:
+    text, finish, response = records.side_call(
+        [part], prompt, job="web_media", timeout_s=timeout_s,
+        max_output_tokens=DESCRIBE_MAX_TOKENS, low_resolution=True)
+    if response is None:
+        logger.warning("video description failed: %s", finish)
         return None, unwatched
-    if finish not in _NORMAL_FINISH:
+    _charge_turn(response)
+    if text is None:
+        return None, unwatched
+    if finish not in records.NORMAL_FINISH:
         return text, f"the record stops early ({finish}) — the end of the video may be missing"
     return text, None
 

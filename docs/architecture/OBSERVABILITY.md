@@ -116,7 +116,7 @@ with telemetry.job("compaction"):
 
 The job gets a `turns` row with `scope = "job"` and `job = name`; an exception marks it `failed` and propagates. A call recorded outside any turn or job is dropped.
 
-A tool that makes its own model call inside a turn records it the same way (`fetch_url`'s video record is the `web_media` job). The job saves and restores the running turn's accumulator, so the call lands on its own row and the turn's `llm_calls` and `llm_call_index` stay the turn's own. The job row is not linked to the turn that caused it; match them by time.
+A tool that makes its own model call inside a turn records it the same way (`fetch_url`'s video record is the `web_media` job). The written record of each stored file is a `file_record` job, made by the file store's background worker with no turn running. The job saves and restores the running turn's accumulator, so the call lands on its own row and the turn's `llm_calls` and `llm_call_index` stay the turn's own. The job row is not linked to the turn that caused it; match them by time.
 
 ---
 

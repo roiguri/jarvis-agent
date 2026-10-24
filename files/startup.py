@@ -1,5 +1,5 @@
-"""The file store's start-of-service upkeep: import old caches, collect unused
-bytes, check free space. Each step is independent; one failing is logged and
+"""The file store's start-of-service upkeep: import old caches, queue missing
+records, collect unused bytes, check free space. Each step is independent; one failing is logged and
 the rest still run, and none of them stops the service from starting."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
-from files import legacy, store
+from files import legacy, store, worker
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,11 @@ def prepare(legacy_entries: Iterable[tuple[str, str]]) -> str:
     except Exception:
         logger.exception("file store: legacy import failed (retried next start)")
         parts.append("legacy import failed")
+    # TODO(#185): remove with worker.queue_missing().
+    try:
+        parts.append(f"queued {worker.queue_missing()} records")
+    except Exception:
+        logger.exception("file store: queueing missing records failed")
     try:
         parts.append(f"collected {len(store.collect_unused())} unused")
     except Exception:

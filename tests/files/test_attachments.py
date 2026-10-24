@@ -131,7 +131,7 @@ def test_startup_summary(tmp_path):
     old = tmp_path / "x.jpg"
     old.write_bytes(JPEG)
     summary = startup.prepare([(str(old), "telegram")])
-    assert summary.startswith("imported 1 old files, collected 0 unused,")
+    assert summary.startswith("imported 1 old files, queued 0 records, collected 0 unused,")
 
 
 def test_startup_survives_a_failing_step(monkeypatch):

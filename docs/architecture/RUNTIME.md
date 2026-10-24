@@ -41,7 +41,7 @@ A small set (~10 tools) used in nearly every conversation. Full JSON schemas are
 | `history.py` | `search_history` | Read-only recall over the episode store: conversation, tool results, sent notifications, heartbeat activity ([MEMORY.md](MEMORY.md) "Episode store"). |
 | `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
 | `activate_skill.py` | `activate_skill` | The meta-tool that exposes Tier 2. Skills leave by the idle reset, not by a tool. |
-| `files.py` | `open_file` | Opens a stored file by id: text a page at a time, media returned as a file result (below). Core because file markers appear in ordinary turns. |
+| `files.py` | `open_file` | Opens a stored file by id: text a page at a time, media returned as a file result (below), with the file's written record; a file no longer stored is read from its record. Core because file markers appear in ordinary turns. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)
 

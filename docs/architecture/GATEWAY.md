@@ -602,6 +602,13 @@ Every file lives in the file store (`files/`): bytes under `$ROOT/jarvis_files/`
 named by content hash, and an index in `jarvis_data/files/` — see MEMORY.md's
 placement table. Channels keep no media of their own.
 
+Every stored file also gets a written record (a description, a transcript, or its
+text), made in the background after it arrives: `store.add` queues the job, and
+`files/worker.py` makes it through `files/records.py`, which has one function per file
+kind. Records make files searchable, and they stay readable after the original is
+removed. `scripts/files_verify.py` shows the queue, and `scripts/files_requeue.py --kind <kind>`
+redoes one kind after its function changes.
+
 The channels' old caches (`gateway/channels/*/media_cache/`) are no longer written.
 At startup the store imports whatever they still hold (`files/legacy.py`, fed by
 `gateway.factory.legacy_media_files()`), copying rather than moving so older code

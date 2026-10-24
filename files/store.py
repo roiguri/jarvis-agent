@@ -9,7 +9,7 @@ points at them, and bytes are never deleted on the spot — collect_unused()
 removes them only once no record needs them and they have sat unused past a
 grace period. Adding and collecting take one process lock, so a collection can
 never delete bytes an add of the same content is about to point at. (One
-process owns the store: the service. Scripts only read.)
+process owns the store: the service. Scripts only read, apart from queueing jobs.)
 
 States:
   available  bytes and records present
@@ -42,6 +42,8 @@ UNUSED_GRACE_S = 10 * 60
 # Free space under the files root below which disk_status() reports low.
 FREE_FLOOR_BYTES = 2 * 1024**3
 CHUNK_CHARS = 1500
+# The job kind add() queues: write the file's record (files/worker.py).
+RECORD_JOB = "record"
 _FILENAME_MAX = 120
 
 _STATES_WITH_BYTES = ("available", "trash")
@@ -123,6 +125,8 @@ def add(data: bytes, *, source: str, filename: str | None = None, caption: str |
             file_id = _insert(con, sha, kind, mime, len(data), name, caption, source,
                               origin or {}, turn_id, now, retention)
             _write_chunks(con, file_id, "meta", _meta_text(name, caption, source, origin))
+            con.execute("INSERT INTO jobs (file_id, kind, next_at, created) VALUES (?, ?, ?, ?)",
+                        (file_id, RECORD_JOB, index.now_iso(), index.now_iso()))
     return get(file_id)
 
 

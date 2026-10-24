@@ -30,7 +30,7 @@ shared links).
 - [x] **S4 — `open_file` (core tool).** Any tool can return stored files; inbound and tool
       results share one block shape; small text files read on arrival, longer ones in pages;
       images, audio, video and PDFs shown again; clear answers for removed files.
-- [ ] **S5 — Background records.** A restart-safe job queue that writes a description,
+- [x] **S5 — Background records.** A restart-safe job queue that writes a description,
       transcript or extracted text for each file after the turn, indexed for search in chunks.
 - [ ] **S6 — `files` skill.** `find_files`, `send_file`, `delete_file`, and a `file` field type
       for collections.
@@ -512,9 +512,70 @@ trim and search behaviour predate S4). 3 not run live; paging is covered by test
 
 ### S5 — Background records
 
-Job queue and worker; producers per kind (image / video description, audio transcript, document
-text); producer + version on every record; chunking into FTS; telemetry job per record;
-re-process command for a changed version.
+**One entry point, one function per file kind.** `files/records.py` holds a table from file kind
+to its record function; `records.make(rec)` is the only way a record is made. Improving how a
+kind is read (a local PDF text reader, OCR, frames from video) replaces that kind's function and
+bumps its version; nothing else changes.
+
+| Kind | Record kind | Made by | Version |
+|---|---|---|---|
+| image | description: what is shown, and all visible text verbatim | model | `image-1` |
+| video | description: said / on-screen text / shown (the reel prompt, shared with `fetch_url`) | model, low resolution | `video-1` |
+| audio | transcript: an English summary line, then everything said in the original language | model | `audio-1` |
+| document | text: an English summary line, then the full text in reading order | model (reads scans; keeps Hebrew order) | `document-1` |
+| text | text: the file's own text (capped) | no model | `text-1` |
+| file | none: found by name and caption | — | — |
+
+Model records use `config.MODEL` with low thinking, in English except quoted speech and text.
+A record that hits the output cap is kept, with a note that it stops early.
+
+- **Queue:** `store.add` queues a job in the same write as the file row, so every source gets
+  records (owner files, files Jarvis sends, later `fetch_url`). Startup also queues every file
+  of a recorded kind that has no record and no job, which back-fills the imported old files.
+- **Worker:** one async task started by `main.py`; it wakes after each owner turn and once a
+  minute, and does one job at a time, newest file first, outside the turn lock, in a fresh
+  context, under `telemetry.job("file_record")`. A job's attempt is counted before the model
+  call, so a crash mid-call retries later. Back-off 1 min, 10 min, 1 h, 6 h, 1 day; after five
+  failures the job stays with its last error and is not retried. A file that is deleted,
+  expired or missing has its job dropped.
+- **Same bytes, one call:** if another file with the same hash already has this record at the
+  current version, it is copied.
+- **Redo:** `scripts/files_requeue.py --kind <kind>` queues files whose record is older than the
+  current version (rows only, no model calls; the service does the work).
+- **`open_file`:** while the original is stored, each record is shown cut to 1,500 characters
+  (a text file's own-text record is skipped: the page is the content). Once the original is
+  gone, the records are the content, paged with `start` / `length` like a text file.
+- **Shared side call:** the model-call part of `tools/web/media.py` and the video prompt move to
+  `files/records.py`; `fetch_url` and the worker use the same function.
+
+**As built:** `files/records.py` (`make`, `RECORDERS`, `side_call`), `files/worker.py` (queue,
+one job at a time on its own daemon thread, so a restart never waits for a model call),
+`scripts/files_requeue.py`; `scripts/files_verify.py` also prints the queue and any jobs that
+gave up. Every stored file gets a job; a kind with no record (`file`) has its job dropped on
+the first try. `model_input.page()` pages both text files and records.
+
+### S5 staging checklist
+
+1. **Back-fill:** after the restart, the startup line says `queued N records`; the log shows
+   `file record made for file:…` lines, one about every few seconds, then nothing.
+   `files_verify.py` ends at `records queued: 0, given up: 0`.
+2. **New photo:** send one; within about a minute its record is made (log line), and the turn
+   itself is no slower.
+3. **Voice note:** its transcript is in the original language with an English summary line.
+4. **PDF:** its record is the full text, Hebrew in the right order.
+5. **Look again uses the record:** `open_file` on an earlier photo shows `Record (description):`.
+6. **Restart mid-queue:** restart while records are still being made; the restart is quick and
+   the queue carries on after it.
+7. **Telemetry:** each record is its own `file_record` job in `scripts/trace.py`, not part of a
+   turn.
+
+**Result (2026-10-24):** staging's 80 older files were skipped (jobs marked given up, so
+`files_requeue.py` can revive them) and the newest file of each kind back-filled: 5 records
+in 30 s. 1–5 and 7 passed: records were made a few seconds after each reply, turns no slower;
+Hebrew transcripts with an English summary line; PDF text in reading order (a Hebrew/Chinese
+table row came out partly jumbled); `open_file` showed the record with the photo. 6 not run
+(retries are covered by tests). Seen: the video record opens with a filler line ("Sure,
+here's a record of the video.") despite the prompt; fix with `fetch_url`'s shared prompt in S7.
 
 ### S6 — `files` skill
 
@@ -533,7 +594,8 @@ YouTube is not downloaded, so it has no file.
 ### S8 — Remove the old caches
 
 Delete both `media_cache.py` modules and the cache dirs once the S3a code has run long enough
-that rolling back past it is no longer wanted.
+that rolling back past it is no longer wanted. The record back-fill (`worker.queue_missing()` and its startup
+step) goes with them. Every `TODO(#185)` marks what to remove.
 
 ## Out of scope (extension points)
 
@@ -547,8 +609,6 @@ that rolling back past it is no longer wanted.
 
 ## Open questions
 
-- Document text extraction: a local library (e.g. `pypdf`) or a Gemini side call? Scanned PDFs
-  need the model either way.
 - Quota value and alert threshold.
 - Link-video volume (~5–15 MB each, all kept): watch growth after S7.
 - How long unused bytes wait before the collector deletes them, and how long temporary files

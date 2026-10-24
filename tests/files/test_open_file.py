@@ -67,17 +67,43 @@ def test_open_file_returns_media_as_a_file_result():
     assert "Record (description): A monstera in a white pot." in result.text
 
 
-@pytest.mark.parametrize("remove, note", [
-    (lambda r: store.delete(r.id, "owner"), "The original was deleted."),
-    (lambda r: store.expire(r.id, "retention"), "The original is no longer stored (it expired)."),
-])
-def test_open_file_on_a_removed_file(remove, note):
+def test_a_deleted_file_says_so_and_keeps_nothing():
     rec = store.add(JPEG, source="t")
     store.put_derived(rec.id, "description", "A monstera.", producer="p", version="1")
-    remove(rec)
+    store.delete(rec.id, "owner")
     result = opened(rec.id)
-    assert isinstance(result, str) and result.endswith(note)
-    assert "A monstera." in result or "deleted" in note
+    assert result.endswith("The original was deleted.") and "monstera" not in result
+
+
+def test_an_expired_file_is_read_from_its_record_in_pages():
+    rec = store.add(JPEG, source="t")
+    store.put_derived(rec.id, "text", "word " * 5000, producer="p", version="1")
+    store.expire(rec.id, "retention")
+    first = opened(rec.id, length=1000)
+    assert "The original is no longer stored (it expired). What was recorded of it:" in first
+    assert "<file record>\nRecord (text):\nword word" in first
+    assert f'open_file("{rec.id}", start=1000)' in first
+    assert "Showing characters 1,000–2,000" in opened(rec.id, start=1000, length=1000)
+
+
+def test_an_expired_file_without_a_record_just_says_so():
+    rec = store.add(JPEG, source="t")
+    store.expire(rec.id, "retention")
+    assert opened(rec.id).endswith("The original is no longer stored (it expired).")
+
+
+def test_a_long_record_is_previewed_while_the_file_is_stored():
+    rec = store.add(JPEG, source="t")
+    store.put_derived(rec.id, "description", "y" * 4000, producer="p", version="1")
+    result = opened(rec.id)
+    assert "y" * 1500 + " […cut; 4,000 characters in all]" in result.text
+    assert "y" * 1501 not in result.text
+
+
+def test_a_text_file_does_not_repeat_its_own_text_record():
+    rec = store.add(b"print('hi')\n", source="t", filename="hi.py")
+    store.put_derived(rec.id, "text", "print('hi')\n", producer="file", version="text-1")
+    assert "Record (text)" not in opened(rec.id)
 
 
 def test_open_file_on_an_unknown_id():

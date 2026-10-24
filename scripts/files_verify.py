@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check the file store: records whose bytes are gone, bytes that no longer match their
-name (--hashes, reads every file), and bytes no record needs. Read-only.
+name (--hashes, reads every file), bytes no record needs, and the record queue. Read-only.
 
 Run from the code root, for one instance:
   JARVIS_ROOT=/app venv/bin/python scripts/files_verify.py [--hashes]
@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from files import store  # noqa: E402
+from files import store, worker  # noqa: E402
 
 
 def main() -> int:
@@ -27,6 +27,10 @@ def main() -> int:
     print(f"missing bytes : {len(report['missing'])}  {' '.join(report['missing'][:20])}")
     print(f"corrupt bytes : {len(report['corrupt'])}  {' '.join(report['corrupt'][:5])}")
     print(f"unused bytes  : {len(report['unused'])} (the store collects these after a grace period)")
+    queue = worker.queue_status()
+    print(f"records queued: {queue['queued']}, given up: {queue['given_up']}")
+    for job in queue["given_up_jobs"][:10]:
+        print(f"  {job['file_id']}: {job['last_error']}")
     return 1 if report["missing"] or report["corrupt"] else 0
 
 

@@ -32,6 +32,7 @@ from observability import store as telemetry_store
 from episodes import record as episodes_record
 from files import attachments as file_attachments
 from files import startup as file_startup
+from files import worker as file_worker
 from gateway.factory import legacy_media_files
 
 # 1. Enable logging for debugging and monitoring
@@ -116,6 +117,7 @@ async def run_owner_turn(
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
     _schedule_compaction(thread_id)
+    file_worker.kick()
     return outcome.text
 
 
@@ -333,6 +335,7 @@ async def main() -> None:
         await app_stack.start()
         logger.info("jarvis-app channel active (hub polling).")
 
+    records_worker = None
     try:
         # Re-arm stored triggers. Skipped when reminders are disabled — staging
         # must not re-fire the owner's real events. Hold references to past-due
@@ -340,6 +343,7 @@ async def main() -> None:
         past_due_tasks = restore_pending() if config.REMINDERS_ENABLED else []
 
         scheduler.start()
+        records_worker = file_worker.start()
         # A restart across the morning slot would otherwise skip the day's
         # log and suggestions: APScheduler keeps no record of a run it never saw. The
         # reference keeps the task from being collected.
@@ -379,6 +383,8 @@ async def main() -> None:
     finally:
         logger.info("Shutdown signal received. Stopping channel...")
         scheduler.shutdown(wait=False)
+        if records_worker is not None:
+            records_worker.cancel()
         if app_stack is not None:
             await app_stack.stop()
         await stack.stop()
