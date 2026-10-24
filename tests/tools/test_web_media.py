@@ -37,8 +37,8 @@ class FakeRun:
     """Stands in for subprocess.run: records the call, writes what yt-dlp would."""
 
     def __init__(self, info=None, video=True, ext="mp4", returncode=0, stderr="", stdout="",
-                 timeout=False):
-        self.info, self.video, self.ext = info, video, ext
+                 timeout=False, cover=None):
+        self.info, self.video, self.ext, self.cover = info, video, ext, cover
         self.returncode, self.stderr, self.stdout, self.timeout = returncode, stderr, stdout, timeout
         self.calls = []
 
@@ -53,6 +53,9 @@ class FakeRun:
             if self.video:
                 with open(os.path.join(work, f"{self.info['id']}.{self.ext}"), "wb") as f:
                     f.write(b"\x00\x00\x00\x18ftypmp42 fake video")
+            if self.cover:
+                with open(os.path.join(work, f"{self.info['id']}.cover.jpg"), "wb") as f:
+                    f.write(self.cover)
         return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, self.stderr)
 
 
@@ -421,3 +424,33 @@ def test_an_undescribed_video_is_kept_for_the_worker(fake_run, fake_model):
     rec = next(r for r in _kept() if r.id in out)
     assert "the video is kept as [file:" in out
     assert index.rows("SELECT 1 FROM jobs WHERE file_id = ?", (rec.id,)), "the worker records it"
+
+
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"0" * 64
+
+
+def test_the_cover_picture_is_kept_as_its_own_image(fake_run, fake_model):
+    from files import ids, store
+
+    run = fake_run(FakeRun(info=IG_INFO, cover=JPEG))
+    out = read(REEL)
+    cmd = run.calls[0][0]
+    assert "--write-thumbnail" in cmd and "thumbnail:%(id)s.cover.%(ext)s" in cmd
+    kept = [store.get(i) for i in ids.find_ids(out)]
+    cover = next(r for r in kept if r.kind == "image")
+    video = next(r for r in kept if r.kind != "image")
+    assert f"[Cover picture kept as {cover.marker()}]" in out
+    assert cover.filename == "instagram-De1X6FFP_tt-cover.jpeg" and cover.origin["url"].startswith(
+        "https://www.instagram.com/reel/")
+    assert video.id != cover.id, "the cover never stands in for the video"
+
+
+def test_a_post_without_video_still_keeps_its_cover(fake_run):
+    fake_run(FakeRun(info=IG_INFO, video=False, cover=JPEG))
+    out = read(REEL)
+    assert "[Cover picture kept as [file:" in out and "only the caption was read" in out
+
+
+def test_a_cover_that_isnt_a_picture_is_not_kept(fake_run, fake_model):
+    fake_run(FakeRun(info=IG_INFO, cover=b"not an image at all"))
+    assert "Cover picture" not in read(REEL)

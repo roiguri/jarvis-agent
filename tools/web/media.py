@@ -26,7 +26,7 @@ import tempfile
 import time
 
 import config
-from files import attachments, records
+from files import attachments, records, store
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ _TMP_DIR = os.path.join(config.DATA_DIR, "web", "tmp")
 _STALE_S = 3600
 
 MAX_BYTES = 50 * 1024 * 1024
+COVER_MAX_BYTES = 10 * 1024 * 1024
+# yt-dlp's name for the cover picture: <id>.cover.<ext>, kept apart from the video.
+_COVER = ".cover."
 DOWNLOAD_MAX_S = 45
 DESCRIBE_MAX_S = 90
 # Each step needs at least this long to be worth starting.
@@ -156,6 +159,9 @@ def read(url: str, platform: str) -> str:
             return f"Could not read {url} — the post's details could not be read. {_DONT_GUESS}"
 
         header = _header(url, platform, info)
+        cover = _keep_cover(url, platform, info, _cover(work))
+        if cover:
+            header += f"\n[Cover picture kept as {cover.marker()}]"
         video = _video_file(work)
         if video is None:
             if "larger than max-filesize" in stdout:
@@ -187,6 +193,30 @@ def read(url: str, platform: str) -> str:
     return f"{header}\n{marker}\n{record}"
 
 
+def _origin(url: str, platform: str, info: dict) -> dict:
+    origin = {"url": info.get("webpage_url") or url, "poster": _poster(platform, info)}
+    if _posted(info):
+        origin["posted"] = _posted(info)
+    if _length(info):
+        origin["duration"] = _length(info)
+    return origin
+
+
+def _keep_cover(url: str, platform: str, info: dict, data: bytes | None):
+    """Store the post's cover picture as an image file of its own (it can then be a
+    recipe's photo, or be sent back). None when there is none or it isn't an image."""
+    if not data:
+        return None
+    kind, mime = store.classify(data, None, None)
+    if kind != "image":
+        return None
+    return attachments.save_fetched(
+        data, source="web",
+        filename=f"{platform.lower()}-{info.get('id') or 'post'}-cover.{mime.split('/')[1]}",
+        caption=(info.get("description") or "").strip()[:CAPTION_MAX_CHARS] or None,
+        origin=_origin(url, platform, info), mime_hint=mime)
+
+
 def _keep(url: str, platform: str, info: dict, raw: bytes, mime: str,
           record: str | None, note: str | None):
     """Store the downloaded video, with its record when one was made (so it is
@@ -195,17 +225,11 @@ def _keep(url: str, platform: str, info: dict, raw: bytes, mime: str,
     if record:
         content = record + (f"\n[{note}]" if note else "")
         written = records.Record("description", content, config.MODEL, records.VIDEO_VERSION)
-    page_url = info.get("webpage_url") or url
     ext = "webm" if mime == "video/webm" else "mp4"
     caption = (info.get("description") or "").strip()[:CAPTION_MAX_CHARS] or None
-    origin = {"url": page_url, "poster": _poster(platform, info)}
-    if _posted(info):
-        origin["posted"] = _posted(info)
-    if _length(info):
-        origin["duration"] = _length(info)
     return attachments.save_fetched(
         raw, source="web", filename=f"{platform.lower()}-{info.get('id') or 'video'}.{ext}",
-        caption=caption, origin=origin, mime_hint=mime, record=written)
+        caption=caption, origin=_origin(url, platform, info), mime_hint=mime, record=written)
 
 
 def _remaining_s() -> float | None:
@@ -248,8 +272,8 @@ def _download(url: str, work: str, timeout_s: float) -> tuple[str | None, str]:
         "-S", _FORMAT_SORT, "-f", _FORMAT,
         "--max-filesize", str(MAX_BYTES),
         "--ignore-no-formats-error",
-        "--write-info-json",
-        "-P", work, "-o", "%(id)s.%(ext)s",
+        "--write-info-json", "--write-thumbnail",
+        "-P", work, "-o", "%(id)s.%(ext)s", "-o", f"thumbnail:%(id)s{_COVER}%(ext)s",
         "--", url,
     ]
     # A bare environment: the child needs no API keys, and no inherited config.
@@ -287,8 +311,18 @@ def _load_info(work: str) -> dict | None:
 
 def _video_file(work: str) -> str | None:
     for path in glob.glob(os.path.join(work, "*")):
-        if not path.endswith((".info.json", ".part", ".ytdl")) and os.path.isfile(path):
+        if (not path.endswith((".info.json", ".part", ".ytdl")) and _COVER not in path
+                and os.path.isfile(path)):
             return path
+    return None
+
+
+def _cover(work: str) -> bytes | None:
+    """The post's cover picture, as yt-dlp wrote it (its thumbnail), if any."""
+    for path in glob.glob(os.path.join(work, f"*{_COVER}*")):
+        if os.path.isfile(path) and os.path.getsize(path) <= COVER_MAX_BYTES:
+            with open(path, "rb") as f:
+                return f.read()
     return None
 
 
