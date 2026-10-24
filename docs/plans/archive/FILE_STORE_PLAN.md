@@ -1,6 +1,6 @@
 # File store — one place for every file Jarvis receives, fetches or sends
 
-**Date:** 2026-10-23 · **Status:** 📝 design agreed, not started · **Branch:** `feat/file-store`
+**Date:** 2026-10-23 · **Status:** ✅ complete, archived 2026-10-24 — S0–S7 shipped; S3b checked on prod after the deploy and S8 later (#185), both tracked in #187 · **Branch:** `feat/file-store`
 **Goal:** every file that reaches Jarvis gets a stable id, a written record and a home that
 outlives the conversation — so Jarvis can look at it again, read it in pages, find it later,
 send it back and attach it to things, and so later features (a browse screen, embeddings,

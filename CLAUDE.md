@@ -53,7 +53,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                          #   and the today view read it (see docs/architecture/MEMORY.md "Episode store")
 ├── files/                 # The file store: every stored file by id — bytes in jarvis_files/, index in
 │                          #   jarvis_data/files/; a background worker writes each file's record
-│                          #   (see docs/plans/FILE_STORE_PLAN.md)
+│                          #   (see docs/architecture/GATEWAY.md "Storage")
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
