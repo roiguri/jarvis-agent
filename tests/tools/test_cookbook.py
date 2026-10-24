@@ -247,19 +247,12 @@ def test_tested_and_submit_go_through(created, confirm):
     assert "sent for approval" in confirm.tap()
 
 
-@pytest.mark.parametrize("change, says", [
-    ({"category": "pasta"}, "category 'pasta' isn't one of: desserts (קינוחים)"),
-    ({"difficulty": "easy"}, "difficulty must be one of"),
-    ({"prepTime": 0}, "prepTime must be at least 1"),
-    ({"ingredientSections": [{"title": "א", "items": [{"item": "x"}]}]}, "exactly one"),
-    ({"ingredients": None, "ingredientSections": [{"title": "א", "items": [{"item": "x"}]}]},
-     "two or more sections"),
-    ({"instructions": None}, "give instructions or stages"),
-])
-def test_mistakes_are_caught_before_anything_is_asked(created, confirm, change, says):
-    out = save_recipe.invoke({"recipe": {**RECIPE, **change}})
-    assert out.startswith("Not saved — fix these first:") and says in out
-    assert confirm.pending == [] and created["posted"] == []
+def test_the_recipe_goes_as_drafted_the_cookbook_checks_it(created, confirm):
+    save_recipe.invoke({"recipe": {**RECIPE, "category": "pasta", "difficulty": "easy"}})
+    assert len(confirm.pending) == 1, "nothing is checked here: the cookbook does that"
+    confirm.tap()
+    sent = created["posted"][0][0]["recipe"]
+    assert (sent["category"], sent["difficulty"]) == ("pasta", "easy")
 
 
 def test_estimated_names_only_what_may_be_estimated(created, confirm):
@@ -337,7 +330,6 @@ def test_files_that_cant_be_used_are_refused_before_asking(created, confirm):
     gone = store.add(_png((10, 10)), source="t")
     store.delete(gone.id, "owner")
     assert "Not saved:" in save(photo_file_ids=[gone.id])
-    assert "at most 5 photos" in save(photo_file_ids=["file:00000000"] * 6)
     assert confirm.pending == []
 
 
@@ -375,15 +367,7 @@ def test_youtube_link_forms_and_timestamps_are_one_link():
     assert rid("https://youtu.be/AODAwMANijw?t=30") == rid("https://www.youtube.com/watch?v=AODAwMANijw&t=1m")
 
 
-@pytest.mark.parametrize("amount, sent", [("2", 2), ("0.5", 0.5), (".5", 0.5), ("1,5", 1.5),
-                                          ("1/2", "1/2"), ("1½", "1½"), ("1 1/2", "1 1/2")])
-def test_amounts_the_cookbook_takes(amount, sent):
+@pytest.mark.parametrize("amount, sent", [("2", 2), ("0.5", 0.5), (".5", 0.5), ("1/2", "1/2"),
+                                          ("1½", "1½")])
+def test_plain_numbers_go_as_numbers_and_the_rest_as_given(amount, sent):
     assert save_mod._amount(amount) == sent
-
-
-@pytest.mark.parametrize("amount", ["0", "2-3", "a pinch", "1/0"])
-def test_amounts_it_doesnt_are_caught_before_asking(created, confirm, amount):
-    recipe = {**RECIPE, "ingredients": [{"item": "מלח", "amount": amount}]}
-    out = save_recipe.invoke({"recipe": recipe})
-    assert out.startswith("Not saved — fix these first:") and "must be a positive number" in out
-    assert confirm.pending == []

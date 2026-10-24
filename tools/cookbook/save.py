@@ -2,9 +2,10 @@
 final confirmation.
 
 The recipe arrives as fields, however Jarvis got them; photos and a step video as
-stored files' ids. Nothing here reads a link or calls another tool. The body is
-checked here first (most mistakes never reach the API), files are prepared within
-the API's limits, and the request is sent only when the owner confirms.
+stored files' ids. Nothing here reads a link or calls another tool. The recipe
+itself is checked by the cookbook, not here: its field-by-field refusal comes back
+as the outcome, and Jarvis fixes it and asks again. Files are prepared within the
+API's limits, and the request is sent only when the owner confirms.
 """
 
 from __future__ import annotations
@@ -23,11 +24,8 @@ from files import model_input, store
 from tools.cookbook._client import CookbookError, categories, request
 from tools.registry import tool_register
 
-DIFFICULTIES = ("קלה", "בינונית", "קשה")
-STAGES = ("to-try", "tested")
 PHOTO_MIMES = {"image/jpeg", "image/png", "image/webp"}
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
-PHOTOS_MAX = 5
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/quicktime", "video/mov"}
 REQUEST_MAX_BYTES = 30 * 1024 * 1024 - 256 * 1024  # room for the JSON and the framing
 # The fields a source often leaves out: how the estimate note names each, and its
@@ -38,8 +36,9 @@ ESTIMABLE = {"prepTime": ("זמן ההכנה", "m"), "waitTime": ("זמן ההמ
 
 
 class Ingredient(BaseModel):
-    item: str = Field(description="the ingredient; a range or 'to taste' goes here too")
-    amount: str | None = Field(None, description="a number or a fraction: 2, 0.5, 1/2, 1½")
+    item: str = Field(description="the ingredient")
+    amount: str | None = Field(None, description="a number or a fraction: 2, 0.5, 1/2, 1½. For a "
+                               "range (2–3), choose one number. None when there is no amount")
     unit: str | None = None
 
 
@@ -103,9 +102,10 @@ def save_recipe(recipe: Recipe, source: str = "", estimated: list[str] | None = 
         labels = categories()
     except CookbookError as e:
         return f"Error: {e}"
-    problems = _check(recipe, labels, estimated or [], stage)
-    if problems:
-        return "Not saved — fix these first: " + "; ".join(problems)
+    unknown = [f for f in estimated or [] if f not in ESTIMABLE]
+    if unknown:
+        return (f"Not saved: estimated can only name {', '.join(ESTIMABLE)} "
+                f"(not {', '.join(unknown)}).")
     files, notes, problems = _files(photo_file_ids or [], video_file_id, video_caption)
     if problems:
         return "Not saved: " + "; ".join(problems)
@@ -158,47 +158,13 @@ def _canonical(source: str) -> str:
     return urlunsplit(("https", host, path, urlencode(sorted(query)), ""))
 
 
-def _check(recipe: Recipe, labels: dict[str, str], estimated: list[str], stage: str) -> list[str]:
-    problems = []
-    if not recipe.name.strip():
-        problems.append("name is empty")
-    if recipe.category not in labels:
-        problems.append(f"category {recipe.category!r} isn't one of: "
-                        + ", ".join(f"{k} ({v})" for k, v in labels.items()))
-    if recipe.difficulty not in DIFFICULTIES:
-        problems.append(f"difficulty must be one of {', '.join(DIFFICULTIES)}")
-    if recipe.prepTime < 1:
-        problems.append("prepTime must be at least 1 minute")
-    if recipe.servings < 1:
-        problems.append("servings must be at least 1")
-    if bool(recipe.ingredients) == bool(recipe.ingredientSections):
-        problems.append("give ingredients or ingredientSections, exactly one")
-    elif recipe.ingredientSections and len(recipe.ingredientSections) < 2:
-        problems.append("ingredientSections needs two or more sections (else use ingredients)")
-    if bool(recipe.instructions) == bool(recipe.stages):
-        problems.append("give instructions or stages, exactly one")
-    elif recipe.stages and len(recipe.stages) < 2:
-        problems.append("stages needs two or more stages (else use instructions)")
-    for ingredient in _all_ingredients(recipe.model_dump(exclude_none=True)):
-        if "amount" in ingredient and _amount(ingredient["amount"]) is None:
-            problems.append(f"amount {ingredient['amount']!r} ({ingredient['item']}) must be a "
-                            "positive number or a fraction such as 1/2; a range or 'to taste' "
-                            "goes in item")
-    unknown = [f for f in estimated if f not in ESTIMABLE]
-    if unknown:
-        problems.append(f"estimated can only name {', '.join(ESTIMABLE)}; not {', '.join(unknown)}")
-    if stage not in STAGES:
-        problems.append("stage must be to-try or tested")
-    return problems
-
-
 def _content(recipe: Recipe, estimated: list[str]) -> dict:
     """The API's recipe body: Nones dropped, amounts as numbers where they are
     plain numbers, and the note naming the estimates."""
     content = recipe.model_dump(exclude_none=True)
     for ingredient in _all_ingredients(content):
         if "amount" in ingredient:
-            ingredient["amount"] = _amount(ingredient["amount"])  # checked in _check
+            ingredient["amount"] = _amount(ingredient["amount"])
     if estimated:
         content["comments"] = [*content.get("comments", []), estimate_note(estimated)]
     return content
@@ -222,27 +188,18 @@ def _all_ingredients(content: dict) -> list[dict]:
     return found
 
 
-_FRACTION = re.compile(r"(\d+\s*)?([½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]|\d+/[1-9]\d*)")
-
-
 def _amount(value):
-    """A plain number as a number; a fraction (1/2, 1½, 1 1/2) as given; None for
-    anything the cookbook won't take (zero, a range, words)."""
-    text = str(value).strip().replace(",", ".")
+    """A plain number as a number; anything else as given (the cookbook checks it)."""
+    text = str(value).strip()
     if re.fullmatch(r"\d*\.?\d+", text):
         number = float(text)
-        if number <= 0:
-            return None
         return int(number) if number.is_integer() else number
-    return text if _FRACTION.fullmatch(text) else None
+    return text
 
 
 def _files(photo_ids: list[str], video_id: str, caption: str):
     """(multipart file parts with their JSON entries, notes, problems)."""
     parts, notes, problems = {"images": [], "mediaInstructions": [], "parts": []}, [], []
-    if len(photo_ids) > PHOTOS_MAX:
-        problems.append(f"at most {PHOTOS_MAX} photos")
-        return parts, notes, problems
     budget = REQUEST_MAX_BYTES
     for n, file_id in enumerate(photo_ids, 1):
         rec = store.get(file_id)

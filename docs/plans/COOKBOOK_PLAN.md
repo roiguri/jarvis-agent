@@ -136,11 +136,12 @@ mapping, the categories list cached for the process), `recipes.py` (`find_recipe
 
 ### C2 — Save a recipe
 
-`save_recipe` (JSON): builds and validates the body locally (category against the list,
-difficulty, required fields) so most mistakes are caught before a call; the id from the
-source; the confirmation; the comment for estimates. The skill's rules for drafting and
-discussing. Tests: body shapes, one-format-per-list rules, retries (`created: false`), each
-error code.
+`save_recipe` (JSON): builds the body (the recipe as drafted; the cookbook validates it, and
+its field-by-field refusal comes back as the outcome, so Jarvis fixes it and asks again;
+nothing of the cookbook's rules is repeated in Jarvis); the id from the source; the
+confirmation; the comment for estimates. The skill's rules for drafting and discussing.
+Tests: body shapes, retries (`created: false`), a refusal shown as a failure, each error
+code.
 
 ### C3 — Photos and step video
 
@@ -193,8 +194,9 @@ are now dropped before the id is made. Built in one go (C1–C4), so C1–C3 are
 **Review before merge (2026-10-24):** a failed save after Confirm now raises, so the owner's
 prompt shows "❌ Action failed" instead of "✅"; the id includes the recipe's name, so a second
 recipe from the same reel or page gets its own; timestamps and `youtu.be` links are one link;
-ingredient amounts are checked before asking (zero, ranges and words refused; `.5` and `1,5`
-read as numbers). The estimate note reads as a statement about the recipe ("זמן ההכנה וכמות
+and, at the owner's request, Jarvis no longer checks the recipe itself (the cookbook does;
+repeating its rules would drift) and a range becomes one chosen number, never text. The
+estimate note reads as a statement about the recipe ("זמן ההכנה וכמות
 המנות הם הערכה בלבד."), at the owner's request.
 
 ## Decided

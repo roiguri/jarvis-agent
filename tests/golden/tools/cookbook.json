@@ -151,11 +151,11 @@
                                   }
                                 ],
                                 "default": null,
-                                "description": "a number or a fraction: 2, 0.5, 1/2, 1½",
+                                "description": "a number or a fraction: 2, 0.5, 1/2, 1½. For a range (2–3), choose one number. None when there is no amount",
                                 "title": "Amount"
                               },
                               "item": {
-                                "description": "the ingredient; a range or 'to taste' goes here too",
+                                "description": "the ingredient",
                                 "title": "Item",
                                 "type": "string"
                               },
@@ -217,11 +217,11 @@
                             }
                           ],
                           "default": null,
-                          "description": "a number or a fraction: 2, 0.5, 1/2, 1½",
+                          "description": "a number or a fraction: 2, 0.5, 1/2, 1½. For a range (2–3), choose one number. None when there is no amount",
                           "title": "Amount"
                         },
                         "item": {
-                          "description": "the ingredient; a range or 'to taste' goes here too",
+                          "description": "the ingredient",
                           "title": "Item",
                           "type": "string"
                         },
