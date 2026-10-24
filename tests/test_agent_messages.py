@@ -3,14 +3,15 @@ history, and the active-skills reducer. Trimming the window is covered by the
 turn-lifecycle and context-mirror tests."""
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import agent
 from files import model_input
 
 IMAGE = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
 REMOTE_IMAGE = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
-AUDIO = {"type": "media", "mime_type": "audio/ogg", "data": "AAAA"}
+AUDIO = {"type": "audio", "mime_type": "audio/ogg", "base64": "AAAA"}
+LEGACY_AUDIO = {"type": "media", "mime_type": "audio/ogg", "data": "AAAA"}
 MARKER = {"type": "text", "text": "\n[file:k7m2q9xd · audio · 12 KB]"}
 
 
@@ -56,8 +57,22 @@ def test_media_blob_dropped_marker_kept():
     assert out.content == [MARKER]
 
 
+def test_older_block_shapes_are_stripped_too():
+    out = agent._strip_media_blobs(HumanMessage(content=[IMAGE, LEGACY_AUDIO, MARKER]))
+    assert out.content == [MARKER]
+
+
+def test_a_tool_result_with_files_becomes_its_text():
+    msg = ToolMessage(content=[{"type": "text", "text": "Stored today."}, AUDIO, MARKER],
+                      name="open_file", tool_call_id="c1", id="t1")
+    out = agent._strip_media_blobs(msg)
+    assert out.content == "Stored today.\n[file:k7m2q9xd · audio · 12 KB]"
+    assert (out.tool_call_id, out.name, out.id) == ("c1", "open_file", "t1")
+
+
 @pytest.mark.parametrize("msg", [
     HumanMessage(content="plain text"),
+    ToolMessage(content="plain result", tool_call_id="c2"),
     HumanMessage(content=[{"type": "text", "text": "no media"}, REMOTE_IMAGE]),
     AIMessage(content=[IMAGE]),
 ])

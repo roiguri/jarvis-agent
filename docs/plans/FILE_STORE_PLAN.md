@@ -27,9 +27,9 @@ shared links).
       startup, the channels stop writing their caches. Both channels move together.
 - [ ] **S3b — Outbound saved.** The Outbox saves media Jarvis sends (through a save step passed
       in by `main.py`), and the sent message's history entry carries the file marker.
-- [ ] **S4 — `open_file` (core tool).** Text in pages (text and code files become readable);
-      images, audio and video shown again through a media tool result; clear answers for
-      expired, deleted and missing files.
+- [x] **S4 — `open_file` (core tool).** Any tool can return stored files; inbound and tool
+      results share one block shape; small text files read on arrival, longer ones in pages;
+      images, audio, video and PDFs shown again; clear answers for removed files.
 - [ ] **S5 — Background records.** A restart-safe job queue that writes a description,
       transcript or extracted text for each file after the turn, indexed for search in chunks.
 - [ ] **S6 — `files` skill.** `find_files`, `send_file`, `delete_file`, and a `file` field type
@@ -259,9 +259,8 @@ gets its own record.
   at the following write, back to a plain-string tool result with the marker. If the model
   needs the file again later in the turn, it calls `open_file` again. Automatic re-showing
   (e.g. on a reply to a file) is added later only if a need appears.
-- **Long videos:** a tool result cannot clip a video (see section 1), so a video over the clip
-  length goes into the next model call's input as a clipped, low-frame-rate `media` block
-  instead (S0 confirms the exact mechanism).
+- **Long videos:** a tool result cannot clip a video (see section 1). Videos are shown whole
+  for now, like inbound ones; trimming is an open question for the end of the plan.
 - **Link videos are not described twice.** `fetch_url` already describes a reel during the
   turn; S7 stores that text as the file's description (producer `web_media`) instead of
   queueing a second paid call.
@@ -293,8 +292,8 @@ compaction prompt keeps file ids in its record so compacted turns keep their han
 | Find | `find_files(query, kind, source, since)` | `files` skill |
 | Delete | `delete_file(id)` — destructive, shows where-used, confirms | `files` skill |
 
-`open_file` is core because markers appear in ordinary turns. `open_file` also accepts an old
-cache path recorded by the migration, so old history stays openable.
+`open_file` is core because markers appear in ordinary turns. It takes file ids only: files
+from before the store are imported with their date and caption, so `find_files` finds them.
 
 ### Search
 
@@ -327,8 +326,8 @@ calls to that turn). Every store connection is short-lived, WAL with a busy time
 ### Safety
 
 Size caps on add; type detected from the content; files are never executed; the store is
-outside the memory tools' reach; a long video shown again is clipped and low-frame-rate like
-YouTube in `tools/web/media.py` (through the next call's input, not the tool result).
+outside the memory tools' reach; file contents reach the model as data (text inside
+`<file content>` tags), never as instructions.
 
 ## 4. Slice details
 
@@ -468,17 +467,48 @@ poster after a prod deploy, whichever comes first.
 
 ### S4 — `open_file`
 
-- Text kinds: pages by character offset and length. Text and code files get their kind from
-  their content, so they no longer arrive as "can't read yet" (the small-text-on-arrival
-  question is decided here).
-- Media kinds: `_tool_node` accepts one media result type produced by the store (the one
-  documented exception to "tools return plain strings"), built as standard data blocks.
-  `_strip_media_blobs` handles tool results and standard blocks too, turning them back into a
-  plain-string result with the marker. Long videos take the fallback (next call's input).
-- Expired / deleted / missing: the record (if any) and a clear note that the original is gone.
-- `_tool_node` telemetry measures list content properly (today `result_size` would count blocks).
-- Docs: RUNTIME.md (tool result rule), AGENTS.md only if a rule is needed (docstrings first);
-  golden snapshots.
+- **Any tool can return files.** A tool returns plain text, or text plus stored file records
+  (`files.model_input.ToolFiles`). `_tool_node` turns the files into blocks through
+  `content_blocks`, the same code inbound files use; the next model call sees them, then the
+  reducer strips them back to a plain-string result with the markers. A tool that obtains a new
+  file saves it first, so every file it returns has an id. `open_file` is the first user.
+- **One block shape.** Inbound files move to the standard data blocks (`{"type": "image" |
+  "audio" | "video" | "file", "base64", "mime_type"}`) that tool results need, so one function
+  decides what the model can read, the size cap and the notes, and one strip rule covers both.
+  The strip rule still drops the older shapes, which checkpoints written before may hold.
+- **Text and code files.** Read on arrival up to one page (8,000 characters), inside
+  `<file content>` tags. A longer file shows its first page and ends with "Showing characters
+  0–8,000 of N. If you need the rest: `open_file(…, start=8000)`." `open_file` pages by
+  character offset and length with the same function.
+- **`open_file(file_id, start, length)`:** the marker, arrival time and message, state, and
+  the file's written records (none until S5), then the file itself; a text file as a page.
+  Expired, deleted or missing files return the record and a note that the original is gone.
+  Old cache paths are not accepted (old files are in the store; `find_files` finds them).
+- **No video trimming** (see Open questions).
+- `_tool_node` telemetry counts a file result's text, not its blocks.
+- Docs: RUNTIME.md (a tool may return files), the docstring carries the usage guidance ("if
+  needed"); no AGENTS.md change; golden snapshots.
+
+### S4 staging checklist
+
+1. **Inbound, same as before** (the block shape changed): a photo, a voice note and a PDF are
+   each understood.
+2. **Short text file:** send a small `.py` or `.txt`; Jarvis reads it on arrival.
+3. **Long text file:** send one over 8,000 characters; Jarvis answers from the first page and
+   reads further only when the question needs it.
+4. **Look again:** later, ask about a detail of an earlier photo that its first reply didn't
+   cover; Jarvis calls `open_file` and answers from the photo.
+5. **No needless opening:** a follow-up the earlier reply already answers gets no `open_file`
+   call (check with `scripts/trace.py`).
+6. **Video again:** ask about an earlier video; it is opened and described.
+7. **Next call only:** after a turn with `open_file`, the checkpoint holds the tool result as
+   plain text with the marker, no base64.
+
+**Result (2026-10-24):** 1, 2, 4, 6, 7 passed on staging (photo, voice, PDF, a 3 KB CSV read
+on arrival; an earlier photo and a 21 MB video opened again and described; checkpoint clean).
+5 passed incidentally: the answer was already in an earlier reply, so the photo wasn't opened,
+but the photo turn had been trimmed from history and Jarvis first opened the wrong file (the
+trim and search behaviour predate S4). 3 not run live; paging is covered by tests.
 
 ### S5 — Background records
 
@@ -519,9 +549,10 @@ that rolling back past it is no longer wanted.
 
 - Document text extraction: a local library (e.g. `pypdf`) or a Gemini side call? Scanned PDFs
   need the model either way.
-- Should small text files be inlined on arrival, with only larger ones read through `open_file`?
 - Quota value and alert threshold.
 - Link-video volume (~5–15 MB each, all kept): watch growth after S7.
 - How long unused bytes wait before the collector deletes them, and how long temporary files
   live.
-- Default page size for `open_file` text.
+- Trimming long videos when shown again (a clip length and low frame rate). Needs the video's
+  duration, so a new dependency; inbound videos are not trimmed either. Decide at the end of
+  this plan, from cost seen in practice.

@@ -60,15 +60,14 @@ def test_content_blocks_for_readable_files():
     img = store.add(JPEG, source="t")
     voice = store.add(OGG, source="t", mime_hint="audio/ogg")
     blocks = model_input.content_blocks([img, voice])
-    assert blocks[0]["type"] == "image_url" and blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert (blocks[0]["type"], blocks[0]["mime_type"]) == ("image", "image/jpeg") and blocks[0]["base64"]
     assert blocks[1] == {"type": "text", "text": f"\n{img.marker()}"}
-    assert blocks[2]["type"] == "media" and blocks[2]["mime_type"] == "audio/ogg"
+    assert (blocks[2]["type"], blocks[2]["mime_type"]) == ("audio", "audio/ogg")
     assert blocks[3] == {"type": "text", "text": f"\n{voice.marker()}"}
 
 
 @pytest.mark.parametrize("make, note", [
-    (lambda: store.add(b"plain notes\n", source="t", filename="n.txt"), "I can't read a text file yet."),
-    (lambda: store.add(b"\x00\x01bin", source="t"), "I can't read this file yet."),
+    (lambda: store.add(b"\x00\x01bin", source="t"), "I can't read this file."),
     (lambda: store.add(b"GIF89a" + b"\x00" * 40, source="t"), "I can't read that format (image/gif)"),
 ])
 def test_content_blocks_note_what_cant_be_shown(make, note):

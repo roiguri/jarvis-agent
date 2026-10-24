@@ -254,10 +254,11 @@ Two cooperating subclasses in `agent.py` bound `threads.sqlite`:
   checkpoint per thread, enforced at the storage layer.
 
 **Media blob stripping:** `_strip_media_blobs()` runs on `existing` messages in
-the reducer before re-store — base64 image and media blobs are dropped; each file's
-marker (`[file:… · kind · …]`, a separate text block) is kept, so history keeps the
-id. New messages keep their blobs only until the next reducer write, so a file reaches
-one model call: if that call uses a tool, the next call has only the marker.
+the reducer before re-store — file bytes (`files.model_input.is_media_block`) are dropped;
+each file's marker (`[file:… · kind · …]`, a separate text block) is kept, so history keeps
+the id. A tool result that carried files (`ToolFiles`) becomes the plain string of its text.
+New messages keep their blobs only until the next reducer write, so a file reaches one model
+call: if that call uses a tool, the next call has only the marker.
 
 Anything outside the 50-message window is **not lost for audit** — every turn is
 recorded in the episode store (`jarvis_data/episodes/episodes.sqlite`) and is queryable via

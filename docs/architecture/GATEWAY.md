@@ -570,7 +570,8 @@ ask_jarvis(files=[records]) ── files.model_input.content_blocks ──▶ me
 core; `process_inbound_message` saves each one in the file store before waiting for
 the turn lock (so a file is kept even if the turn later fails), mints the turn id so
 each file names the turn it arrived in, and passes the turn file records. The model
-sees each file inline plus its marker, `[file:k7m2q9xd · image · photo.jpg · 1.2 MB]`;
+sees each file inline plus its marker, `[file:k7m2q9xd · image · photo.jpg · 1.2 MB]` (a text
+file as its first page, the rest through `open_file`);
 after that call the bytes are stripped from history and the marker stays. A file sent
 without a caption needs no placeholder text: its marker says what arrived.
 

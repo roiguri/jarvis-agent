@@ -56,7 +56,7 @@ def test_files_reach_the_model_once_and_are_recorded_as_markers(use_llm):
     use_llm(llm)
     agent.ask_jarvis("look", "t_media", files=[rec])
     first = llm.sent[0][-1].content
-    assert any(b.get("type") == "image_url" for b in first), "the model sees the image"
+    assert any(b.get("type") == "image" and b.get("base64") for b in first), "the model sees the image"
     assert any(rec.marker() in (b.get("text") or "") for b in first), "and its marker"
     owner = rows("role = 'owner'")[0]
     assert owner["content"] == f"look\n{rec.marker()}"

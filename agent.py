@@ -53,31 +53,22 @@ MAX_MESSAGES = 50
 SKILL_IDLE_RESET = _dt.timedelta(hours=3)
 
 def _strip_media_blobs(msg):
-    """Drop base64 media blocks from a message the model has already seen.
+    """Drop file bytes from a message the model has already seen.
 
-    Only HumanMessages with list content are affected: inline image_url data
-    blocks and media blocks with data are removed. The file's marker,
-    `[file:… · kind · …]`, is a separate text block and stays, so history keeps
-    the id. All other messages and plain-string content are returned unchanged.
+    A user message keeps its other blocks, so each file's marker,
+    `[file:… · kind · …]`, stays and history keeps the id. A tool result that
+    carried files becomes the plain string of its text. Every other message, and
+    plain-string content, is returned unchanged.
     """
-    from langchain_core.messages import HumanMessage
-    if not isinstance(msg, HumanMessage) or not isinstance(msg.content, list):
+    if not isinstance(msg, (HumanMessage, ToolMessage)) or not isinstance(msg.content, list):
         return msg
-    new_content = []
-    changed = False
-    for block in msg.content:
-        if isinstance(block, dict):
-            block_type = block.get("type")
-            if block_type == "image_url" and (block.get("image_url") or {}).get("url", "").startswith("data:"):
-                changed = True
-                continue
-            if block_type == "media" and "data" in block:
-                changed = True
-                continue
-        new_content.append(block)
-    if not changed:
+    kept = [b for b in msg.content if not model_input.is_media_block(b)]
+    if len(kept) == len(msg.content):
         return msg
-    return HumanMessage(content=new_content, id=msg.id)
+    if isinstance(msg, ToolMessage):
+        text = "".join(b.get("text") or "" if isinstance(b, dict) else str(b) for b in kept)
+        return msg.model_copy(update={"content": text})
+    return HumanMessage(content=kept, id=msg.id)
 
 
 def _turn_starts(messages: list) -> list[int]:
@@ -648,10 +639,12 @@ def _llm_node(state: JarvisState) -> dict:
 def _tool_node(state: JarvisState) -> dict:
     """Execute the last message's tool calls.
 
-    Every tool returns a plain string except the activate_skill meta-tool,
-    which returns a sentinel dict ``{"_activate": [...], "content": str}``. For those, the human-readable ``content`` becomes the
-    ToolMessage and the namespaces drive an ``active_skills`` state update;
-    all other tools behave exactly as the prebuilt ToolNode did (one
+    A tool returns a plain string, or files.model_input.ToolFiles (text plus
+    stored files, shown to the next model call through the same blocks as
+    inbound files, then stripped to the text). The activate_skill meta-tool
+    returns a sentinel dict ``{"_activate": [...], "content": str}``: the
+    human-readable ``content`` becomes the ToolMessage and the namespaces drive
+    an ``active_skills`` state update. All tools behave as the prebuilt ToolNode did (one
     ToolMessage per call, exceptions captured as an error ToolMessage so the
     model can recover rather than crashing the graph).
 
@@ -720,7 +713,14 @@ def _tool_node(state: JarvisState) -> dict:
             )
             continue
 
-        if isinstance(result, dict) and "_activate" in result:
+        if isinstance(result, model_input.ToolFiles):
+            messages.append(ToolMessage(
+                content=[{"type": "text", "text": result.text},
+                         *model_input.content_blocks(result.files)],
+                name=name, tool_call_id=call_id,
+            ))
+            turn_budget.TRACKER.get().committed[name] += 1
+        elif isinstance(result, dict) and "_activate" in result:
             to_activate |= set(result.get("_activate", []) or [])
             messages.append(ToolMessage(
                 content=str(result.get("content", "")),
@@ -737,7 +737,7 @@ def _tool_node(state: JarvisState) -> dict:
             duration_ms=int((time.perf_counter() - t0) * 1000),
             status="ok", args_size=args_size,
             error_str=None, traceback_str=None,
-            result_size=len(messages[-1].content),
+            result_size=_message_chars(messages[-1]),
         )
 
     delta: dict = {"messages": messages}
