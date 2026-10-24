@@ -47,6 +47,7 @@ You are in a live conversation with Roi — be direct and proactive, and reply i
 
 ## Available skills (call activate_skill to load tools for this conversation):
 - collections: structured lists — reading list, shopping list, books, and any other collection the owner keeps
+- cookbook: the family cookbook — find and read recipes, save new ones after talking them through
 - files: find stored files (photos, voice notes, videos, documents the owner sent or you sent), send one back, delete them
 - fitness: gym attendance, workout logs, running sessions
 - github: GitHub project management — repos, issues, PRs
