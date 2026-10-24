@@ -48,14 +48,27 @@ def test_user_turn_records_input_steps_and_reply(use_llm):
     assert {(r["scope"], r["source"], r["channel"]) for r in got} == {("user", "chat", "telegram")}
 
 
-def test_attachments_are_recorded_as_paths(use_llm, tmp_path):
-    image = tmp_path / "photo.jpg"
-    image.write_bytes(b"\xff\xd8\xff" + b"0" * 100)
-    use_llm(FakeLLM([AIMessage(content="nice photo")]))
-    agent.ask_jarvis("look", "t_media", media_attachments=[{"kind": "image", "path": str(image)}])
+def test_files_reach_the_model_once_and_are_recorded_as_markers(use_llm):
+    from files import store as file_store
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"0" * 100
+    rec = file_store.add(jpeg, source="test", filename="photo.jpg")
+    llm = FakeLLM([AIMessage(content="nice photo")])
+    use_llm(llm)
+    agent.ask_jarvis("look", "t_media", files=[rec])
+    first = llm.sent[0][-1].content
+    assert any(b.get("type") == "image_url" for b in first), "the model sees the image"
+    assert any(rec.marker() in (b.get("text") or "") for b in first), "and its marker"
     owner = rows("role = 'owner'")[0]
-    assert owner["content"] == f"look\n[attached: {image}]"
+    assert owner["content"] == f"look\n{rec.marker()}"
     assert "base64" not in owner["content"]
+
+
+def test_a_file_with_no_caption_is_recorded_as_its_marker(use_llm):
+    from files import store as file_store
+    rec = file_store.add(b"%PDF-1.4 x", source="test")
+    use_llm(FakeLLM([AIMessage(content="a pdf")]))
+    agent.ask_jarvis("", "t_media_nocap", files=[rec])
+    assert rows("role = 'owner'")[0]["content"] == rec.marker()
 
 
 def test_failed_turn_keeps_the_owner_message(use_llm):

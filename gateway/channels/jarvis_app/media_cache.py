@@ -1,63 +1,19 @@
-"""jarvis-app-owned media cache.
+"""This channel's old media cache — no longer written.
 
-The jarvis-app channel downloads inbound attachments and stores them here,
-returning an **absolute** path. Nothing in `tools/*` or `agent.py` imports this
-module or knows where app media lives — the channel owns it end to end, the same
-channel-owns-storage rule Telegram's `media_cache.py` follows. The agent receives
-the absolute path via `InboundMessage.attachments[].path` and opens it directly.
+TODO(#185): remove this module and the cache dir once rolling back past the file
+store is no longer wanted. Inbound files now go to the file store; this only
+lists what the cache still holds, so the store can import it at startup.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
 
-# Channel-owned cache dir, resolved relative to this file (no hardcoded /app path,
-# no dependency on the memory surface). Gitignored.
+SOURCE = "jarvis-app"
 _CACHE_DIR = os.path.join(os.path.dirname(__file__), "media_cache")
-os.makedirs(_CACHE_DIR, exist_ok=True)
-
-_RETENTION_DAYS = 90
-
-# Kinds arrive already resolved into the gateway's neutral vocabulary (the
-# router maps the hub's image | audio | file onto it). Extensions are cosmetic —
-# the agent reads bytes and branches on mime_type, not the filename — so an
-# unknown kind just gets no suffix.
-_EXT = {
-    "image": ".jpg",
-    "audio": ".ogg",
-    "video": ".mp4",
-    "document": ".pdf",
-    "file": "",
-}
 
 
-def save(data: bytes, kind: str, attachment_id: str) -> str:
-    """Persist an inbound blob; return its **absolute** path.
-
-    The filename embeds the hub's `att_…` id (unique per blob). `basename`
-    strips any path separators as defense in depth — the caller already
-    validates the id shape, so nothing untrusted should reach here.
-    """
-    filename = os.path.basename(f"{kind}_{attachment_id}{_EXT.get(kind, '')}")
-    abs_path = os.path.join(_CACHE_DIR, filename)
-    with open(abs_path, "wb") as f:
-        f.write(data)
-    return abs_path
-
-
-def trim(retention_days: int = _RETENTION_DAYS) -> None:
-    """Evict cache files not modified within retention_days (mtime proxy — blobs
-    are written once on arrival and never modified)."""
+def legacy_files() -> list[tuple[str, str]]:
+    """(absolute path, source) for every file still in the old cache."""
     if not os.path.isdir(_CACHE_DIR):
-        return
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    for filename in os.listdir(_CACHE_DIR):
-        filepath = os.path.join(_CACHE_DIR, filename)
-        if not os.path.isfile(filepath):
-            continue
-        mtime = datetime.fromtimestamp(os.path.getmtime(filepath), tz=timezone.utc)
-        if mtime < cutoff:
-            os.remove(filepath)
-
-
-# Channel owns its own cache hygiene: prune stale blobs once at import.
-trim()
+        return []
+    return [(os.path.join(_CACHE_DIR, name), SOURCE) for name in sorted(os.listdir(_CACHE_DIR))
+            if os.path.isfile(os.path.join(_CACHE_DIR, name))]

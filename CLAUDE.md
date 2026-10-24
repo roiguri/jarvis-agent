@@ -92,10 +92,8 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 /app/jarvis_files/ab/cd/<sha256>   # file store bytes, named by content hash; outside both state trees
                                    #   (never in deploy snapshots — the Proxmox backup covers them)
 
-/app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
-                                                 #   absolute paths from gateway/channels/telegram/media_cache.py)
-/app/jarvis_code/gateway/channels/jarvis_app/media_cache/ # jarvis-app channel's own media blobs (gitignored;
-                                                 #   same channel-owned pattern, filenames embed the att_ id)
+/app/jarvis_code/gateway/channels/*/media_cache/   # the channels' old media caches: no longer written,
+                                                 #   imported into the file store at startup (removal: #185)
 
 /app/secrets/.env          # API keys and tokens — DO NOT READ THIS FILE
 ```
@@ -113,7 +111,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 - Changed only by **code/deploy** (prompt, rules) → `/app/jarvis_code/prompts/` (version-controlled, outside the memory sandbox).
 - Changed only by **tools**, never `read_memory`'d (opaque DBs, append-only logs, code-managed JSON) → `/app/jarvis_data/<tool>/`.
-- **Gateway artifacts** (Telegram blobs) → a channel-owned cache inside that channel's gateway dir; the channel hands core/agent an absolute path and they never name a channel.
+- **Files** (inbound media, fetched or sent files) → the file store (`files/`): bytes in `jarvis_files/`, index in `jarvis_data/files/`, everything else holds the file's id. Channels hand core the bytes and never store anything; core never names a channel.
 - Sole exception: `threads.sqlite*` — LangGraph owns the path and can't relocate, so it stays in `jarvis_memory/`, deny-listed from the memory tools.
 
 ---

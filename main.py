@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import subprocess
+from uuid import uuid4
 import uvicorn
 from dotenv import load_dotenv
 
@@ -29,6 +30,9 @@ from tools.core import (
 )
 from observability import store as telemetry_store
 from episodes import record as episodes_record
+from files import inbound as file_inbound
+from files import startup as file_startup
+from gateway.factory import legacy_media_files
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -63,28 +67,26 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         )
         return command_reply
 
+    # Files are saved before waiting for the turn lock, so they are kept even if
+    # the queued turn later fails; the turn id is minted here so each file names
+    # the turn it arrived in.
+    turn_id = uuid4().hex
+    records, notes = await asyncio.to_thread(
+        file_inbound.save_attachments, inbound.attachments,
+        caption=inbound.user_text, turn_id=turn_id,
+    )
+    user_text = "\n".join([inbound.user_text, *notes]).strip()
     await asyncio.to_thread(
-        append_chat_log,
-        "user",
-        inbound.user_text,
-        inbound.thread_id,
-        attachment_paths=[a.get("path") for a in inbound.attachments if a.get("path")],
+        append_chat_log, "user", user_text, inbound.thread_id,
+        file_ids=[r.id for r in records],
     )
 
     return await run_owner_turn(
-        inbound.user_text,
+        user_text,
         inbound.thread_id,
         channel=inbound.channel or None,
-        media_attachments=[
-            {
-                "kind": a.get("kind"),
-                "path": a.get("path"),
-                "mime_type": a.get("mime_type"),
-            }
-            for a in inbound.attachments
-            if a.get("kind") and a.get("path")
-        ]
-        or None,
+        files=records or None,
+        turn_id=turn_id,
     )
 
 
@@ -93,8 +95,9 @@ async def run_owner_turn(
     thread_id: str,
     *,
     channel: str | None = None,
-    media_attachments: list[dict] | None = None,
+    files: list | None = None,
     input_role: str | None = None,
+    turn_id: str | None = None,
 ) -> str:
     """One user-scope turn under the owner lock; the single path every
     conversational caller goes through. Returns the reply — for a turn that did
@@ -106,8 +109,9 @@ async def run_owner_turn(
             user_text,
             thread_id,
             channel=channel,
-            media_attachments=media_attachments,
+            files=files,
             input_role=input_role,
+            turn_id=turn_id,
         )
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
@@ -234,6 +238,11 @@ async def main() -> None:
     except Exception:
         logger.exception("Telemetry store maintenance failed")
     keep_db_small()
+    try:
+        logger.info("File store: %s",
+                    await asyncio.to_thread(file_startup.prepare, legacy_media_files()))
+    except Exception:
+        logger.exception("File store upkeep failed")
 
     async def log_notification(event: str, text: str, metadata: dict) -> None:
         """Every delivered proactive send: the JSONL log and the episode store."""

@@ -103,9 +103,10 @@ class FileRecord:
 
 def add(data: bytes, *, source: str, filename: str | None = None, caption: str | None = None,
         origin: dict | None = None, turn_id: str | None = None, mime_hint: str | None = None,
-        retention: str = "kept") -> FileRecord:
+        retention: str = "kept", created: str | None = None) -> FileRecord:
     """Store `data` and return its new record. Every call makes a record; identical
-    bytes are stored once. Raises FileTooLarge, or OSError when the disk refuses."""
+    bytes are stored once. `created` defaults to now (an import passes the original
+    arrival time). Raises FileTooLarge, or OSError when the disk refuses."""
     if not data:
         raise ValueError("empty file")
     if len(data) > MAX_FILE_BYTES:
@@ -117,7 +118,7 @@ def add(data: bytes, *, source: str, filename: str | None = None, caption: str |
     caption = (caption or "").strip() or None
     with _BYTES_LOCK:
         sha = blobs.put(data)
-        now = index.now_iso()
+        now = created or index.now_iso()
         with index.write() as con:
             file_id = _insert(con, sha, kind, mime, len(data), name, caption, source,
                               origin or {}, turn_id, now, retention)

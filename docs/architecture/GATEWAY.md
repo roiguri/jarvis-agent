@@ -411,9 +411,9 @@ class InboundMessage:
     user_id: int            # external system's user identifier (raw)
     chat_id: int            # external system's chat/conversation identifier
     thread_id: str          # agent thread ID — OWNER_THREAD_ID for all owner traffic (see thread_id namespacing)
-    user_text: str          # the user's text content (or a placeholder like "[IMAGE attachment]")
+    user_text: str          # the user's text content ("" for a file sent without a caption)
     channel: str            # Channel.name of the producer — the turn's origin marker for routing
-    attachments: list[dict] # media: kind, path (ABSOLUTE, channel-produced), mime_type, source
+    attachments: list[dict] # files: kind, mime_type, data (bytes), filename, source, origin_id
 ```
 
 `thread_id` namespaces per-conversation state; `channel` carries the turn's origin (the thread id names no channel).
@@ -542,40 +542,47 @@ class ConfirmationUI(ABC):
 
 Media (images, video, voice) cross the gateway in both directions. The contracts above (`send_media`, `send_to_owner_media`, `InboundMessage.attachments`) cover the wire-shape; this section explains the flow and storage model.
 
-### Inbound — download, cache, attach
+### Inbound — download, hand over, store
 
 ```
-External media update                                  gateway/channels/<channel>/media_cache/   (channel-owned)
-        │                                                  └── audio_<file_id>.ogg
-        ▼                                                  └── image_<file_id>.jpg
-Channel router (per-channel)                               └── video_<file_id>.mp4
-  ├── channel.download_media(remote_id) ─────────────────▶ bytes
-  ├── <channel>.media_cache.save(bytes, kind, id) ───────▶ ABSOLUTE path (channel-owned cache)
+External media update
+        │
+        ▼
+Channel router (per-channel)
+  ├── channel.download_media(remote_id) ─────────────▶ bytes
   └── InboundMessage.attachments.append({
-        kind:       "image" | "video" | "audio" | "document",
-        path:       ABSOLUTE filesystem path, channel-produced (open as-is),
-        mime_type:  RFC 6838 type from the source,
-        source:     channel name (e.g. "telegram"),
+        kind:       "image" | "video" | "audio" | "document" | "file"   (a hint),
+        mime_type:  type from the source (a hint),
+        data:       the bytes,
+        filename:   the source's filename, or None,
+        source:     Channel.name,
+        origin_id:  the source's own id for the file,
       })
+        │
+        ▼
+process_inbound_message (main.py) ── files.inbound.save_attachments ──▶ file store
+        │                                         (records with ids; a file that
+        ▼                                          can't be saved becomes a note)
+ask_jarvis(files=[records]) ── files.model_input.content_blocks ──▶ media + marker
 ```
 
-**The neutral kind is the channel's translation, not the source's tag.** A source
-whose own vocabulary is coarser (the jarvis-app hub tags everything that isn't an
-image or audio as `file`) resolves it against the mime type at the boundary, the
-same way Telegram's router tags `kind="video"`. A kind outside the neutral set —
-notably `file` — means **unidentified**: the agent surfaces it to the model as
-text and never feeds the bytes.
+**Channels never store files.** A channel downloads the bytes and hands them to
+core; `process_inbound_message` saves each one in the file store before waiting for
+the turn lock (so a file is kept even if the turn later fails), mints the turn id so
+each file names the turn it arrived in, and passes the turn file records. The model
+sees each file inline plus its marker, `[file:k7m2q9xd · image · photo.jpg · 1.2 MB]`;
+after that call the bytes are stripped from history and the marker stays. A file sent
+without a caption needs no placeholder text: its marker says what arrived.
 
-**The channel owns media end to end.** Each channel ships its own
-`gateway/channels/<channel>/media_cache.py` (`save(bytes, kind, id) -> absolute path`,
-`trim(retention_days)`) and its own cache dir (gitignored). The downstream
-handler (`process_inbound_message`) threads `attachments` into the agent's
-multimodal input; the agent **opens `path` directly** and loads the bytes once
-per turn. The agent receives **paths, not bytes**, so the same media is
-re-referenced in later turns without re-downloading — and the path is
-**absolute and channel-produced**, so `tools/*` and `agent.py` contain no
-media path, no `MEDIA_DIR`, no resolver, and no channel name. A new channel
-adds only its own `media_cache.py`; nothing in core/agent changes.
+**The kind and mime type are hints.** The store classifies from the content. A source
+whose own vocabulary is coarser (the jarvis-app hub tags everything that isn't an
+image or audio as `file`) still resolves it against the mime type at the boundary, so
+a note about a file that couldn't be saved can name what it was.
+
+**Core never names a channel.** `source` is the channel's name, kept as data on the
+file record; nothing in `files/`, `tools/` or `agent.py` branches on it. A new channel
+fills the same dict and passes `tests/channels/test_attachment_contract.py`; nothing in
+core changes.
 
 ### Outbound — replies and proactive sends
 
@@ -586,21 +593,22 @@ Two outbound methods on the `Channel` ABC:
 
 **Bytes, not paths, for outbound.** The caller (e.g. the notifier) typically fetches the media from a third party (Jellyfin/Radarr) and hands the channel the raw bytes. The channel decides how to upload (Telegram: `send_photo` with multipart upload; future email: MIME attachment). Channels that can't represent a given `kind` (e.g. early email may not support video) raise `NotImplementedError`; the caller is responsible for downgrading or skipping.
 
-### Storage — channel-owned cache
+### Storage — the file store
 
-Each channel owns its media cache module **and** directory. **Filenames encode the source-system's identifier** (Telegram embeds `file_id`), making the blobs strictly channel artifacts.
+Every file lives in the file store (`files/`): bytes under `$ROOT/jarvis_files/`,
+named by content hash, and an index in `jarvis_data/files/` — see MEMORY.md's
+placement table. Channels keep no media of their own.
 
-| Channel | Cache module | Cache directory |
-|---|---|---|
-| Telegram | `gateway/channels/telegram/media_cache.py` (`save`/`trim`) | `gateway/channels/telegram/media_cache/` |
-| jarvis-app | `gateway/channels/jarvis_app/media_cache.py` (`save`/`trim`) | `gateway/channels/jarvis_app/media_cache/` |
-| Email (future) | `gateway/email/media_cache.py` | `gateway/email/media_cache/` |
-
-`save(bytes, kind, file_id) -> absolute path`; the router imports and calls its own channel's `media_cache.save` directly (no injection). Retention: `trim()` deletes blobs older than 90 days (mtime) and runs once at module import (process start) — channel-owned, no cross-layer call. Cache dirs are gitignored (`gateway/channels/*/media_cache/`).
+The channels' old caches (`gateway/channels/*/media_cache/`) are no longer written.
+At startup the store imports whatever they still hold (`files/legacy.py`, fed by
+`gateway.factory.legacy_media_files()`), copying rather than moving so older code
+still finds them; their removal is tracked in #185.
 
 ### Layering invariant
 
-Media is owned by the channel end to end. `tools/*` and `agent.py` contain **no** media path, no `MEDIA_DIR`, no resolver, and no channel name; the agent opens the absolute `attachments[].path` it is handed. `main.py` does not import or broker media. Adding a channel = adding its own `gateway/channels/<channel>/media_cache.py`; nothing in core/agent/main changes.
+`tools/*` and `agent.py` contain no media path, no `MEDIA_DIR`, no resolver, and no
+channel name; they see file records and ids. Channels see bytes and never the store.
+Adding a channel = filling the attachment dict; nothing in core/agent/main changes.
 
 ---
 
@@ -675,4 +683,4 @@ What you should **not** need to touch when adding a channel:
 ## See Also
 
 - [RUNTIME.md](RUNTIME.md) — the agent runtime & tool registry that sits behind this gateway's `on_message` handler.
-- [MEMORY.md](MEMORY.md) — the memory & identity layer; the channel-owned media cache contract referenced here is detailed there.
+- [MEMORY.md](MEMORY.md) — the memory & identity layer; where stored files live (the placement table).

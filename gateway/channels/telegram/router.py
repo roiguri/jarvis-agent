@@ -13,7 +13,6 @@ from telegram import Update
 
 from gateway.base import InboundMessage, OnMessage
 from gateway.channels.telegram.channel import TelegramChannel
-from gateway.channels.telegram.media_cache import save as _save_media
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ class TelegramInboundRouter:
 
         media_group_id = msg.media_group_id
         if not media_group_id:
-            attachment = await self._download_and_store(msg.photo[-1].file_id, "image", "image/jpeg")
+            attachment = await self._download(msg.photo[-1].file_id, "image", "image/jpeg")
             if not attachment:
                 await self._channel.send(str(update.effective_chat.id), "Failed to download media. Please try again.")
                 return
@@ -83,7 +82,7 @@ class TelegramInboundRouter:
                 user_id=user_id,
                 chat_id=update.effective_chat.id,
                 thread_id=self._channel.owner_thread_id,
-                user_text=msg.caption or "[IMAGE attachment]",
+                user_text=msg.caption or "",
                 attachments=[attachment],
             ))
             return
@@ -118,7 +117,7 @@ class TelegramInboundRouter:
             return
 
         mime_type = msg.video.mime_type or "video/mp4"
-        attachment = await self._download_and_store(msg.video.file_id, "video", mime_type)
+        attachment = await self._download(msg.video.file_id, "video", mime_type)
         if not attachment:
             await self._channel.send(str(update.effective_chat.id), "Failed to download media. Please try again.")
             return
@@ -126,7 +125,7 @@ class TelegramInboundRouter:
             user_id=user_id,
             chat_id=update.effective_chat.id,
             thread_id=self._channel.owner_thread_id,
-            user_text=msg.caption or "[VIDEO attachment]",
+            user_text=msg.caption or "",
             attachments=[attachment],
         ))
 
@@ -137,7 +136,7 @@ class TelegramInboundRouter:
             return
 
         mime_type = msg.voice.mime_type or "audio/ogg"
-        attachment = await self._download_and_store(msg.voice.file_id, "audio", mime_type)
+        attachment = await self._download(msg.voice.file_id, "audio", mime_type)
         if not attachment:
             await self._channel.send(str(update.effective_chat.id), "Failed to download media. Please try again.")
             return
@@ -145,7 +144,7 @@ class TelegramInboundRouter:
             user_id=user_id,
             chat_id=update.effective_chat.id,
             thread_id=self._channel.owner_thread_id,
-            user_text=msg.caption or "[AUDIO attachment]",
+            user_text=msg.caption or "",
             attachments=[attachment],
         ))
 
@@ -163,7 +162,7 @@ class TelegramInboundRouter:
             mime_type = mimetypes.guess_type(doc.file_name)[0] or ""
         kind = _neutral_kind(mime_type)
 
-        attachment = await self._download_and_store(doc.file_id, kind, mime_type)
+        attachment = await self._download(doc.file_id, kind, mime_type, filename=doc.file_name)
         if not attachment:
             await self._channel.send(str(update.effective_chat.id), "Failed to download media. Please try again.")
             return
@@ -171,16 +170,18 @@ class TelegramInboundRouter:
             user_id=user_id,
             chat_id=update.effective_chat.id,
             thread_id=self._channel.owner_thread_id,
-            user_text=msg.caption or f"[{kind.upper()} attachment]",
+            user_text=msg.caption or "",
             attachments=[attachment],
         ))
 
-    async def _download_and_store(self, file_id: str, kind: str, mime_type: str) -> dict | None:
+    async def _download(self, file_id: str, kind: str, mime_type: str,
+                        filename: str | None = None) -> dict | None:
+        """The neutral attachment for one Telegram file: its bytes, for core to store."""
         media_bytes = await self._channel.download_media(file_id)
         if not media_bytes:
             return None
-        media_path = await asyncio.to_thread(_save_media, media_bytes, kind, file_id)
-        return {"kind": kind, "path": media_path, "mime_type": mime_type, "source": "telegram"}
+        return {"kind": kind, "mime_type": mime_type, "data": media_bytes,
+                "filename": filename, "source": self._channel.name, "origin_id": file_id}
 
     async def _flush_media_group(self, group_id: str) -> None:
         try:
@@ -195,7 +196,7 @@ class TelegramInboundRouter:
 
             attachments: list[dict] = []
             for file_id, kind, mime_type in payload["items"]:
-                attachment = await self._download_and_store(file_id, kind, mime_type)
+                attachment = await self._download(file_id, kind, mime_type)
                 if attachment:
                     attachments.append(attachment)
 
@@ -203,7 +204,7 @@ class TelegramInboundRouter:
                 await self._channel.send(str(payload["chat_id"]), "Failed to download media. Please try again.")
                 return
 
-            user_text = payload["caption"] or f"[IMAGE attachments: {len(attachments)}]"
+            user_text = payload["caption"] or ""
             await self._dispatch(InboundMessage(
                 user_id=payload["user_id"],
                 chat_id=payload["chat_id"],

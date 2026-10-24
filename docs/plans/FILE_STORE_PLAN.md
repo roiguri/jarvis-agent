@@ -22,7 +22,7 @@ shared links).
 - [x] **S2 — Store core.** New top-level `files/` package: ids, on-disk layout, the index,
       add / get / remove with a safe write order, file states, the reference interface with a
       dry-run report, and a `verify` script. No callers yet.
-- [ ] **S3a — Channel switch-over.** New attachment shape (channels hand bytes), saving in one
+- [x] **S3a — Channel switch-over.** New attachment shape (channels hand bytes), saving in one
       place in core, file markers in history, automatic migration of both channel caches at
       startup, the channels stop writing their caches. Both channels move together.
 - [ ] **S3b — Outbound saved.** The Outbox saves media Jarvis sends (through a save step passed
@@ -223,9 +223,10 @@ strong reference. The source is recorded, so a future policy can treat sources d
 - **Bytes in memory is no new cost:** channels already download into memory, and the agent
   already reads the whole file to inline it. A future channel with very large uploads can hand a
   temporary path that core saves from instead.
-- **Placeholder text:** channels today write their own placeholders (`[IMAGE attachment]`,
-  `[attachments: …]`) when a message has no caption. They become one neutral placeholder made
-  in core, next to the file markers.
+- **No placeholder text:** channels used to write their own placeholders (`[IMAGE attachment]`,
+  `[attachments: …]`) when a message had no caption. They are dropped: the file's marker says
+  what arrived. A file that can't be saved (too large, disk full) becomes a note in the message
+  and the turn still runs.
 - **Outbound unchanged:** the Outbox accepts a file id (read from the store) or bytes; bytes are
   saved through the injected save step, off the event loop, so everything Jarvis sends has an
   id. The id goes into the notification log, so the sent message's history entry and the
@@ -415,8 +416,8 @@ nothing calls it yet.
   from the store for inlining.
 - History markers everywhere a path is written today: `_strip_media_blobs` (keeps the marker
   for every kind, images included), the path hints in `ask_jarvis`, the episode record's
-  `[attached: …]`, the chat log's `media` field. One neutral placeholder replaces the channels'
-  own. The compaction prompt keeps file ids.
+  `[attached: …]`, the chat log's `media` field. The channels' placeholders are dropped. The
+  compaction prompt keeps file ids.
 - **Migration runs automatically at startup**, before the channels start: idempotent, keyed on
   the legacy path, so it also picks up files the old code wrote after the deploy and before
   the restart. It copies, never moves — the cache dirs stay so a rollback to pre-S3a code still
@@ -430,6 +431,26 @@ nothing calls it yet.
   `media_cache` skip, `.gitignore`.
 - Docs: GATEWAY.md (attachment shape, media sections), code-review skill G8, CLAUDE.md
   placement principle and trees, MEMORY.md, DEVELOPMENT.md ("Media blob stripping").
+
+### S3a staging checklist
+
+1. **Startup import.** Restart staging. The startup log has `File store: imported N old files,
+   collected 0 unused, … MB stored, … GB free`, with N at least the number of files in both old
+   caches. `JARVIS_ROOT=/app/jarvis_staging venv/bin/python scripts/files_verify.py` reports 0
+   missing and 0 corrupt.
+2. **Photo with a caption** ("what is this?"): answered from the photo.
+3. **Photo with no caption:** Jarvis responds to the photo; no `[IMAGE attachment]` text anywhere.
+4. **Album** (2–3 photos, one caption): all photos seen.
+5. **Voice note:** understood.
+6. **Short video:** described.
+7. **PDF document:** read; its filename shows in the marker.
+8. **Text or code file** (`.txt`, `.py`): Jarvis says it can't read a text file yet (expected
+   until S4), naming the file.
+9. **Follow-up, next turn:** "what was in the first photo?" is answered from the earlier reply.
+10. **jarvis-app:** an image with text, and one without.
+11. **History:** each new owner row in the episode store ends with its file markers, and the
+    store has one record per file sent, with the right turn id.
+12. **Restart again:** `imported 0 old files`.
 
 ### S3b — Outbound saved
 

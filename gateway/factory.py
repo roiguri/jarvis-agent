@@ -34,6 +34,8 @@ from gateway.channels.jarvis_app.channel import JarvisAppChannel
 from gateway.channels.jarvis_app.client import HubClient
 from gateway.channels.jarvis_app.confirmation import AppConfirmationUI
 from gateway.channels.jarvis_app.router import JarvisAppInboundRouter
+from gateway.channels.jarvis_app import media_cache as _app_media_cache
+from gateway.channels.telegram import media_cache as _telegram_media_cache
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,12 @@ _default_channel_name: str | None = None
 # _registry): a confirmation resolves by the turn's ORIGIN channel, a different
 # lookup than the proactive default.
 _confirmation_stores: dict[str, Confirmation] = {}
+
+
+def legacy_media_files() -> list[tuple[str, str]]:
+    """(absolute path, source) of every file left in the channels' old media caches,
+    for the file store's one-time import. TODO(#185): remove with the caches."""
+    return _telegram_media_cache.legacy_files() + _app_media_cache.legacy_files()
 
 
 def register_channel(channel: Channel, outbox: Outbox) -> None:

@@ -21,7 +21,6 @@ from gateway.apps import AppError, dispatch, list_apps
 from gateway.base import InboundMessage, OnMessage
 from gateway.blocks import BlockAction, render_submission
 from gateway.commands import list_commands
-from gateway.channels.jarvis_app import media_cache
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
 from gateway.channels.jarvis_app.client import (
     HubClient,
@@ -317,14 +316,10 @@ class JarvisAppInboundRouter:
 
         raw_attachments = message.get("attachments") or []
         attachments = await self._download_attachments(raw_attachments)
-        # An attachment-only message still needs text so the model knows something
-        # arrived. If every download failed, say that rather than run an empty turn.
-        if not text:
-            if attachments:
-                kinds = ", ".join(a["kind"] for a in attachments)
-                text = f"[attachments: {kinds}]"
-            elif raw_attachments:
-                text = "[an attachment was sent but could not be retrieved]"
+        # An attachment-only message is carried by its files' markers. If every
+        # download failed, say that rather than run an empty turn.
+        if not text and raw_attachments and not attachments:
+            text = "[an attachment was sent but could not be retrieved]"
 
         await self._run_turn(text, attachments)
 
@@ -412,10 +407,10 @@ class JarvisAppInboundRouter:
             await asyncio.sleep(_THINKING_INTERVAL_S)
 
     async def _download_attachments(self, raw: list[dict]) -> list[dict]:
-        """Download each inbound attachment to the channel-owned cache and return
-        the neutral dicts the agent reads (kind, path, mime_type, source). A blob
-        that fails to download is logged and skipped — one bad attachment must not
-        sink the whole turn."""
+        """Download each inbound attachment and return the neutral dicts core stores
+        (kind, mime_type, data, filename, source, origin_id). A blob that fails to
+        download is logged and skipped — one bad attachment must not sink the whole
+        turn."""
         out: list[dict] = []
         for att in raw:
             att_id = att.get("id")
@@ -426,21 +421,19 @@ class JarvisAppInboundRouter:
                 logger.warning("jarvis-app skipping attachment with malformed id %r", att_id)
                 continue
             mime_type = att.get("mime_type") or ""
-            # Resolve before caching, so the cached filename reflects what the
-            # blob actually is rather than the hub's catch-all tag.
-            kind = _neutral_kind(hub_kind, mime_type)
             try:
                 data = await self._client.download_attachment(att_id)
-                path = await asyncio.to_thread(media_cache.save, data, kind, att_id)
             except Exception as exc:
                 logger.warning("jarvis-app attachment %s download failed: %s", att_id, exc)
                 continue
             out.append(
                 {
-                    "kind": kind,
-                    "path": path,
+                    "kind": _neutral_kind(hub_kind, mime_type),
                     "mime_type": mime_type,
-                    "source": "jarvis-app",
+                    "data": data,
+                    "filename": att.get("filename"),
+                    "source": self._channel.name,
+                    "origin_id": att_id,
                 }
             )
         return out

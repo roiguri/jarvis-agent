@@ -48,7 +48,8 @@ def turn_input(*, turn_id: str, thread_id: str, scope: str, channel: str | None,
                role: str, source: str, content: str, attachments: list[str] | None = None,
                meta: dict | None = None, ts: str | None = None) -> None:
     def write():
-        text = content + "".join(f"\n[attached: {p}]" for p in attachments or [])
+        # Each attachment is its file marker, one per line after the message.
+        text = "\n".join(([content] if content else []) + list(attachments or []))
         with store.write() as con:
             store.insert(con, ts=ts or store.now_iso(), turn_id=turn_id, thread_id=thread_id,
                          scope=scope, channel=channel, role=role, source=source,

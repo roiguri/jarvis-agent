@@ -34,9 +34,12 @@ class InboundMessage:
     user_text: str
     # Channel.name of the producer — the turn's origin marker for routing.
     channel: str = ""
-    # Each: {kind, path, mime_type, source}. `path` is an ABSOLUTE,
-    # channel-produced filesystem path the agent opens as-is — the channel
-    # owns media storage; core/agent never resolve or name a channel.
+    # Each: {kind, mime_type, data, filename, source, origin_id}. `data` is the
+    # file's bytes; channels never store files — core saves each one in the file
+    # store before the turn and the turn sees file ids. `kind` and `mime_type`
+    # are the channel's hints (the store classifies from the content);
+    # `filename` may be None; `source` is the channel's name; `origin_id` is the
+    # channel's own id for the file.
     attachments: list[dict] = field(default_factory=list)
 
 

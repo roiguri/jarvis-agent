@@ -6,11 +6,12 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 import agent
+from files import model_input
 
 IMAGE = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
 REMOTE_IMAGE = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
 AUDIO = {"type": "media", "mime_type": "audio/ogg", "data": "AAAA"}
-AUDIO_HINT = {"type": "text", "text": "[Audio message attached: voice.ogg]"}
+MARKER = {"type": "text", "text": "\n[file:k7m2q9xd · audio · 12 KB]"}
 
 
 # --- media mime types -----------------------------------------------------------
@@ -26,32 +27,33 @@ AUDIO_HINT = {"type": "text", "text": "[Audio message attached: voice.ogg]"}
     ("", ""),
 ])
 def test_normalize_media_mime(raw, want):
-    assert agent._normalize_media_mime(raw) == want
+    assert model_input.normalize_mime(raw) == want
 
 
 def test_every_alias_lands_on_a_supported_mime():
-    supported = set().union(*agent.SUPPORTED_MEDIA_MIMES.values())
-    assert set(agent.MEDIA_MIME_ALIASES.values()) <= supported
+    supported = set().union(*model_input.SUPPORTED_MEDIA_MIMES.values())
+    assert set(model_input.MEDIA_MIME_ALIASES.values()) <= supported
 
 
 @pytest.mark.parametrize("word, article", [("image", "an"), ("audio", "an"), ("video", "a"),
                                            ("document", "a"), ("Upload", "an")])
 def test_article(word, article):
-    assert agent._article(word) == article
+    assert model_input.article(word) == article
 
 
 # --- stripping seen media -------------------------------------------------------
 
-def test_inline_image_becomes_a_text_reference():
-    msg = HumanMessage(content=[{"type": "text", "text": "look"}, IMAGE], id="m1")
+def test_inline_image_dropped_marker_kept():
+    image_marker = {"type": "text", "text": "\n[file:k7m2q9xd · image · 3 KB]"}
+    msg = HumanMessage(content=[{"type": "text", "text": "look"}, IMAGE, image_marker], id="m1")
     out = agent._strip_media_blobs(msg)
-    assert out.content == [{"type": "text", "text": "look"}, {"type": "text", "text": "[image attached]"}]
+    assert out.content == [{"type": "text", "text": "look"}, image_marker]
     assert out.id == "m1", "keeps its id, so the reducer replaces rather than appends"
 
 
-def test_media_blob_dropped_hint_kept():
-    out = agent._strip_media_blobs(HumanMessage(content=[AUDIO, AUDIO_HINT]))
-    assert out.content == [AUDIO_HINT]
+def test_media_blob_dropped_marker_kept():
+    out = agent._strip_media_blobs(HumanMessage(content=[AUDIO, MARKER]))
+    assert out.content == [MARKER]
 
 
 @pytest.mark.parametrize("msg", [

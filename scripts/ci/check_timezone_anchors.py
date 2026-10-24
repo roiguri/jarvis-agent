@@ -64,6 +64,7 @@ ANCHORS: dict[str, tuple[str, str]] = {
 _VALID = {"home", "owner", "both"}
 SEAM = "timeutils.py"
 # .claude/ holds local agent state, including git worktrees of other branches.
+# media_cache: the channels' old caches. TODO(#185): drop it from here with them.
 _SKIP_DIRS = {"venv", "__pycache__", ".git", "node_modules", "media_cache", ".claude"}
 _SKIP_TOP = {"scripts", "tests"}
 

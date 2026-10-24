@@ -1,4 +1,3 @@
-import base64
 import dataclasses
 import datetime as _dt
 import json
@@ -38,6 +37,7 @@ from gateway.base import OWNER_THREAD_ID
 # Per-turn telemetry — ContextVars + recorders for the telemetry store.
 from observability import telemetry
 from episodes import record as episodes_record, today as episodes_today
+from files import model_input
 
 # ---------------------------------------------------------------------------
 # State schema — sliding message window + media blob stripping
@@ -52,69 +52,13 @@ MAX_MESSAGES = 50
 # hits, and the model re-activates what the new request needs.
 SKILL_IDLE_RESET = _dt.timedelta(hours=3)
 
-# Gemini's documented ceiling for inline media. The API also recommends the
-# Files API past a ~20 MB request, but that is a recommendation, not a limit —
-# a 42 MB video inlines and is read correctly. A backstop, not a policy: every
-# channel today caps its own uploads well below this, so it exists to meet a
-# future one with an honest note rather than an opaque API failure. Enforced
-# here rather than per channel because it is a model limit — every channel
-# inherits it, and a model swap moves one constant. It cannot see duration,
-# which the API constrains separately (<1 min guideline for inline video).
-INLINE_MEDIA_MAX_BYTES = 100 * 1024 * 1024
-
-# The formats the model accepts, per kind, transcribed from the API's published
-# lists. Channels classify a blob into a kind; which *formats* of that kind are
-# readable is a model fact, so it lives here in one copy rather than in every
-# channel's router, where it would go stale on the next model swap. Outside
-# these sets the attachment gets an honest note instead of an opaque API error.
-SUPPORTED_MEDIA_MIMES = {
-    "image": {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"},
-    "audio": {"audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg",
-              "audio/flac"},
-    "video": {"video/mp4", "video/mpeg", "video/mov", "video/avi", "video/x-flv",
-              "video/mpg", "video/webm", "video/wmv", "video/3gpp"},
-    "document": {"application/pdf"},
-}
-
-# Clients name some formats differently from the API (.mov is sent as
-# video/quicktime, .mp3 as audio/mpeg). Normalize to the documented spelling so
-# the check sees a known name and the blob is sent under one the API expects.
-MEDIA_MIME_ALIASES = {
-    "video/quicktime": "video/mov",
-    "video/x-msvideo": "video/avi",
-    "video/x-ms-wmv": "video/wmv",
-    "video/3gpp2": "video/3gpp",
-    "audio/mpeg": "audio/mp3",
-    "audio/mpg": "audio/mp3",
-    "audio/x-wav": "audio/wav",
-    "audio/x-aiff": "audio/aiff",
-    "audio/x-flac": "audio/flac",
-    "image/jpg": "image/jpeg",
-}
-
-
-def _article(word: str) -> str:
-    """'a' or 'an' for a word the model will read back to the owner."""
-    return "an" if word[:1].lower() in "aeiou" else "a"
-
-
-def _normalize_media_mime(mime_type: str) -> str:
-    """Strip parameters/case from a mime and resolve client spellings to the
-    names the API publishes. Empty in, empty out — an absent mime is handled by
-    the per-kind defaults in the media loop, not here."""
-    mime = mime_type.split(";")[0].strip().lower()
-    return MEDIA_MIME_ALIASES.get(mime, mime)
-
-
 def _strip_media_blobs(msg):
-    """Replace base64 media content blocks with lightweight text references.
+    """Drop base64 media blocks from a message the model has already seen.
 
-    Only HumanMessages with list content are affected. Rules:
-    - image_url blocks with a data: URL → replaced with '[image attached]' text
-    - media blocks (audio/video) with a data field → dropped; the text hint
-      '[Audio message attached: ...]' / '[Video attached: ...]' that ask_jarvis
-      appends as a separate block is preserved as-is.
-    All other message types and plain-string content are returned unchanged.
+    Only HumanMessages with list content are affected: inline image_url data
+    blocks and media blocks with data are removed. The file's marker,
+    `[file:… · kind · …]`, is a separate text block and stays, so history keeps
+    the id. All other messages and plain-string content are returned unchanged.
     """
     from langchain_core.messages import HumanMessage
     if not isinstance(msg, HumanMessage) or not isinstance(msg.content, list):
@@ -122,20 +66,14 @@ def _strip_media_blobs(msg):
     new_content = []
     changed = False
     for block in msg.content:
-        if not isinstance(block, dict):
-            new_content.append(block)
-            continue
-        block_type = block.get("type")
-        if block_type == "image_url":
-            url = (block.get("image_url") or {}).get("url", "")
-            if url.startswith("data:"):
-                new_content.append({"type": "text", "text": "[image attached]"})
+        if isinstance(block, dict):
+            block_type = block.get("type")
+            if block_type == "image_url" and (block.get("image_url") or {}).get("url", "").startswith("data:"):
                 changed = True
                 continue
-        elif block_type == "media" and "data" in block:
-            # Text hint is a separate block — just drop the blob
-            changed = True
-            continue
+            if block_type == "media" and "data" in block:
+                changed = True
+                continue
         new_content.append(block)
     if not changed:
         return msg
@@ -831,7 +769,7 @@ stateless_executor = build_graph()
 def ask_jarvis(
     user_input: str,
     thread_id: str,
-    media_attachments: list[dict] | None = None,
+    files: list | None = None,
     scope: str = "user",
     turn_id: str | None = None,
     heartbeat_due_tasks: list[str] | None = None,
@@ -851,8 +789,8 @@ def ask_jarvis(
     Args:
         user_input: the text message from the user
         thread_id: conversation thread identifier
-        media_attachments: optional generic media attachments, e.g.
-            [{"kind": "image", "path": "media/image_abc.jpg"}]
+        files: optional file-store records (files.store.FileRecord) this message
+            brought; each is shown to the model with its marker.
         scope: turn scope — "user" (default), "heartbeat" or "dream". Carried into
             JarvisState; informational only at this stage (does not gate tools).
         turn_id: optional pre-minted turn identifier (uuid4 hex). If omitted,
@@ -928,7 +866,7 @@ def ask_jarvis(
         turn_id=turn_id, thread_id=thread_id, scope=scope, channel=channel,
         role=input_role or ("owner" if scope == "user" else "system"),
         source=episode_source, content=raw_input, ts=now.isoformat(),
-        attachments=[a.get("path") for a in media_attachments or [] if a.get("path")],
+        attachments=[f.marker() for f in files or []],
         meta={"trigger": trigger.id, "task": getattr(trigger.action, "task", None)} if trigger is not None else None,
     )
 
@@ -944,134 +882,8 @@ def ask_jarvis(
     # whether or not the turn finishes, so the cursor must advance.
     input_checkpointed = False
     try:
-        # Build the message content with text and media.
-        if media_attachments:
-            content = [{"type": "text", "text": user_input}]
-
-            for attachment in media_attachments:
-                try:
-                    media_type = str(attachment.get("kind", "")).strip().lower()
-                    media_path = str(attachment.get("path", "")).strip()
-                    mime_type = str(attachment.get("mime_type", "")).strip()
-                    if not media_type or not media_path:
-                        continue
-
-                    # A media kind this build can't feed to the model — a "file",
-                    # meaning the channel could not identify it. Surface it as
-                    # text so the reply is honest rather than silently ignoring
-                    # the attachment, and skip reading bytes we can't use.
-                    if media_type not in ("image", "audio", "video", "document"):
-                        label = f"{media_type} ({mime_type})" if mime_type else media_type
-                        content.append({
-                            "type": "text",
-                            "text": f"\n[Received a {label} attachment I can't read yet.]"
-                        })
-                        continue
-
-                    abs_path = media_path
-
-                    # Too large to inline. Checked before open() so an oversized
-                    # blob is never read into memory only to be refused. Same
-                    # honest-note shape as an unreadable kind — the reply names
-                    # no channel, transport limit, or ceiling.
-                    media_size = os.path.getsize(abs_path)
-                    if media_size > INLINE_MEDIA_MAX_BYTES:
-                        logger.info(
-                            "media too large to inline: %s (%d bytes, kind=%s)",
-                            abs_path, media_size, media_type,
-                        )
-                        content.append({
-                            "type": "text",
-                            "text": (
-                                f"\n[Received {_article(media_type)} {media_type} "
-                                f"({media_size / (1024 * 1024):.0f} MB) — "
-                                "too large for me to read.]"
-                            )
-                        })
-                        continue
-
-                    # A format the model can't read. An absent mime skips the
-                    # check — the per-kind defaults below cover that case.
-                    if mime_type:
-                        mime_type = _normalize_media_mime(mime_type)
-                        if mime_type not in SUPPORTED_MEDIA_MIMES.get(media_type, ()):
-                            logger.info(
-                                "unsupported media format: %s (kind=%s)",
-                                mime_type, media_type,
-                            )
-                            content.append({
-                                "type": "text",
-                                "text": (
-                                    f"\n[Received {_article(media_type)} {media_type} "
-                                    f"({mime_type}) — I can't read that format.]"
-                                )
-                            })
-                            continue
-
-                    with open(abs_path, "rb") as f:
-                        media_data = f.read()
-
-                    if media_type == "image":
-                        # Encode image as base64 data URL
-                        import mimetypes
-                        if not mime_type:
-                            mime_type = mimetypes.guess_type(abs_path)[0] or "image/jpeg"
-                        b64_data = base64.b64encode(media_data).decode("utf-8")
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64_data}"
-                            }
-                        })
-                    elif media_type == "audio":
-                        if not mime_type:
-                            mime_type = "audio/ogg"
-                        b64_data = base64.b64encode(media_data).decode("utf-8")
-                        content.append({
-                            "type": "media",
-                            "mime_type": mime_type,
-                            "data": b64_data,
-                        })
-                        # Keep a lightweight textual hint for models that ignore raw media blocks.
-                        content.append({
-                            "type": "text",
-                            "text": f"\n[Audio message attached: {media_path}]"
-                        })
-                    elif media_type == "video":
-                        if not mime_type:
-                            mime_type = "video/mp4"
-                        b64_data = base64.b64encode(media_data).decode("utf-8")
-                        content.append({
-                            "type": "media",
-                            "mime_type": mime_type,
-                            "data": b64_data,
-                        })
-                        # Keep a lightweight textual hint for models that ignore raw media blocks.
-                        content.append({
-                            "type": "text",
-                            "text": f"\n[Video attached: {media_path}]"
-                        })
-                    elif media_type == "document":
-                        if not mime_type:
-                            mime_type = "application/pdf"
-                        b64_data = base64.b64encode(media_data).decode("utf-8")
-                        content.append({
-                            "type": "media",
-                            "mime_type": mime_type,
-                            "data": b64_data,
-                        })
-                        # Keep a lightweight textual hint for models that ignore raw media blocks.
-                        content.append({
-                            "type": "text",
-                            "text": f"\n[Document attached: {media_path}]"
-                        })
-                except Exception as e:
-                    logger.warning(f"Failed to load media {media_path}: {e}")
-                    content.append({
-                        "type": "text",
-                        "text": f"\n[Failed to load {media_type}: {media_path}]"
-                    })
-
+        if files:
+            content = [{"type": "text", "text": user_input}, *model_input.content_blocks(files)]
             input_messages = [HumanMessage(content=content)]
         else:
             input_messages = [("user", user_input)]
