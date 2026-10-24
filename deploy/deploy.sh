@@ -130,7 +130,7 @@ fi
 # 9. Advisory: warn (don't block) if prod's .env drifted from the template.
 [[ -x "$CHECK_ENV" ]] && { "$CHECK_ENV" >/dev/null 2>&1 || say "NOTE: check_env reports .env key drift — run scripts/check_env.sh."; }
 
-# 10. Trim old backups (keeps deploy-tagged ones).
+# 10. Trim old backups (keeps the newest 10 and the last 5 deploys' snapshots).
 JARVIS_ROOT="$ROOT" "$BACKUP" --prune >/dev/null || true
 
 # 11. Hand off — the OWNER restarts (deploy never does).

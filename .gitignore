@@ -5,6 +5,6 @@ __pycache__/
 .claude/
 # rollback.sh writes this; it is per-checkout operational state, not code
 .rollback-marker
-# Channel-owned inbound media caches (any channel, any nesting: gateway/.../media_cache/)
+# The channels' old media caches, no longer written. TODO(#185): remove with them.
 gateway/channels/*/media_cache/
 evals/results/

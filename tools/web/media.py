@@ -10,8 +10,9 @@ from its metadata.
 Local fetching is bounded to the extractors in ``_allowed()``: a URL reaches yt-dlp
 only when one of them claims it (a regex, no network), and yt-dlp is told it may
 use no others, so its generic extractor — which would fetch any address, home
-network included — is unreachable. Nothing is kept: the download lives in a
-temporary directory for the length of the call.
+network included — is unreachable. The download lives in a temporary directory
+for the length of the call; the video is then kept in the file store, with the
+record as its description, so it is never described twice.
 """
 import base64
 import glob
@@ -25,6 +26,7 @@ import tempfile
 import time
 
 import config
+from files import attachments, records
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ DESCRIBE_MAX_S = 90
 MIN_STEP_S = 15
 # Left for the model to answer after the tool returns.
 _ANSWER_RESERVE_S = 30
-DESCRIBE_MAX_TOKENS = 4096
+DESCRIBE_MAX_TOKENS = records.VIDEO_MAX_TOKENS
 CAPTION_MAX_CHARS = 2500
 # YouTube is watched from its URL, never downloaded. Only the opening stretch,
 # at a low frame rate: that caps the cost of any length (about 40k input tokens).
@@ -55,29 +57,11 @@ YOUTUBE_PAGE_MAX_CHARS = 5000
 _FORMAT_SORT = "res:540,+size"
 _FORMAT = "b[vcodec!=none][acodec!=none][protocol^=http]/b[protocol^=http][format_id!*=dash]"
 _MIMES = {"mp4": "video/mp4", "webm": "video/webm"}
-# The finish reasons that mean the model was done, as agent.py reads them.
-_NORMAL_FINISH = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
 
-_INTRO = "Make a faithful record of this video, for someone who will not watch it. Not a summary.\n"
-_SAID = (
-    "Said: everything spoken, word for word, in the original language. If that would run "
-    "past about 600 words, instead give a detailed account of what is said, in order, that "
-    "keeps every specific detail.\n"
-)
-_ON_SCREEN = "On-screen text: all text that appears, verbatim, in order.\n"
-_SHOWN = (
-    "Shown: what happens, in order. Include a specific detail (number, amount, name, place, "
-    "price, time) only if it is said or written in the video. Never estimate or fill in a "
-    "missing one; if you judge something from the picture alone, mark it as a visual guess.\n"
-)
-_PROMPT = (
-    _INTRO + _SAID + _ON_SCREEN + _SHOWN
-    + "If the video has no sound, say so. Do not say who posted it. Output only the three "
-    "sections, with no introduction or closing line."
-)
+_PROMPT = records.VIDEO_PROMPT
 _YOUTUBE_PROMPT = (
-    _INTRO + "What is said is covered by a separate transcript, so leave speech out.\n"
-    + _ON_SCREEN + _SHOWN
+    records.VIDEO_INTRO + "What is said is covered by a separate transcript, so leave speech out.\n"
+    + records.VIDEO_ON_SCREEN + records.VIDEO_SHOWN
     + "Keep the record under about 400 words. Do not say who posted it. Output only the two "
     "sections, with no introduction or closing line."
 )
@@ -189,16 +173,39 @@ def read(url: str, platform: str) -> str:
             return f"{header}\n[not enough time left in this turn to watch the video — only the caption was read]"
 
         with open(video, "rb") as f:
-            data = base64.b64encode(f.read()).decode("ascii")
-        part = {"type": "media", "mime_type": mime, "data": data}
+            raw = f.read()
+        part = {"type": "media", "mime_type": mime, "data": base64.b64encode(raw).decode("ascii")}
         record, note = _describe(part, describe_s, prompt=_PROMPT, unwatched=(
             "the video itself could not be watched — only the caption was read"))
+    kept = _keep(url, platform, info, raw, mime, record, note)
+    kept_note = f"kept as {kept.marker()}" if kept else "the video itself is not kept"
     if record is None:
-        return f"{header}\n[{note}]"
-    marker = "[Video described by a model — the video itself is not kept]"
+        return f"{header}\n[{note}{'; the video is ' + kept_note if kept else ''}]"
+    marker = f"[Video described by a model — {kept_note}]"
     if note:
         marker += f"\n[{note}]"
     return f"{header}\n{marker}\n{record}"
+
+
+def _keep(url: str, platform: str, info: dict, raw: bytes, mime: str,
+          record: str | None, note: str | None):
+    """Store the downloaded video, with its record when one was made (so it is
+    never described twice). The file record, or None if it couldn't be kept."""
+    written = None
+    if record:
+        content = record + (f"\n[{note}]" if note else "")
+        written = records.Record("description", content, config.MODEL, records.VIDEO_VERSION)
+    page_url = info.get("webpage_url") or url
+    ext = "webm" if mime == "video/webm" else "mp4"
+    caption = (info.get("description") or "").strip()[:CAPTION_MAX_CHARS] or None
+    origin = {"url": page_url, "poster": _poster(platform, info)}
+    if _posted(info):
+        origin["posted"] = _posted(info)
+    if _length(info):
+        origin["duration"] = _length(info)
+    return attachments.save_fetched(
+        raw, source="web", filename=f"{platform.lower()}-{info.get('id') or 'video'}.{ext}",
+        caption=caption, origin=origin, mime_hint=mime, record=written)
 
 
 def _remaining_s() -> float | None:
@@ -285,8 +292,7 @@ def _video_file(work: str) -> str | None:
     return None
 
 
-def _header(url: str, platform: str, info: dict) -> str:
-    """Who posted it, when, and the caption — copied from the metadata."""
+def _poster(platform: str, info: dict) -> str:
     if platform == "Instagram":
         handle, name = info.get("channel"), info.get("uploader")
     else:
@@ -294,13 +300,28 @@ def _header(url: str, platform: str, info: dict) -> str:
     who = f"@{handle}" if handle else (name or "unknown poster")
     if handle and name and name != handle:
         who += f" ({name})"
-    parts = [platform, who]
+    return who
+
+
+def _posted(info: dict) -> str | None:
     date = info.get("upload_date") or ""
-    if len(date) == 8:
-        parts.append(f"posted {date[:4]}-{date[4:6]}-{date[6:]}")
+    return f"{date[:4]}-{date[4:6]}-{date[6:]}" if len(date) == 8 else None
+
+
+def _length(info: dict) -> str | None:
     duration = info.get("duration")
     if isinstance(duration, (int, float)) and duration > 0:
-        parts.append(f"{int(duration) // 60}:{int(duration) % 60:02d}")
+        return f"{int(duration) // 60}:{int(duration) % 60:02d}"
+    return None
+
+
+def _header(url: str, platform: str, info: dict) -> str:
+    """Who posted it, when, and the caption — copied from the metadata."""
+    parts = [platform, _poster(platform, info)]
+    if _posted(info):
+        parts.append(f"posted {_posted(info)}")
+    if _length(info):
+        parts.append(_length(info))
     caption = (info.get("description") or "").strip()
     if len(caption) > CAPTION_MAX_CHARS:
         caption = caption[:CAPTION_MAX_CHARS] + " […caption truncated]"
@@ -313,37 +334,16 @@ def _describe(part: dict, timeout_s: float, *, prompt: str,
               unwatched: str) -> tuple[str | None, str | None]:
     """One side model call on a media part. Returns (record or None, a note on what
     was missed); ``unwatched`` is the note when there is no record at all."""
-    from langchain_core.messages import HumanMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from google.genai.types import MediaResolution
-
-    from observability import telemetry
-
-    llm = ChatGoogleGenerativeAI(
-        model=config.MODEL, temperature=0, max_retries=1, timeout=timeout_s,
-        max_output_tokens=DESCRIBE_MAX_TOKENS, thinking_level="low",
-        media_resolution=MediaResolution.MEDIA_RESOLUTION_LOW,
-    )
-    message = HumanMessage(content=[part, {"type": "text", "text": prompt}])
-    # Its own job row, so the turn's call count and call indexes stay the turn's.
-    with telemetry.job("web_media"):
-        t0 = time.perf_counter()
-        try:
-            response = llm.invoke([message])
-        except Exception as e:
-            latency = int((time.perf_counter() - t0) * 1000)
-            telemetry.record_llm_call(None, latency_ms=latency, error=f"{type(e).__name__}: {e}")
-            logger.warning("video description failed: %s: %s", type(e).__name__, e)
-            return None, unwatched
-        latency = int((time.perf_counter() - t0) * 1000)
-        finish = str((response.response_metadata or {}).get("finish_reason") or "")
-        telemetry.record_llm_call(response, latency_ms=latency, finish_reason=finish)
-    _charge_turn(response)
-
-    text = response.text.strip() if isinstance(response.text, str) else ""
-    if not text:
+    text, finish, response = records.side_call(
+        [part], prompt, job="web_media", timeout_s=timeout_s,
+        max_output_tokens=DESCRIBE_MAX_TOKENS, low_resolution=True)
+    if response is None:
+        logger.warning("video description failed: %s", finish)
         return None, unwatched
-    if finish not in _NORMAL_FINISH:
+    _charge_turn(response)
+    if text is None:
+        return None, unwatched
+    if finish not in records.NORMAL_FINISH:
         return text, f"the record stops early ({finish}) — the end of the video may be missing"
     return text, None
 

@@ -11,6 +11,7 @@ failed send (base.Channel.send_media contract) rather than mislabeling the blob.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -25,6 +26,7 @@ except ImportError:
 
 from gateway.base import Channel, OWNER_THREAD_ID
 from gateway.blocks import Form
+from gateway.channels.jarvis_app import media_meta
 from gateway.channels.jarvis_app.client import HubClient
 from gateway.outbox import EVENT_HEARTBEAT, EVENT_LLM_MEDIA, EVENT_MEDIA, EVENT_REMINDER
 
@@ -59,14 +61,33 @@ _BLUR_QUALITY = 60
 # enum is image | audio | file — Telegram's "video" has no equivalent here, so it
 # (and any other kind) falls through to NotImplementedError rather than being
 # mislabeled. Images sniff PNG vs JPEG since posters arrive as either.
-def _upload_meta(kind: str, payload: bytes) -> tuple[str, str]:
+def _upload_metadata(kind: str, mime_type: str, payload: bytes) -> dict:
+    """What the app shows before it downloads: an image's size and blur-up
+    placeholder, a voice note's length, a video's length and size."""
     if kind == "image":
+        return _image_metadata(payload)
+    if mime_type.startswith("audio/"):
+        return media_meta.audio_metadata(payload)
+    if mime_type.startswith("video/"):
+        return media_meta.video_metadata(payload)
+    return {}
+
+
+def _upload_meta(kind: str, payload: bytes, filename: str | None = None,
+                 mime_type: str | None = None) -> tuple[str, str]:
+    """Upload name and mime. The hub infers its kind (image, audio or file) from
+    the mime, so any other kind goes up as a file under its own name."""
+    if kind == "image":
+        if mime_type and mime_type.startswith("image/"):
+            return filename or "image." + mime_type.split("/")[1], mime_type
         if payload[:8] == b"\x89PNG\r\n\x1a\n":
-            return "image.png", "image/png"
-        return "image.jpg", "image/jpeg"
+            return filename or "image.png", "image/png"
+        return filename or "image.jpg", "image/jpeg"
     if kind == "audio":
-        return "audio.ogg", "audio/ogg"
-    raise NotImplementedError(f"jarvis-app cannot send media kind={kind!r}")
+        if mime_type and mime_type.startswith("audio/"):
+            return filename or "audio." + mime_type.split("/")[1], mime_type
+        return filename or "audio.ogg", "audio/ogg"
+    return filename or "file", mime_type or "application/octet-stream"
 
 
 # Pixel dimensions + a tiny base64 blur-up thumbnail for an image, so the app
@@ -146,28 +167,28 @@ class JarvisAppChannel(Channel):
         await self._client.send_message({"text": text})
 
     async def send_media(
-        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None
+        self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
+        *, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
         # One owner, one conversation — chat_id is not a routing key here.
-        await self._upload_and_send(kind, payload, caption)
+        await self._upload_and_send(kind, payload, caption, None, filename, mime_type)
 
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         await self._client.send_message(_with_source({"text": text}, event))
 
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
-        *, event: str | None = None,
+        *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        await self._upload_and_send(kind, payload, caption, event)
+        await self._upload_and_send(kind, payload, caption, event, filename, mime_type)
 
     async def _upload_and_send(
-        self, kind: str, payload: bytes, caption: str | None, event: str | None = None
+        self, kind: str, payload: bytes, caption: str | None, event: str | None = None,
+        filename: str | None = None, mime_type: str | None = None,
     ) -> None:
-        # Raises NotImplementedError for an unrepresentable kind — before any
-        # upload — so the Outbox reports a failed send with nothing half-sent.
-        filename, mime_type = _upload_meta(kind, payload)
-        # Images carry dimensions + a blur-up placeholder; other kinds carry none.
-        meta = _image_metadata(payload) if kind == "image" else {}
+        filename, mime_type = _upload_meta(kind, payload, filename, mime_type)
+        # A full-size photo's decode takes long enough to stall the shared loop.
+        meta = await asyncio.to_thread(_upload_metadata, kind, mime_type, payload)
         att_id = await self._client.upload_attachment(
             payload, filename=filename, mime_type=mime_type, **meta
         )

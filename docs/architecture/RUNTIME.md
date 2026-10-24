@@ -33,7 +33,7 @@ Mirrors OpenClaw's "built-ins always available + skills allowlisted on demand" p
 
 ### Tier 1 — Core tools (always bound)
 
-A small set (~9 tools) used in nearly every conversation. Full JSON schemas are always in the prompt; the cost is fixed and cheap.
+A small set (~10 tools) used in nearly every conversation. Full JSON schemas are always in the prompt; the cost is fixed and cheap.
 
 | Module (`tools/core/`) | Tools | Notes |
 |---|---|---|
@@ -41,6 +41,7 @@ A small set (~9 tools) used in nearly every conversation. Full JSON schemas are 
 | `history.py` | `search_history` | Read-only recall over the episode store: conversation, tool results, sent notifications, heartbeat activity ([MEMORY.md](MEMORY.md) "Episode store"). |
 | `scheduling.py` | `manage_trigger` | create / list / cancel one-off reminders and wakes (see [TRIGGERS.md](TRIGGERS.md)). |
 | `activate_skill.py` | `activate_skill` | The meta-tool that exposes Tier 2. Skills leave by the idle reset, not by a tool. |
+| `files.py` | `open_file` | Opens a stored file by id: text a page at a time, media returned as a file result (below), with the file's written record; a file no longer stored is read from its record. Core because file markers appear in ordinary turns. |
 
 ### Tier 2 — Skills (advertised compactly, activated on demand)
 
@@ -54,6 +55,7 @@ Tools grouped by **namespace**. A namespace is a skill — and a namespace may b
 | `media/prowlarr` | `tools/media/prowlarr/` | Indexer search: `search_prowlarr`. |
 | `media/jellyseerr` | `tools/media/jellyseerr/` | Requests: `search_jellyseerr`, `get_jellyseerr_requests`, `request_media`. |
 | `media/system` | `tools/media/system/` | Stack health / overview: `get_library_overview`, `get_media_system_health`. |
+| `files` | `tools/files/` | The stored files as a library: `find_files` (names, arrival messages, records; trigram search, so Hebrew words match with a prefix attached), `send_file` (a stored file, by id, to the turn's channel), `delete_file` ⚠ (every copy of the same bytes; shows where each is used). Opening is the core `open_file`. |
 | `web` | `tools/web/` | `web_search`, `fetch_url`. Grouped deliberately: search bound without fetch is what made a turn search 14 times for a URL it could not look up (#7). |
 | `fitness` | `tools/fitness/` | Arbox + training: `manage_fitness_plan`, `fetch_upcoming_arbox_classes`, `fetch_weekly_gym_schedule`, `sync_arbox_attendance`, `log_workout`, `log_exercise_stats`, `log_cardio_stats`, `log_wod_result`, `query_exercise_history`, `get_today_workout_id`, `get_weekly_fitness_summary`, `get_adherence_report`, `query_fitness_db` (read-only ad-hoc SQL). |
 
@@ -221,7 +223,7 @@ without an ack sends the owner a failure notice ([HEARTBEAT.md](HEARTBEAT.md)).
 
 ### `activate_skill` (`tools/core/activate_skill.py`)
 
-The only tool whose return value mutates state. It returns a sentinel dict the `tool_node` interprets; every other tool returns a plain string. There is no deactivate tool: the model called one 2 times in three months against 90 activations, and the idle reset replaced it.
+The only tool whose return value mutates state. It returns a sentinel dict the `tool_node` interprets; every other tool returns a plain string or a file result. There is no deactivate tool: the model called one 2 times in three months against 90 activations, and the idle reset replaced it.
 
 ```python
 @tool
@@ -234,6 +236,16 @@ def activate_skill(namespaces: list[str]) -> dict:
 ```
 
 Unknown namespaces are reported back in `content` (the LLM is told what *is* available) and never silently activated.
+
+### File results (`files.model_input.ToolFiles`)
+
+Any tool may return text plus stored files instead of a plain string:
+`ToolFiles(text, files=[FileRecord, ...])`. The tool node builds the ToolMessage from the
+text and each file's blocks, through the same `content_blocks` code inbound files use
+(images, audio, video and PDFs inline; a text file's first page). The next model call sees
+the files; the reducer then strips them, leaving a plain-string result of the text and the
+files' markers. A tool that obtains a new file saves it in the store first, so everything it
+returns has an id. Telemetry counts the result's text, not its blocks.
 
 ### Tool registration (`tools/registry.py`)
 

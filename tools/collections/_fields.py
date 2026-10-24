@@ -9,7 +9,7 @@ import re
 from datetime import date
 from urllib.parse import urlparse
 
-TYPES = ("text", "url", "number", "money", "date", "rating", "choice", "tags")
+TYPES = ("text", "url", "number", "money", "date", "rating", "choice", "tags", "file")
 
 # Core item columns: a custom field by one of these names would shadow them.
 RESERVED = frozenset({
@@ -179,9 +179,21 @@ def _tags(field, value):
     return out or None
 
 
+def _file(field, value):
+    from files import store
+
+    rec = store.get(str(value))
+    if rec is None:
+        raise FieldError(f"{field['name']}: no stored file {value!r}. Give a file id "
+                         "(the `file:…` in its marker).")
+    if rec.state == "deleted":
+        raise FieldError(f"{field['name']}: {rec.id} was deleted.")
+    return rec.id
+
+
 _NORMALIZERS = {
     "text": _text, "url": _url, "number": _number, "money": _money,
-    "date": _date, "rating": _rating, "choice": _choice, "tags": _tags,
+    "date": _date, "rating": _rating, "choice": _choice, "tags": _tags, "file": _file,
 }
 
 _HINTS = {
@@ -194,6 +206,7 @@ _HINTS = {
     "rating": "Give a whole number from 1 to 5.",
     "choice": "Give one of the options.",
     "tags": "Give a list of strings (or one comma-separated string).",
+    "file": "Give a file id (the `file:…` in its marker).",
 }
 
 
@@ -208,4 +221,9 @@ def render(field: dict, value) -> str:
         return f"{value}/5"
     if t == "tags":
         return ", ".join(value)
+    if t == "file":
+        from files import store
+
+        rec = store.get(value)
+        return rec.marker() if rec else str(value)
     return str(value)

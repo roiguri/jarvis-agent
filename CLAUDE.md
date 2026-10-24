@@ -51,6 +51,9 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── observability/         # Per-turn LLM telemetry (telemetry.py, usage.py) — app-layer infra, NOT an agent tool
 ├── episodes/              # The episode store: everything that happened, recorded by code; search_history
 │                          #   and the today view read it (see docs/architecture/MEMORY.md "Episode store")
+├── files/                 # The file store: every stored file by id — bytes in jarvis_files/, index in
+│                          #   jarvis_data/files/; a background worker writes each file's record
+│                          #   (see docs/architecture/GATEWAY.md "Storage")
 ├── scripts/               # Dev/ops entry points: trace.py (per-turn timeline), ci/ (guards), jrestart*.sh, check_env.sh
 ├── tests/                 # pytest suite (CI-required): conftest.py sets a scratch JARVIS_ROOT before any import;
 │                          #   fakes.py holds the shared fakes; a channel's own tests live in tests/channels/<channel>/;
@@ -80,16 +83,18 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 │                                   #   180-day, app-only (observability/), agent never reads
 ├── episodes/episodes.sqlite        # episode store: every message, tool call/result, send; kept forever;
 │                                   #   read via search_history and the today view
+├── files/files.sqlite              # file store index: one row per stored file, derived text, search chunks
 ├── dream/state.json                # the morning job's last run date (catch-up after a restart)
 ├── web/tmp/                        # fetch_url's video downloads — one temp dir per call, removed
 │                                   #   after it; leftovers older than an hour swept on next use
 └── logs/
     └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
 
-/app/jarvis_code/gateway/channels/telegram/media_cache/   # Channel-owned media blobs (gitignored;
-                                                 #   absolute paths from gateway/channels/telegram/media_cache.py)
-/app/jarvis_code/gateway/channels/jarvis_app/media_cache/ # jarvis-app channel's own media blobs (gitignored;
-                                                 #   same channel-owned pattern, filenames embed the att_ id)
+/app/jarvis_files/ab/cd/<sha256>   # file store bytes, named by content hash; outside both state trees
+                                   #   (never in deploy snapshots — the Proxmox backup covers them)
+
+/app/jarvis_code/gateway/channels/*/media_cache/   # the channels' old media caches: no longer written,
+                                                 #   imported into the file store at startup (removal: #185)
 
 /app/secrets/.env          # API keys and tokens — DO NOT READ THIS FILE
 ```
@@ -107,7 +112,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 
 - Changed only by **code/deploy** (prompt, rules) → `/app/jarvis_code/prompts/` (version-controlled, outside the memory sandbox).
 - Changed only by **tools**, never `read_memory`'d (opaque DBs, append-only logs, code-managed JSON) → `/app/jarvis_data/<tool>/`.
-- **Gateway artifacts** (Telegram blobs) → a channel-owned cache inside that channel's gateway dir; the channel hands core/agent an absolute path and they never name a channel.
+- **Files** (inbound media, fetched or sent files) → the file store (`files/`): bytes in `jarvis_files/`, index in `jarvis_data/files/`, everything else holds the file's id. Channels hand core the bytes and never store anything; core never names a channel.
 - Sole exception: `threads.sqlite*` — LangGraph owns the path and can't relocate, so it stays in `jarvis_memory/`, deny-listed from the memory tools.
 
 ---

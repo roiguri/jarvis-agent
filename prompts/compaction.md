@@ -14,3 +14,4 @@ Rules:
 8. Keep quotes in the language Roi used.
 9. Reminders and scheduled wakes are tracked elsewhere; do not list them as open requests.
 10. Empty lists are valid.
+11. A file appears as a marker like [file:k7m2q9xd · image · photo.jpg]. When a fact or request involves a file, keep its file: id next to it, so Jarvis can open the file later.

@@ -7,6 +7,8 @@ import threading
 from langchain_core.tools import tool
 
 import config
+from files import ids as file_ids
+from files import references
 from tools.registry import tool_register
 
 # Serializes concurrent memory writes. Jarvis's racing writers are the user turn
@@ -312,3 +314,19 @@ def _exec_delete_memory(path: str, filename: str) -> str:
         return f"'{filename}' removed from disk."
     except OSError as e:
         return f"Delete failed: {e}"
+
+
+@references.holder("memory", strength="strong")
+def memory_files() -> set[str]:
+    """File ids written into memory files and heartbeat notes, which keep them.
+    Daily logs only mention files: they are written from the day's chat and kept
+    forever, so counting them would keep every file they name forever."""
+    found: set[str] = set()
+    for root, dirs, names in os.walk(config.MEMORY_DIR):
+        if root == config.MEMORY_DIR and "daily" in dirs:
+            dirs.remove("daily")
+        for name in names:
+            if name.endswith((".txt", ".md")):
+                with open(os.path.join(root, name), encoding="utf-8", errors="replace") as f:
+                    found |= file_ids.find_ids(f.read())
+    return found

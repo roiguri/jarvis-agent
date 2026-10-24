@@ -1,0 +1,87 @@
+[
+  {
+    "destructive": true,
+    "name": "delete_file",
+    "schema": {
+      "description": "Permanently delete stored files, by id, after the owner confirms. Other\n    copies of the same file are deleted with it, and the owner is shown where\n    each is used. Their markers then read as deleted.\n\n    Args:\n        file_ids: the ids to delete (the `file:…` in their markers).",
+      "name": "delete_file",
+      "parameters": {
+        "properties": {
+          "file_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "file_ids"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "find_files",
+    "schema": {
+      "description": "Find stored files: photos, voice notes, videos, documents and text files\n    the owner sent, and files you sent. Searches their names, the messages they\n    came with, and what was recorded of them (descriptions, transcripts,\n    document text). Each result starts with the file's marker; use its id with\n    open_file, send_file or a collection's file field.\n\n    Args:\n        query: plain words, any language. Empty lists the newest files.\n        kind: optional: image, video, audio, document, text or file.\n        source: optional: where it came from, as results show it.\n        since: optional. '2026-05-08' = start of that Israel day; or a full\n            ISO 8601 timestamp with a UTC offset.\n        until: optional, same formats; a plain date includes that whole day.\n        limit: max files (up to 30).",
+      "name": "find_files",
+      "parameters": {
+        "properties": {
+          "kind": {
+            "default": "",
+            "type": "string"
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer"
+          },
+          "query": {
+            "default": "",
+            "type": "string"
+          },
+          "since": {
+            "default": "",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "type": "string"
+          },
+          "until": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "send_file",
+    "schema": {
+      "description": "Send a stored file to the owner, by its id (the `file:…` in its marker).\n\n    Args:\n        file_id: the file's id.\n        caption: optional text sent with it.",
+      "name": "send_file",
+      "parameters": {
+        "properties": {
+          "caption": {
+            "default": "",
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

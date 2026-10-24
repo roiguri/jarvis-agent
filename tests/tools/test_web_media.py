@@ -158,7 +158,7 @@ def test_reel_comes_back_labelled_from_metadata(fake_run, fake_model):
     out = read(REEL)
     assert "Instagram · @homemade_style_recipe (Homemade Recipe) · posted 2026-10-23" in out
     assert "Caption: SPICY PEANUT BUTTER RAMEN" in out
-    assert "the video itself is not kept" in out
+    assert "[Video described by a model — kept as [file:" in out
     assert RECORD in out
     [llm] = fake_model.instances
     assert llm.kwargs["thinking_level"] == "low"
@@ -305,7 +305,8 @@ def fake_page(monkeypatch):
     seen = []
 
     def install(page):
-        def read_page(url):
+        def read_page(url, *, keep=True):
+            assert keep is False, "a YouTube page is never stored"
             seen.append(url)
             return (page, f"Source: {url}\n\n{page}") if page else (None, "Could not read")
         monkeypatch.setattr(fetch, "_read_page", read_page)
@@ -382,3 +383,41 @@ def test_youtube_full_page_and_record_fit_without_a_middle_cut(fake_page, fake_m
     fake_model.behaviour = ("w" * 2400, "STOP")  # ~400 words
     out = read(KENJI)
     assert "truncated" not in out.replace("[…page truncated]", ""), "no head+tail cut"
+
+
+# --- The video is kept ----------------------------------------------------------------
+
+def _kept():
+    from files import index, store
+    return [store.get(r["id"]) for r in index.rows("SELECT id FROM files WHERE source = 'web'")]
+
+
+def test_the_video_is_kept_with_its_record_and_never_described_twice(fake_run, fake_model):
+    from files import index, store
+
+    fake_run(FakeRun(info=IG_INFO))
+    out = read(REEL)
+    rec = next(r for r in _kept() if r.id in out)
+    assert rec.caption.startswith("SPICY PEANUT BUTTER RAMEN")
+    assert rec.origin["poster"] == "@homemade_style_recipe (Homemade Recipe)"
+    assert rec.origin["url"].startswith("https://www.instagram.com/reel/")
+    assert rec.origin["posted"] == "2026-10-23"
+    from tools.core.files import open_file
+    about = open_file.invoke({"file_id": rec.id}).text
+    assert ("source: web, from https://www.instagram.com/reel/" in about
+            and "posted by @homemade_style_recipe (Homemade Recipe), on 2026-10-23" in about)
+    (derived,) = store.get_derived(rec.id)
+    assert (derived["kind"], derived["version"]) == ("description", "video-1")
+    assert derived["content"] == RECORD
+    assert not index.rows("SELECT 1 FROM jobs WHERE file_id = ?", (rec.id,)), "no second call"
+
+
+def test_an_undescribed_video_is_kept_for_the_worker(fake_run, fake_model):
+    from files import index
+
+    fake_run(FakeRun(info=IG_INFO))
+    fake_model.behaviour = TimeoutError("deadline")
+    out = read(REEL)
+    rec = next(r for r in _kept() if r.id in out)
+    assert "the video is kept as [file:" in out
+    assert index.rows("SELECT 1 FROM jobs WHERE file_id = ?", (rec.id,)), "the worker records it"

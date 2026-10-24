@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PROD_MARKERS = ("/app/jarvis_memory", "/app/jarvis_data")
+PROD_MARKERS = ("/app/jarvis_memory", "/app/jarvis_data", "/app/jarvis_files")
 
 
 def _scan_for_leaks() -> list[str]:
@@ -68,6 +68,7 @@ def main() -> int:
         d = config.derive("/tmp/x/")
         assert d["INSTANCE"] == "x", d
         assert d["MEMORY_DIR"] == "/tmp/x/jarvis_memory", d
+        assert d["FILES_DIR"] == "/tmp/x/jarvis_files", d
 
         import main  # noqa: F401 — imports the whole app graph, populating sys.modules
 

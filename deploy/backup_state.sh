@@ -4,7 +4,7 @@
 # One script, three call sites:
 #   backup_state.sh <label>              snapshot → $ROOT/backups/state-<label>-<UTC-ts>.tar.gz
 #   backup_state.sh --restore <tarball>  stop service, move current trees aside, unpack, hand off restart
-#   backup_state.sh --prune [N]          keep newest N (default 10) + every deploy-tag-keyed tarball; drop the rest
+#   backup_state.sh --prune [N] [--dry-run]  keep newest N (default 10) + the last 5 deploys' tarballs; drop the rest
 #
 # The state trees are jarvis_memory (including the checkpointer threads.sqlite) and
 # jarvis_data, both rooted at ${JARVIS_ROOT:-/app}. State backup covers everything the
@@ -29,6 +29,7 @@ BACKUP_DIR="$ROOT/backups"
 CODE_DIR="$ROOT/jarvis_code"
 SERVICE="${JARVIS_SERVICE:-jarvis.service}"
 KEEP_DEFAULT=10
+KEEP_DEPLOYS=5   # rollback floor: the newest tarballs keyed to a deploy tag that still exists
 
 ts()  { date -u +%Y%m%d-%H%M%SZ; }
 log() { echo "backup_state: $*" >&2; }
@@ -39,7 +40,9 @@ usage() {
 usage:
   backup_state.sh <label>              snapshot memory+data → $BACKUP_DIR/state-<label>-<ts>.tar.gz
   backup_state.sh --restore <tarball>  stop $SERVICE, move current trees aside, unpack, hand off restart
-  backup_state.sh --prune [N]          keep newest N (default $KEEP_DEFAULT) + every deploy-tagged tarball
+  backup_state.sh --prune [N] [--dry-run]
+                                       keep newest N (default $KEEP_DEFAULT) + the last $KEEP_DEPLOYS deploys' tarballs;
+                                       --dry-run lists what would go and deletes nothing
 
 State root: $ROOT   (override with JARVIS_ROOT=... ; service with JARVIS_SERVICE=...)
 EOF
@@ -62,7 +65,8 @@ cmd_backup() {
     # Written on every turn, so these go in as SQLite online-backup copies
     # (consistent while the service runs) in place of the live files.
     local stores=() rel
-    for rel in jarvis_data/observability/telemetry.sqlite jarvis_data/episodes/episodes.sqlite; do
+    for rel in jarvis_data/observability/telemetry.sqlite jarvis_data/episodes/episodes.sqlite \
+               jarvis_data/files/files.sqlite; do
         [[ -f "$ROOT/$rel" ]] && stores+=("$rel")
     done
     if (( ${#stores[@]} )); then
@@ -127,11 +131,18 @@ cmd_restore() {
 }
 
 cmd_prune() {
-    local keep="${1:-$KEEP_DEFAULT}"
-    [[ "$keep" =~ ^[0-9]+$ ]] || die "prune count must be an integer (got: '$keep')"
+    local keep="$KEEP_DEFAULT" dry=0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run) dry=1 ;;
+            *) [[ "$arg" =~ ^[0-9]+$ ]] || die "prune count must be an integer (got: '$arg')"; keep="$arg" ;;
+        esac
+    done
     [[ -d "$BACKUP_DIR" ]] || { log "no backup dir at $BACKUP_DIR — nothing to prune"; return 0; }
 
-    # deploy-* tags that still exist → their keyed tarballs are always kept (rollback floor).
+    # deploy-* tags that still exist: the newest KEEP_DEPLOYS tarballs keyed to one are kept,
+    # so rollback.sh can auto-pick the matching state for the last few deploys. Older deploys
+    # fall back to the container backup (rollback.sh lists what is left when none matches).
     local tags=""
     if git -C "$CODE_DIR" rev-parse >/dev/null 2>&1; then
         tags="$(git -C "$CODE_DIR" tag -l 'deploy-*')"
@@ -141,33 +152,42 @@ cmd_prune() {
     mapfile -t all < <(ls -1t "$BACKUP_DIR"/state-*.tar.gz 2>/dev/null || true)
     [[ ${#all[@]} -gt 0 ]] || { log "no state tarballs to prune"; return 0; }
 
-    # Keep set = (newest N by position) ∪ (every deploy-tag-keyed tarball). Additive:
-    # a tag-keyed tarball older than N still survives; the first N survive regardless.
-    local idx=0 kept=0 removed=0 f base reason tag
+    # Keep set = (newest N by position) ∪ (newest KEEP_DEPLOYS deploy-tag-keyed tarballs).
+    local idx=0 kept=0 removed=0 deploys=0 f base reason tag is_deploy
     for f in "${all[@]}"; do
         base="$(basename "$f")"
-        reason=""
-        if [[ $idx -lt $keep ]]; then
-            reason="recent"
-        elif [[ -n "$tags" ]]; then
+        reason="" is_deploy=0
+        if [[ -n "$tags" ]]; then
             while IFS= read -r tag; do
                 [[ -n "$tag" ]] || continue
-                if [[ "$base" == state-"$tag"-*.tar.gz ]]; then reason="tag:$tag"; break; fi
+                if [[ "$base" == state-"$tag"-*.tar.gz ]]; then is_deploy=1; break; fi
             done <<<"$tags"
         fi
+        if [[ $idx -lt $keep ]]; then
+            reason="recent"
+        elif [[ $is_deploy -eq 1 && $deploys -lt $KEEP_DEPLOYS ]]; then
+            reason="deploy"
+        fi
+        [[ $is_deploy -eq 1 ]] && deploys=$((deploys + 1))
         if [[ -n "$reason" ]]; then
             kept=$((kept + 1))
+        elif [[ $dry -eq 1 ]]; then
+            log "would prune $base"; removed=$((removed + 1))
         else
             rm -f "$f"; log "pruned $base"; removed=$((removed + 1))
         fi
         idx=$((idx + 1))
     done
-    log "kept $kept, pruned $removed"
+    if [[ $dry -eq 1 ]]; then
+        log "dry run: would keep $kept, prune $removed — nothing deleted"
+    else
+        log "kept $kept, pruned $removed"
+    fi
 }
 
 case "${1:-}" in
     --restore)    shift; cmd_restore "${1:-}" ;;
-    --prune)      shift; cmd_prune   "${1:-}" ;;
+    --prune)      shift; cmd_prune   "$@" ;;
     --help | -h | "") usage ;;
     --*)          die "unknown option: $1  (see --help)" ;;
     *)            cmd_backup "$1" ;;

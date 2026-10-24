@@ -8,7 +8,7 @@ This layer answers three coupled questions:
 2. **What is genuine agent memory** versus tool-opaque state versus dev-controlled prompt content versus channel artifacts?
 3. **How is the system prompt assembled** from files, per turn, per scope?
 
-It owns the `/app/jarvis_memory/` surface, the `/app/jarvis_data/` and `/app/jarvis_code/prompts/` boundaries, the memory-tool sandbox, and `build_system_prompt`. It does **not** own the skill block of the prompt (that is the registry's — see [RUNTIME.md](RUNTIME.md)) nor the channel-owned media cache (see [GATEWAY.md](GATEWAY.md)); it references both.
+It owns the `/app/jarvis_memory/` surface, the `/app/jarvis_data/` and `/app/jarvis_code/prompts/` boundaries, the memory-tool sandbox, and `build_system_prompt`. It does **not** own the skill block of the prompt (that is the registry's — see [RUNTIME.md](RUNTIME.md)) nor how files reach it from a channel (see [GATEWAY.md](GATEWAY.md)); it references both.
 
 ---
 
@@ -25,7 +25,7 @@ This is the single rule that governs every file's home. Apply it by asking *who 
 | The **agent**, via `write_memory`/`delete_memory` (markdown it also reads back) | `/app/jarvis_memory/` | **Yes** — this *is* the surface |
 | **Code / deploy** only (prompt, operating rules) | `/app/jarvis_code/prompts/` | No — version-controlled, outside the sandbox |
 | **Tools** only, never `read_memory`'d (opaque DBs, append-only logs, code-managed JSON) | `/app/jarvis_data/<tool>/` | No — opaque to the agent |
-| A **channel** (inbound media blobs) | the channel's own gateway dir | No — channel-owned ([GATEWAY.md](GATEWAY.md)) |
+| The **file store** (`files/`), for every stored file's bytes | `/app/jarvis_files/` (index in `jarvis_data/files/`) | No — reached only by id, through the store |
 
 **Sole exception:** `threads.sqlite(+-wal,-shm)` physically lives in `/app/jarvis_memory/` because LangGraph's `SqliteSaver` owns that path and it cannot be relocated. It is therefore **deny-listed** from the memory tools (`_get_safe_path` rejects it) so it never appears in `list_memory` or is readable/writable as "memory". The checkpointer mechanism itself is owned by [RUNTIME.md](RUNTIME.md) (State); this layer only carves out the exception.
 
@@ -56,9 +56,12 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── fitness/fitness.sqlite
 ├── triggers/triggers.json # code-owned: pending triggers, gate state, task last_run stamps (gate input — see HEARTBEAT.md doc)
 ├── episodes/episodes.sqlite  # the episode store — everything that happened (see "Episode store")
+├── files/files.sqlite     # the file store's index: one row per stored file, its derived text, search chunks
 └── logs/{chat_history,notifications}.jsonl
 
-/app/jarvis_code/gateway/*/media_cache/   # channel-owned (see GATEWAY.md)
+/app/jarvis_code/gateway/*/media_cache/   # the channels' old caches, no longer written (removal: #185)
+/app/jarvis_files/ab/cd/<sha256>          # the file store's bytes, named by content; outside both
+                                          #   state trees, so deploy snapshots never copy them
 ```
 
 ---
@@ -172,8 +175,9 @@ result), `source` (`chat`, `heartbeat`, `wake`, `slash_command`, `outbox`, `impo
 
 **When rows are written** (`episodes/record.py`; every write is guarded, a failure is logged and
 never fails the turn):
-- turn start (`ask_jarvis`): the turn's input — the owner's raw message (attachments as
-  `[attached: path]`), a tick or wake instruction, or a confirmation result. Written first, so a
+- turn start (`ask_jarvis`): the turn's input — the owner's raw message (each file as its
+  marker, `[file:… · kind · …]`; rows from before the file store say `[attached: path]`), a tick
+  or wake instruction, or a confirmation result. Written first, so a
   turn that crashes keeps it. The forwarded-notification block is not written: each delivered send
   already has its own row.
 - turn end, from the final thread state: every model step of this turn — reply text, each tool
@@ -323,7 +327,7 @@ When introducing new persistent state, ask *who mutates it* and place by the pri
 1. **Agent-mutable markdown the agent reads back?** → `/app/jarvis_memory/`. It will appear in `list_memory`; add a protection entry only if the system requires it to exist.
 2. **A tool's opaque store the agent never `read_memory`'s?** → `/app/jarvis_data/<tool>/`, hardcoded path, tool ensures `os.makedirs(..., exist_ok=True)`. It is unreachable by memory tools automatically.
 3. **Prompt/rule content changed only by deploy?** → `/app/jarvis_code/prompts/`. Unreachable by the agent by construction; wire it into `build_system_prompt` via `load_or_blank`.
-4. **A channel's inbound artifact?** → not this layer — see [GATEWAY.md](GATEWAY.md).
+4. **A file's bytes** (an image, a document, a fetched video)? → the file store (`files.store.add`), which returns an id; keep the id, never a path.
 
 Relocations out of `jarvis_memory/` also need a one-time `mv` of the live data at deploy and removal of any now-defunct protection entry.
 
@@ -343,4 +347,4 @@ Relocations out of `jarvis_memory/` also need a one-time `mv` of the live data a
 ## See Also
 
 - [RUNTIME.md](RUNTIME.md) — the agent runtime & tool registry; owns the skill block slotted into the prompt this layer assembles.
-- [GATEWAY.md](GATEWAY.md) — the channel boundary; owns the media cache this layer's placement principle points to.
+- [GATEWAY.md](GATEWAY.md) — the channel boundary; how inbound files reach the file store.

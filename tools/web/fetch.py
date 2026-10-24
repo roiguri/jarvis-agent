@@ -12,10 +12,12 @@ extractors — any other URL, a home-network address included, still goes only
 to providers.
 """
 import os
+import re
 from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
+from files import attachments, model_input
 from tools.registry import tool_register
 from tools.web import media
 
@@ -27,12 +29,33 @@ _HEAD_CHARS = int(MAX_CHARS * 0.70)
 _TAIL_CHARS = int(MAX_CHARS * 0.20)
 
 
+def _long_page(text: str, url: str) -> str:
+    """A page that fits, whole. A longer one is kept as a text file and shown as
+    its first page, with how to read on; if it can't be kept, head and tail."""
+    if len(text) <= MAX_CHARS:
+        return text
+    rec = attachments.save_fetched(text.encode("utf-8"), source="web",
+                                   filename=_page_filename(url), origin={"url": url},
+                                   mime_hint="text/markdown")
+    if rec is None:
+        return _truncate(text)
+    return (f"The full text is saved as {rec.marker()}.\n"
+            f"{model_input.page(text, rec.id, 0, MAX_CHARS)}")
+
+
+def _page_filename(url: str) -> str:
+    """A readable name from the address: host, path and query, as a .md file."""
+    parsed = urlparse(url)
+    slug = re.sub(r"[^\w.-]+", "-", f"{parsed.netloc}{parsed.path}?{parsed.query}").strip("-.")
+    return f"{slug[:100] or 'page'}.md"
+
+
 def _truncate(text: str) -> str:
     """Head + tail, so an article's conclusion and a thread's replies survive.
 
-    The marker deliberately says "this is all that was read" rather than
-    pointing at a fuller copy: nothing is written to disk here, so truncation
-    is terminal and the text must not imply the rest is retrievable.
+    Used where there is no fuller copy (a video's record, or a long page that
+    could not be kept), so the marker says "this is all that was read" rather
+    than implying the rest is retrievable.
     """
     if len(text) <= MAX_CHARS:
         return text
@@ -76,7 +99,7 @@ def fetch_url(url: str) -> str:
     try:
         if platform == "YouTube":
             canonical = media.youtube_url(url)
-            page, _ = _read_page(canonical)
+            page, _ = _read_page(canonical, keep=False)
             return _truncate(media.read_youtube(canonical, page))
         if platform:
             return _truncate(media.read(url, platform))
@@ -89,8 +112,9 @@ def fetch_url(url: str) -> str:
     return _read_page(url)[1]
 
 
-def _read_page(url: str) -> tuple[str | None, str]:
-    """Read a page through Tavily: (its text or None, the result for the model)."""
+def _read_page(url: str, *, keep: bool = True) -> tuple[str | None, str]:
+    """Read a page through Tavily: (its text or None, the result for the model).
+    `keep`: store a long page as a file (False when only its text is wanted)."""
     try:
         from tavily import TavilyClient
         from tavily.errors import (
@@ -126,7 +150,8 @@ def _read_page(url: str) -> tuple[str | None, str]:
             )
 
         final_url = result.get("url") or url
-        return text, f"Source: {final_url}\n\n{_truncate(text)}"
+        body = _long_page(text, final_url) if keep else _truncate(text)
+        return text, f"Source: {final_url}\n\n{body}"
 
     except UsageLimitExceededError:
         return None, (
