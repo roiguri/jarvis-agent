@@ -1,6 +1,6 @@
 # Cookbook — Jarvis reads and saves recipes in the family cookbook
 
-**Date:** 2026-10-24 · **Status:** 🔧 built, staging-checked (2026-10-24) · **Branch:** `feat/cookbook`
+**Date:** 2026-10-24 · **Status:** ✅ complete, archived 2026-10-24 — C1–C4 shipped; prod needs the owner's cookbook token · **Branch:** `feat/cookbook`
 **Goal:** Jarvis can find and read recipes in the family cookbook (the `roiguri/cookbook` site)
 and, after talking a recipe through with the owner, save it there: from a reel, a page, a photo,
 a voice note or plain chat, with its photos and step video.
