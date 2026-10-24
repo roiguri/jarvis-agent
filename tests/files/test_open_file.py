@@ -64,7 +64,7 @@ def test_open_file_returns_media_as_a_file_result():
     result = opened(rec.id)
     assert isinstance(result, model_input.ToolFiles) and result.files == [rec]
     assert "source: telegram" in result.text and "With the message: what plant is this?" in result.text
-    assert "Record (description): A monstera in a white pot." in result.text
+    assert "Record (description):\n<file record>\nA monstera in a white pot.\n</file record>" in result.text
 
 
 def test_a_deleted_file_says_so_and_keeps_nothing():

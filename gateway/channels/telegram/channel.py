@@ -33,9 +33,16 @@ def _truncate_markdown(text: str, limit: int) -> str:
     return text[:limit].rstrip() + _TRUNCATION_TAIL
 
 
-def _send_method(kind: str, mime_type: str | None) -> tuple[str, str]:
+# What Telegram takes as a photo; any other image goes as a document.
+_PHOTO_MIMES = {"image/jpeg", "image/png", "image/webp"}
+_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _send_method(kind: str, mime_type: str | None, size: int = 0) -> tuple[str, str]:
     """The Bot method and its payload argument for a file of `kind`."""
     if kind == "image":
+        if (mime_type and mime_type not in _PHOTO_MIMES) or size > _PHOTO_MAX_BYTES:
+            return "send_document", "document"
         return "send_photo", "photo"
     if kind == "video":
         return "send_video", "video"
@@ -89,10 +96,13 @@ class TelegramChannel(Channel):
         """One file, as the Telegram message type that fits its kind: a photo, a video,
         a voice note (ogg audio), an audio file, or else a document with its name."""
         bot = self._require_bot()
-        method, field = _send_method(kind, mime_type)
+        method, field = _send_method(kind, mime_type, len(payload))
         send = getattr(bot, method)
         extra = {"filename": filename} if filename and method != "send_photo" else {}
-        extra["write_timeout"] = media_upload_timeout_s(len(payload))
+        # Telegram may take a while to answer a large upload it accepted: waiting
+        # only for the upload would report a delivered file as failed.
+        limit = media_upload_timeout_s(len(payload))
+        extra.update(write_timeout=limit, read_timeout=limit)
         raw_caption = _truncate_markdown(caption, _CAPTION_LIMIT) if caption else ""
         html = md_to_html(raw_caption) if raw_caption else None
         try:

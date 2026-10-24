@@ -6,9 +6,9 @@ holds right now:
     @references.holder("collections", strength="strong")
     def _collection_files() -> Iterable[str]: ...
 
-Strong holders (collections, reminders, owner-curated memory) keep a file alive.
-Weak holders (history, daily logs, heartbeat notes) only mention it: history is
-kept forever, so counting it would keep every file forever.
+Strong holders (collections, reminders, owner-curated memory, heartbeat notes)
+keep a file alive. Weak holders (history, daily logs) only mention it: they are
+kept forever, so counting them would keep every file forever.
 
 Answers are computed fresh from the holders' own data, so they can't drift. A
 holder that fails makes the whole scan fail: nothing may be cleaned up on a

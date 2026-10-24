@@ -26,7 +26,8 @@ def main() -> int:
           + ("  (LOW)" if report["low"] else ""))
     print(f"missing bytes : {len(report['missing'])}  {' '.join(report['missing'][:20])}")
     print(f"corrupt bytes : {len(report['corrupt'])}  {' '.join(report['corrupt'][:5])}")
-    print(f"unused bytes  : {len(report['unused'])} (the store collects these after a grace period)")
+    print(f"unused bytes  : {len(report['unused'])} (released; the store collects these after a grace period)")
+    print(f"unknown bytes : {len(report['unknown'])} (no record names them; kept — expected after a restore)")
     queue = worker.queue_status()
     print(f"records queued: {queue['queued']}, given up: {queue['given_up']}")
     for job in queue["given_up_jobs"][:10]:

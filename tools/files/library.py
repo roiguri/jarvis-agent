@@ -97,14 +97,16 @@ def delete_file(file_ids: list[str]) -> str:
 
     if not file_ids:
         return "Error: give at least one file id."
+    if len(file_ids) > _DELETE_MAX:
+        return f"Nothing deleted: at most {_DELETE_MAX} files at a time; you gave {len(file_ids)}."
     targets: dict[str, store.FileRecord] = {}
-    for raw in file_ids[:_DELETE_MAX]:
+    for raw in file_ids:
         rec = store.get(raw)
         if rec is None:
             return f"Nothing deleted: no file with id {raw!r}."
         if rec.state == "deleted":
             continue
-        for r in [rec, *store.sharing_bytes(rec.id)]:
+        for r in [rec, *store.sharing_bytes(rec.id, include_expired=True)]:
             targets.setdefault(r.id, r)
     if not targets:
         return "Nothing to delete: those files are already deleted."
@@ -113,7 +115,7 @@ def delete_file(file_ids: list[str]) -> str:
     except references.ReferenceScanFailed as e:
         return f"Nothing deleted: couldn't check where the files are used ({e})."
 
-    asked = {store.get(raw).id for raw in file_ids[:_DELETE_MAX]}
+    asked = {store.get(raw).id for raw in file_ids}
     lines = [f"delete {len(targets)} file{'s' if len(targets) != 1 else ''} permanently:"]
     for rec in targets.values():
         line = f"• {rec.marker()} — {_when(rec)}"

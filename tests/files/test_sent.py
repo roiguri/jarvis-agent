@@ -97,3 +97,14 @@ def test_the_drain_keeps_the_marker_of_a_long_caption():
     entry = block.split("\n", 1)[1]
     assert entry.endswith(rec.marker())
     assert len(entry) < pending_mirrors.ENTRY_CAP + 100
+
+
+
+def test_a_sent_file_keeps_its_name_and_type():
+    pdf = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+    outbox = Outbox(MediaChannel(), log_sink, save_sent)
+    assert asyncio.run(outbox.notify_owner_media("document", pdf, "lease", event=EVENT_MEDIA,
+                                                 filename="lease.pdf",
+                                                 mime_type="application/pdf")).ok
+    (rec,) = [store.get(r["id"]) for r in index.rows("SELECT id FROM files")]
+    assert (rec.filename, rec.kind) == ("lease.pdf", "document")

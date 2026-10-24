@@ -14,10 +14,11 @@ def test_telegram_sends_each_kind_as_its_own_message_type():
     class Bot:
         def __getattr__(self, method):
             async def send(**kw):
-                assert kw["write_timeout"] >= 10
+                assert kw["write_timeout"] >= 10 and kw["read_timeout"] == kw["write_timeout"]
                 calls.append((method, sorted(k for k in kw if k not in ("chat_id", "caption",
                                                                         "parse_mode",
-                                                                        "write_timeout"))))
+                                                                        "write_timeout",
+                                                                        "read_timeout"))))
             return send
 
     chan = TelegramChannel(owner_id=7)
@@ -123,3 +124,11 @@ def test_a_large_upload_gets_time_and_a_timeout_says_so():
         asyncio.run(client.upload_attachment(b"x" * 10 * 1024 * 1024, filename="v.mp4",
                                              mime_type="video/mp4"))
     assert seen[0]["write"] == 50.0 and seen[0]["connect"] == 10.0
+
+
+def test_telegram_sends_an_image_it_cant_take_as_a_photo_as_a_document():
+    from gateway.channels.telegram.channel import _send_method
+
+    assert _send_method("image", "image/jpeg", 1000)[0] == "send_photo"
+    assert _send_method("image", "image/heic", 1000)[0] == "send_document"
+    assert _send_method("image", "image/png", 11 * 1024 * 1024)[0] == "send_document"

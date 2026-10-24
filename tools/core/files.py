@@ -36,7 +36,7 @@ def _record_previews(rec: store.FileRecord) -> str:
         if len(content) > RECORD_PREVIEW_CHARS:
             content = (content[:RECORD_PREVIEW_CHARS]
                        + f" […cut; {len(content):,} characters in all]")
-        lines.append(f"Record ({derived['kind']}): {content}")
+        lines.append(f"Record ({derived['kind']}):\n<file record>\n{content}\n</file record>")
     return "\n".join(lines)
 
 

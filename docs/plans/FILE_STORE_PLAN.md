@@ -189,10 +189,12 @@ mention the file stay, and the confirmation says so.
   is a subset of it, so it isn't scanned separately). A new tool joins by adding its function.
   For one file's where-used, the episode store is queried through its full-text index, not
   scanned.
-- **Strong and weak.** Collections, reminders and owner-curated memory keep a file alive.
-  History, daily logs (`daily/`) and heartbeat notes only mention it — daily logs are written
-  from the day's chat and kept forever, so as strong references they would keep every file
-  mentioned that day alive forever. Without the distinction nothing could ever be cleaned up.
+- **Strong and weak.** Collections, reminders, owner-curated memory and heartbeat notes keep
+  a file alive (a note is a task's working state: a file it names is one the task tracks, and
+  the mention goes when the task drops it). History and daily logs (`daily/`) only mention it
+  — daily logs are written from the day's chat and kept forever, so as strong references they
+  would keep every file mentioned that day alive forever. Without the distinction nothing
+  could ever be cleaned up.
 - **Fail closed.** If any reference function errors, a sweep deletes nothing.
 - **Grace period.** Files younger than a few days are never swept.
 - **Trash first** for automatic cleanup; the owner's own delete is immediate after confirmation.
@@ -707,11 +709,29 @@ step) goes with them. Every `TODO(#185)` marks what to remove.
 - **Automatic look-again** — on replies to a file, if a need appears.
 - **External archives** (Immich, Paperless-ngx) — behind the store, if the owner wants one.
 
+## Review before merge (2026-10-24)
+
+`/code-review` with three parallel reviewers. Fixed: the collector removed bytes the index
+had no row for, so restoring an older index (or losing it) would have deleted every newer
+file at the next start; it now removes only bytes the index says were released, and
+`files_verify.py` reports the rest as unknown. Also fixed: state checks moved inside the
+write (a record finished after a delete is not written back; two state changes can't both
+pass); Telegram waits for its reply as long as for the upload, and sends an image it can't
+take as a photo (HEIC, over 10 MB) as a document; the app's image preview is computed off
+the event loop; record previews in `open_file` are tagged as file content; daily logs no
+longer count as using a file; `delete_file` refuses more than 20 ids rather than dropping
+some, and takes expired copies too; the Outbox keeps a sent file's name and type; a file's
+origin text is one flattened line. Left for #187: the legacy import can stop partway or
+duplicate one arrival after a crash mid-file.
+
 ## Open questions
 
-- Quota value and alert threshold.
-- Link-video volume (~5–15 MB each, all kept): watch growth after S7.
-- How long unused bytes wait before the collector deletes them.
-- Trimming long videos when shown again (a clip length and low frame rate). Needs the video's
-  duration, so a new dependency; inbound videos are not trimmed either. Decide at the end of
-  this plan, from cost seen in practice.
+Tracked in #187 (checks after the deploy, growth, small decisions), with links to #185, #186
+and jarvis-app#36.
+
+- **Decided at the end of the plan: no video trimming for now.** A 2-minute, 21 MB video costs
+  about 11k tokens per look, which is fine at reel lengths, and trimming needs the video's
+  duration (a new dependency). Revisit through #187 if long videos or repeated looks become
+  common; it shares the decoder decision in #186.
+- Quota value and alert threshold; how long unused bytes wait before collection; link-video
+  growth a month after the deploy: in #187.

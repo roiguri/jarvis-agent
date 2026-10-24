@@ -11,6 +11,7 @@ failed send (base.Channel.send_media contract) rather than mislabeling the blob.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -186,7 +187,8 @@ class JarvisAppChannel(Channel):
         filename: str | None = None, mime_type: str | None = None,
     ) -> None:
         filename, mime_type = _upload_meta(kind, payload, filename, mime_type)
-        meta = _upload_metadata(kind, mime_type, payload)
+        # A full-size photo's decode takes long enough to stall the shared loop.
+        meta = await asyncio.to_thread(_upload_metadata, kind, mime_type, payload)
         att_id = await self._client.upload_attachment(
             payload, filename=filename, mime_type=mime_type, **meta
         )

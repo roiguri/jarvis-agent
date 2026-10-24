@@ -5,6 +5,7 @@ import threading
 from datetime import timedelta
 
 import pytest
+from contextlib import closing
 
 import config
 from files import blobs, ids, index, references, store
@@ -319,3 +320,38 @@ def test_disk_status_and_verify():
     with open(blobs.path_of(rec.hash), "wb") as f:
         f.write(b"tampered")
     assert store.verify(check_hashes=True)["corrupt"] == [rec.hash]
+
+
+
+def test_a_restored_older_index_never_costs_the_newer_bytes(tmp_path, monkeypatch):
+    """A restore puts back an older index; bytes it doesn't know stay, and verify says so."""
+    kept = store.add(b"first file", source="t")
+    snapshot = tmp_path / "files.sqlite"
+    with closing(index.connect()) as con:
+        con.execute("VACUUM INTO ?", (str(snapshot),))
+    newer = store.add(b"arrived after the backup", source="t")
+    gone = store.add(b"deleted before the backup", source="t")
+    store.delete(gone.id, "owner")
+    shutil.copy(snapshot, index.INDEX_PATH)
+    for suffix in ("-wal", "-shm"):
+        if os.path.exists(index.INDEX_PATH + suffix):
+            os.unlink(index.INDEX_PATH + suffix)
+    assert store.collect_unused(grace_s=0) == []
+    assert blobs.exists(newer.hash) and blobs.exists(kept.hash)
+    report = store.verify()
+    assert newer.hash in report["unknown"] and gone.hash in report["unknown"]
+
+
+def test_released_bytes_are_still_collected():
+    rec = store.add(b"to be deleted", source="t")
+    store.delete(rec.id, "owner")
+    assert store.collect_unused(grace_s=0) == [rec.hash]
+
+
+def test_a_record_finished_after_a_delete_is_not_written_back():
+    rec = store.add(b"\xff\xd8\xff\xe0 photo", source="t")
+    store.delete(rec.id, "owner")
+    with pytest.raises(store.FileUnavailable):
+        with index.write() as con:
+            store._put_derived(con, rec.id, "description", "a photo", "m", "1")
+    assert store.get_derived(rec.id) == []

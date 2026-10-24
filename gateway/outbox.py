@@ -130,7 +130,8 @@ class Outbox:
         except Exception as e:
             logger.exception("Outbox: failed to send owner media (event=%s)", event)
             return SendOutcome(ok=False, error=str(e) or type(e).__name__)
-        saved = kept if kept is not None else await self._save(kind, payload, caption)
+        saved = kept if kept is not None else await self._save(kind, payload, caption,
+                                                               filename, mime_type)
         if saved is None:
             await self._log(event, caption or f"[{kind}]", metadata)
         else:
@@ -163,12 +164,14 @@ class Outbox:
         await self._log(event, text, metadata)
         return SendOutcome(ok=True)
 
-    async def _save(self, kind: str, payload: bytes,
-                    caption: str | None) -> tuple[str, str] | None:
+    async def _save(self, kind: str, payload: bytes, caption: str | None,
+                    filename: str | None = None,
+                    mime_type: str | None = None) -> tuple[str, str] | None:
         """Saving must never turn a delivered message into a reported failure."""
         if self._save_file is None:
             return None
-        attachment = {"kind": kind, "mime_type": "", "data": payload, "filename": None,
+        attachment = {"kind": kind, "mime_type": mime_type or "", "data": payload,
+                      "filename": filename,
                       "source": SENT_SOURCE, "origin_id": None}
         try:
             return await self._save_file(attachment, caption)

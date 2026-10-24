@@ -92,13 +92,16 @@ class FileRecord:
         """Where it came from, from what its source recorded: a URL, who posted it,
         when, how long. None when nothing was recorded (an owner's own file)."""
         o = self.origin or {}
-        bits = [f"from {o['url']}"] if o.get("url") else []
+
+        def flat(key):  # untrusted text from the source: one short line
+            return " ".join(str(o[key]).split())[:200]
+        bits = [f"from {flat('url')}"] if o.get("url") else []
         if o.get("poster"):
-            bits.append(f"posted by {o['poster']}")
+            bits.append(f"posted by {flat('poster')}")
         if o.get("posted"):
-            bits.append(f"on {o['posted']}")
+            bits.append(f"on {flat('posted')}")
         if o.get("duration"):
-            bits.append(f"length {o['duration']}")
+            bits.append(f"length {flat('duration')}")
         return ", ".join(bits) or None
 
     def marker(self) -> str:
@@ -273,14 +276,16 @@ def read_bytes(file_id: str) -> bytes:
         raise FileUnavailable(rec.id, "missing") from None
 
 
-def sharing_bytes(file_id: str) -> list[FileRecord]:
-    """Other records that point at the same bytes and still need them."""
+def sharing_bytes(file_id: str, *, include_expired: bool = False) -> list[FileRecord]:
+    """Other records that point at the same bytes and still need them; with
+    `include_expired`, also the copies whose bytes went but whose records stay."""
     rec = get(file_id)
     if rec is None:
         return []
+    states = ("available", "trash", "expired") if include_expired else ("available", "trash")
     found = index.rows(
-        "SELECT * FROM files WHERE hash = ? AND id != ? AND state IN ('available', 'trash')"
-        " ORDER BY created", (rec.hash, rec.id))
+        f"SELECT * FROM files WHERE hash = ? AND id != ? AND state IN ({','.join('?' * len(states))})"
+        " ORDER BY created", (rec.hash, rec.id, *states))
     return [_record(r) for r in found]
 
 
@@ -302,6 +307,11 @@ def put_derived(file_id: str, kind: str, content: str, *, producer: str, version
 def _put_derived(con, file_id: str, kind: str, content: str, producer: str, version: str) -> None:
     if kind == "meta":
         raise ValueError("'meta' is reserved")
+    # Checked inside the write: a delete confirmed while a record was being made
+    # must not get the record back.
+    row = con.execute("SELECT state FROM files WHERE id = ?", (file_id,)).fetchone()
+    if row is not None and row["state"] == "deleted":
+        raise FileUnavailable(file_id, "deleted")
     con.execute(
         "INSERT INTO derived (file_id, kind, producer, version, created, content)"
         " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(file_id, kind) DO UPDATE SET"
@@ -372,11 +382,12 @@ def _transition(file_id: str, to: str, *, reason: str | None) -> FileRecord:
     rec = get(file_id)
     if rec is None:
         raise LookupError(f"no such file: {file_id}")
-    stored = index.rows("SELECT state FROM files WHERE id = ?", (rec.id,))[0]["state"]
-    if to not in _TRANSITIONS[stored]:
-        raise ValueError(f"{rec.id} is {stored}; it can't become {to}")
     now = index.now_iso()
     with index.write() as con:
+        # Read and change in one write, so two changes at once can't both pass.
+        stored = con.execute("SELECT state FROM files WHERE id = ?", (rec.id,)).fetchone()["state"]
+        if to not in _TRANSITIONS[stored]:
+            raise ValueError(f"{rec.id} is {stored}; it can't become {to}")
         con.execute("UPDATE files SET state = ?, state_changed = ?, removed_reason = ?"
                     " WHERE id = ?", (to, now, reason, rec.id))
         if to == "deleted":
@@ -393,14 +404,17 @@ def _transition(file_id: str, to: str, *, reason: str | None) -> FileRecord:
 # ---------------------------------------------------------------------------
 
 def collect_unused(grace_s: float = UNUSED_GRACE_S) -> list[str]:
-    """Delete bytes no record needs that have been unused for `grace_s`, plus temp
-    files a crash left behind. Returns the hashes deleted."""
+    """Delete bytes the index knows were released (only deleted or expired records
+    point at them) that have been unused for `grace_s`, plus temp files a crash
+    left behind. Bytes the index has no record of at all are never deleted: after
+    a restore the index can be older than the bytes, and those bytes belong to
+    files it doesn't know yet. verify() reports them. Returns the hashes deleted."""
     removed = []
     with _BYTES_LOCK:
-        needed = _needed_hashes()
+        released = _released_hashes()
         cutoff = time.time() - grace_s
         for sha in list(blobs.hashes()):
-            if sha in needed:
+            if sha not in released:
                 continue
             try:
                 if blobs.mtime(sha) > cutoff:
@@ -420,6 +434,11 @@ def collect_unused(grace_s: float = UNUSED_GRACE_S) -> list[str]:
 def _needed_hashes() -> set[str]:
     return {r["hash"] for r in index.rows(
         "SELECT DISTINCT hash FROM files WHERE state IN ('available', 'trash')")}
+
+
+def _released_hashes() -> set[str]:
+    known = {r["hash"] for r in index.rows("SELECT DISTINCT hash FROM files")}
+    return known - _needed_hashes()
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +462,8 @@ def disk_status() -> dict:
 
 def verify(check_hashes: bool = False) -> dict:
     """Read-only consistency report: records whose bytes are gone, bytes whose content
-    no longer matches their name (with check_hashes), and bytes no record needs."""
+    no longer matches their name (with check_hashes), released bytes waiting to be
+    collected, and bytes the index has no record of (kept; e.g. after a restore)."""
     needed = index.rows("SELECT id, hash FROM files WHERE state IN ('available', 'trash')")
     missing = [r["id"] for r in needed if not blobs.exists(r["hash"])]
     corrupt = []
@@ -454,10 +474,12 @@ def verify(check_hashes: bool = False) -> dict:
                     corrupt.append(sha)
             except FileNotFoundError:
                 pass
-    needed_hashes = {r["hash"] for r in needed}
-    unused = [sha for sha in blobs.hashes() if sha not in needed_hashes]
+    released = _released_hashes()
+    known = {r["hash"] for r in index.rows("SELECT DISTINCT hash FROM files")}
+    on_disk = list(blobs.hashes())
     return {"records": len(index.rows("SELECT id FROM files")), "missing": missing,
-            "corrupt": corrupt, "unused": unused, **disk_status()}
+            "corrupt": corrupt, "unused": [s for s in on_disk if s in released],
+            "unknown": [s for s in on_disk if s not in known], **disk_status()}
 
 
 # ---------------------------------------------------------------------------
