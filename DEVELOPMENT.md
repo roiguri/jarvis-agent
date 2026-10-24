@@ -38,6 +38,10 @@ JELLYSEERR_API_KEY=...
 # Web search
 TAVILY_API_KEY=...                 # Free tier: 1,000 searches/month, no card required
 
+# Family cookbook (Recipe API) — per instance: staging uses the cookbook's staging project
+COOKBOOK_API_URL=https://us-central1-<project>.cloudfunctions.net/recipeApi
+COOKBOOK_API_TOKEN=ckb_...         # the owner's token, read+write, from the cookbook dashboard
+
 # GitHub project management
 GITHUB_TOKEN=...                   # Classic PAT, 'repo' scope (read/write issues & PRs)
 

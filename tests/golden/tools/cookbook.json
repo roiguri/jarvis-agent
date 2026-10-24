@@ -1,0 +1,402 @@
+[
+  {
+    "destructive": false,
+    "name": "find_recipes",
+    "schema": {
+      "description": "Find recipes in the family cookbook: the owner's own (default), or the\n    published ones. Each result has its id; get_recipe shows one in full.\n\n    Args:\n        query: part of the recipe's name, any language (names are mostly Hebrew).\n            Empty lists the newest.\n        mine: True = the owner's own recipes; False = the published ones.\n        category: optional category id (results show the ids in use).\n        stage: own recipes only: \"to-try\" or \"tested\".",
+      "name": "find_recipes",
+      "parameters": {
+        "properties": {
+          "category": {
+            "default": "",
+            "type": "string"
+          },
+          "mine": {
+            "default": true,
+            "type": "boolean"
+          },
+          "query": {
+            "default": "",
+            "type": "string"
+          },
+          "stage": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_recipe",
+    "schema": {
+      "description": "Show one cookbook recipe in full: ingredients, steps, times, notes and its\n    photos' links.\n\n    Args:\n        recipe_id: the recipe's id, as find_recipes shows it.",
+      "name": "get_recipe",
+      "parameters": {
+        "properties": {
+          "recipe_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipe_id"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "save_recipe",
+    "schema": {
+      "description": "Save a recipe to the family cookbook, after the owner agreed on it in chat. The\n    owner gets a final Confirm / Cancel; nothing is saved before that. Saved recipes\n    are private. Saving the same source again changes nothing.\n\n    Args:\n        recipe: the whole recipe, in Hebrew.\n        source: where it came from: the link, or the file ids it was read from.\n            Keeps the same recipe from being saved twice.\n        estimated: the fields you estimated because the source didn't say (of\n            prepTime, waitTime, servings, servingsUnit, difficulty); the recipe\n            gets a note naming them.\n        stage: \"to-try\", or \"tested\" if the owner has made it.\n        submit: True only if the owner asked to send it for approval.\n        photo_file_ids: stored photos, the main one first (at most 5).\n        video_file_id: one stored video to attach as a step.\n        video_caption: optional caption for that video.",
+      "name": "save_recipe",
+      "parameters": {
+        "properties": {
+          "estimated": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "photo_file_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recipe": {
+            "description": "A complete recipe, in Hebrew, in the cookbook's own shape.",
+            "properties": {
+              "attribution": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "who the recipe is from, and where"
+              },
+              "category": {
+                "description": "a category id (find_recipes shows the ids)",
+                "type": "string"
+              },
+              "comments": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "difficulty": {
+                "description": "קלה, בינונית or קשה",
+                "type": "string"
+              },
+              "ingredientSections": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "properties": {
+                              "amount": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "default": null,
+                                "description": "a number or a fraction: 2, 0.5, 1/2, 1½. For a range (2–3), choose one number. None when there is no amount",
+                                "title": "Amount"
+                              },
+                              "item": {
+                                "description": "the ingredient",
+                                "title": "Item",
+                                "type": "string"
+                              },
+                              "unit": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "default": null,
+                                "title": "Unit"
+                              }
+                            },
+                            "required": [
+                              "item"
+                            ],
+                            "title": "Ingredient",
+                            "type": "object"
+                          },
+                          "title": "Items",
+                          "type": "array"
+                        },
+                        "title": {
+                          "title": "Title",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "items"
+                      ],
+                      "title": "IngredientSection",
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "two or more titled lists, instead of ingredients"
+              },
+              "ingredients": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "properties": {
+                        "amount": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null,
+                          "description": "a number or a fraction: 2, 0.5, 1/2, 1½. For a range (2–3), choose one number. None when there is no amount",
+                          "title": "Amount"
+                        },
+                        "item": {
+                          "description": "the ingredient",
+                          "title": "Item",
+                          "type": "string"
+                        },
+                        "unit": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null,
+                          "title": "Unit"
+                        }
+                      },
+                      "required": [
+                        "item"
+                      ],
+                      "title": "Ingredient",
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "one list; or ingredientSections"
+              },
+              "instructions": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "the steps; or stages"
+              },
+              "mainIngredient": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "name": {
+                "type": "string"
+              },
+              "prepTime": {
+                "description": "whole minutes",
+                "type": "integer"
+              },
+              "servings": {
+                "type": "integer"
+              },
+              "servingsUnit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "e.g. עוגיות"
+              },
+              "stages": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "properties": {
+                        "instructions": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "title": "Instructions",
+                          "type": "array"
+                        },
+                        "title": {
+                          "title": "Title",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "instructions"
+                      ],
+                      "title": "Stage",
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "two or more titled step lists"
+              },
+              "tags": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "waitTime": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "whole minutes"
+              }
+            },
+            "required": [
+              "name",
+              "category",
+              "difficulty",
+              "prepTime",
+              "servings"
+            ],
+            "type": "object"
+          },
+          "source": {
+            "default": "",
+            "type": "string"
+          },
+          "stage": {
+            "default": "to-try",
+            "type": "string"
+          },
+          "submit": {
+            "default": false,
+            "type": "boolean"
+          },
+          "video_caption": {
+            "default": "",
+            "type": "string"
+          },
+          "video_file_id": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipe"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]
