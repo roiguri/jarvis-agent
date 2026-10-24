@@ -34,8 +34,8 @@ shared links).
       transcript or extracted text for each file after the turn, indexed for search in chunks.
 - [x] **S6 — `files` skill.** `find_files`, `send_file`, `delete_file`, and a `file` field type
       for collections.
-- [ ] **S7 — `fetch_url` keeps what it fetched.** Overflow page text saved as a temporary file
-      the result points to (with a cleanup for temporary files only); link videos saved with
+- [x] **S7 — `fetch_url` keeps what it fetched.** Long page text saved as a file the result
+      points to (kept, like everything else); link videos saved with
       their id and their description in the result.
 - [ ] **S8 — Remove the old caches.** Delete both `media_cache.py` modules and the cache dirs,
       once rollback to pre-S3a code is no longer wanted.
@@ -181,7 +181,7 @@ mention the file stay, and the confirmation says so.
 ### Retention: keep forever, ready for more
 
 - **Default:** keep everything forever. No retention sweep runs in v1 — only the collector for
-  unused bytes and the cleanup of temporary files (below).
+  unused bytes.
 - **References are computed, never registered.** Each place that can use a file registers one
   function, "which file ids do I use?" (the way tools register with `@tool_register`):
   collections (their `file` fields), memory (scan the markdown for ids), the trigger store
@@ -204,10 +204,9 @@ mention the file stay, and the confirmation says so.
 
 ### Retention classes
 
-Everything starts kept (inbound, link videos, tool-obtained, outbound). A tool may mark an
-obvious scratch file temporary — overflow page text (S7) is the first. Temporary files get the
-one cleanup v1 runs: after their time limit, with the grace period, and only if nothing holds a
-strong reference. The source is recorded, so a future policy can treat sources differently
+Everything is kept (inbound, link videos, tool-obtained, outbound, long page text). The store
+accepts a `temporary` retention for a future scratch file, but nothing uses it yet and no
+cleanup runs for it; long page text (S7) was the candidate and is small enough to keep. The source is recorded, so a future policy can treat sources differently
 (e.g. posters) without touching any tool.
 
 ### Channel interface
@@ -648,10 +647,49 @@ Telegram.
 
 ### S7 — `fetch_url`
 
-Overflow text saved as a temporary file; the result ends with its id and how to read on with
-`open_file`. The cleanup for temporary files only. Link videos saved (source `web`, origin the
-URL), their in-turn description stored as their record, their id included in the result.
-YouTube is not downloaded, so it has no file.
+- **Long pages kept:** a page over 8,000 characters is stored whole as a text file (source
+  `web`, origin its URL), and the result is its first page with the same "Showing characters …
+  If you need the rest: open_file(…, start=…)" tail a text file gets (`model_input.page`),
+  replacing the head-and-tail cut. Kept like every other file: page text is small (prod reads
+  15–20 pages a month), so there is no temporary class and no cleanup for it. It gets a record
+  like any text file, so `find_files` finds pages read before.
+- **Link videos kept:** an Instagram or TikTok video is stored (source `web`, origin the URL
+  and poster, the post's caption as its message), and the result names its id. The in-turn
+  description is written as its record in the same write as the file (`store.add(...,
+  record=...)`), so the worker never describes it again; if the description failed, the
+  worker makes one. YouTube is not downloaded, so it has no file.
+- **The video record's opening filler line** ("Sure, here's a record of the video.") is left
+  as it is: it is harmless, and telling it apart from content in code is guesswork.
+
+**As built:** `files.attachments.save_fetched()` is how a tool keeps a file (tied to the running
+turn; a failure logs and the answer goes on without the file); `store.add(..., record=...)`
+writes a ready record in the same write and queues no job. `tools/web/fetch.py` `_long_page()`
+(a page that can't be kept falls back to head and tail); `tools/web/media.py` `_keep()`. A link
+video's origin holds its URL, poster, posting date and length; `FileRecord.origin_text()` shows
+them in `open_file` and `find_files`. A YouTube page is read with `keep=False`: never stored.
+
+### S7 staging checklist
+
+1. **Long page:** send a long article link; the reply answers from it, and the result names
+   a `[file:… · text · <host>-<path>.md …]`. Ask about something near its end; Jarvis reads on
+   with `open_file(…, start=…)`.
+2. **Short page:** a short page comes back whole and stores nothing.
+3. **Reel kept:** send an Instagram reel or a TikTok; the reply is as before, the result says
+   "kept as [file:…]", and the log shows no `file record made` line for it (no second call).
+4. **Reel again:** later, "send me that reel" sends the video back; "what's in the reel?"
+   answers from its record or opens it.
+5. **Find:** `find_files` finds the reel by its poster or a caption word, and the article by a
+   word from its text.
+6. **YouTube:** a YouTube link reads as before and stores no file.
+
+**Result (2026-10-24):** 1–3 and 6 passed. The Wikipedia article on placebo (119 KB) was kept,
+and questions about its middle were answered by reading on with `open_file`; Tavily's text
+opens with about 8,000 characters of site menus, so the first page is mostly navigation. A
+short page stored nothing. The reel (7 MB) and the TikTok (16 MB) were kept with URL, poster,
+caption and their record, with no second description call. The first YouTube run stored its
+page as a file (`_read_page` saved long pages for every caller); fixed with `keep=False`, and
+the re-run stored nothing. 4–5 (sending the reel back, finding it by poster) not run live:
+sending back passed in S6, and the origin line and its search are tested.
 
 ### S8 — Remove the old caches
 
@@ -673,8 +711,7 @@ step) goes with them. Every `TODO(#185)` marks what to remove.
 
 - Quota value and alert threshold.
 - Link-video volume (~5–15 MB each, all kept): watch growth after S7.
-- How long unused bytes wait before the collector deletes them, and how long temporary files
-  live.
+- How long unused bytes wait before the collector deletes them.
 - Trimming long videos when shown again (a clip length and low frame rate). Needs the video's
   duration, so a new dependency; inbound videos are not trimmed either. Decide at the end of
   this plan, from cost seen in practice.

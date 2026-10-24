@@ -1,9 +1,10 @@
-"""Saving the files that pass through a channel, in either direction.
+"""Saving the files that pass through Jarvis: in through a channel, out to the
+owner, or fetched by a tool.
 
 An attachment is a plain dict — kind, mime_type, data (bytes), filename, source,
 origin_id. Channels hand over the files a message brings in this shape before its
 turn runs; the Outbox builds the same shape for a file Jarvis sends. Each one
-becomes a file record here. An incoming file that can't be saved becomes a note in
+becomes a file record here. A tool keeps what it fetched with save_fetched(). An incoming file that can't be saved becomes a note in
 the message instead, so the reply can say so rather than ignore it.
 """
 
@@ -54,3 +55,20 @@ def save_sent(attachment: dict, caption: str | None) -> tuple[str, str] | None:
         logger.warning("a sent file was not kept: %s", " ".join(notes))
         return None
     return records[0].id, records[0].marker()
+
+
+def save_fetched(data: bytes, *, source: str, filename: str | None = None,
+                 caption: str | None = None, origin: dict | None = None,
+                 mime_hint: str | None = None, record=None) -> store.FileRecord | None:
+    """Keep a file a tool obtained, tied to the running turn. `record` is a written
+    record the tool already made (see store.add). None when it couldn't be kept:
+    the tool's answer goes on without the file."""
+    from observability import telemetry
+
+    try:
+        return store.add(data, source=source, filename=filename, caption=caption,
+                         origin=origin, turn_id=telemetry.TURN_ID.get(),
+                         mime_hint=mime_hint, record=record)
+    except Exception:
+        logger.exception("could not keep a fetched file (%s)", source)
+        return None

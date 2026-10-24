@@ -19,7 +19,9 @@ RECORD_PREVIEW_CHARS = 1500
 
 def _about(rec: store.FileRecord) -> str:
     when = datetime.fromisoformat(rec.created).astimezone(ISRAEL_TZ).strftime("%Y-%m-%d %H:%M")
-    lines = [f"Stored {when} (Israel time), source: {rec.source}."]
+    origin = rec.origin_text()
+    lines = [f"Stored {when} (Israel time), source: {rec.source}"
+             + (f", {origin}." if origin else ".")]
     if rec.caption:
         lines.append(f"With the message: {rec.caption}")
     return "\n".join(lines)

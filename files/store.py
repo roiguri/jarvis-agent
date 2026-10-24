@@ -88,6 +88,19 @@ class FileRecord:
     state_changed: str | None = None
     removed_reason: str | None = None
 
+    def origin_text(self) -> str | None:
+        """Where it came from, from what its source recorded: a URL, who posted it,
+        when, how long. None when nothing was recorded (an owner's own file)."""
+        o = self.origin or {}
+        bits = [f"from {o['url']}"] if o.get("url") else []
+        if o.get("poster"):
+            bits.append(f"posted by {o['poster']}")
+        if o.get("posted"):
+            bits.append(f"on {o['posted']}")
+        if o.get("duration"):
+            bits.append(f"length {o['duration']}")
+        return ", ".join(bits) or None
+
     def marker(self) -> str:
         """The one-line handle history carries: `[file:… · kind · name · size]`."""
         parts = [self.id, self.kind]
@@ -105,10 +118,13 @@ class FileRecord:
 
 def add(data: bytes, *, source: str, filename: str | None = None, caption: str | None = None,
         origin: dict | None = None, turn_id: str | None = None, mime_hint: str | None = None,
-        retention: str = "kept", created: str | None = None) -> FileRecord:
+        retention: str = "kept", created: str | None = None, record=None) -> FileRecord:
     """Store `data` and return its new record. Every call makes a record; identical
     bytes are stored once. `created` defaults to now (an import passes the original
-    arrival time). Raises FileTooLarge, or OSError when the disk refuses."""
+    arrival time). `record` (anything with kind, content, producer and version, such
+    as a records.Record) is a written record made already: it is stored in the same
+    write and no record job is queued. Raises FileTooLarge, or OSError when the disk
+    refuses."""
     if not data:
         raise ValueError("empty file")
     if len(data) > MAX_FILE_BYTES:
@@ -125,8 +141,13 @@ def add(data: bytes, *, source: str, filename: str | None = None, caption: str |
             file_id = _insert(con, sha, kind, mime, len(data), name, caption, source,
                               origin or {}, turn_id, now, retention)
             _write_chunks(con, file_id, "meta", _meta_text(name, caption, source, origin))
-            con.execute("INSERT INTO jobs (file_id, kind, next_at, created) VALUES (?, ?, ?, ?)",
-                        (file_id, RECORD_JOB, index.now_iso(), index.now_iso()))
+            if record is not None:
+                _put_derived(con, file_id, record.kind, record.content, record.producer,
+                             record.version)
+            else:
+                con.execute("INSERT INTO jobs (file_id, kind, next_at, created)"
+                            " VALUES (?, ?, ?, ?)",
+                            (file_id, RECORD_JOB, index.now_iso(), index.now_iso()))
     return get(file_id)
 
 
@@ -274,16 +295,20 @@ def put_derived(file_id: str, kind: str, content: str, *, producer: str, version
         raise LookupError(f"no such file: {file_id}")
     if rec.state == "deleted":
         raise FileUnavailable(rec.id, rec.state)
+    with index.write() as con:
+        _put_derived(con, rec.id, kind, content, producer, version)
+
+
+def _put_derived(con, file_id: str, kind: str, content: str, producer: str, version: str) -> None:
     if kind == "meta":
         raise ValueError("'meta' is reserved")
-    with index.write() as con:
-        con.execute(
-            "INSERT INTO derived (file_id, kind, producer, version, created, content)"
-            " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(file_id, kind) DO UPDATE SET"
-            " producer = excluded.producer, version = excluded.version,"
-            " created = excluded.created, content = excluded.content",
-            (rec.id, kind, producer, version, index.now_iso(), content))
-        _write_chunks(con, rec.id, kind, content)
+    con.execute(
+        "INSERT INTO derived (file_id, kind, producer, version, created, content)"
+        " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(file_id, kind) DO UPDATE SET"
+        " producer = excluded.producer, version = excluded.version,"
+        " created = excluded.created, content = excluded.content",
+        (file_id, kind, producer, version, index.now_iso(), content))
+    _write_chunks(con, file_id, kind, content)
 
 
 def get_derived(file_id: str, kind: str | None = None) -> list[dict]:

@@ -109,7 +109,8 @@ def find(query: str = "", kind: str = "", source: str = "", since: str | None = 
 
 def _entry(rec: store.FileRecord, hit: dict, words: list[str]) -> str:
     when = datetime.fromisoformat(rec.created).astimezone(ISRAEL_TZ).strftime("%Y-%m-%d %H:%M")
-    lines = [f"{rec.marker()} — {when}, {rec.source}"]
+    origin = rec.origin_text()
+    lines = [f"{rec.marker()} — {when}, {rec.source}" + (f", {origin}" if origin else "")]
     if rec.caption:
         lines.append(f"  With the message: {_flat(rec.caption, 200)}")
     if hit and hit["origin"] != "meta":

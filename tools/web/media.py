@@ -10,8 +10,9 @@ from its metadata.
 Local fetching is bounded to the extractors in ``_allowed()``: a URL reaches yt-dlp
 only when one of them claims it (a regex, no network), and yt-dlp is told it may
 use no others, so its generic extractor — which would fetch any address, home
-network included — is unreachable. Nothing is kept: the download lives in a
-temporary directory for the length of the call.
+network included — is unreachable. The download lives in a temporary directory
+for the length of the call; the video is then kept in the file store, with the
+record as its description, so it is never described twice.
 """
 import base64
 import glob
@@ -25,7 +26,7 @@ import tempfile
 import time
 
 import config
-from files import records
+from files import attachments, records
 
 logger = logging.getLogger(__name__)
 
@@ -172,16 +173,39 @@ def read(url: str, platform: str) -> str:
             return f"{header}\n[not enough time left in this turn to watch the video — only the caption was read]"
 
         with open(video, "rb") as f:
-            data = base64.b64encode(f.read()).decode("ascii")
-        part = {"type": "media", "mime_type": mime, "data": data}
+            raw = f.read()
+        part = {"type": "media", "mime_type": mime, "data": base64.b64encode(raw).decode("ascii")}
         record, note = _describe(part, describe_s, prompt=_PROMPT, unwatched=(
             "the video itself could not be watched — only the caption was read"))
+    kept = _keep(url, platform, info, raw, mime, record, note)
+    kept_note = f"kept as {kept.marker()}" if kept else "the video itself is not kept"
     if record is None:
-        return f"{header}\n[{note}]"
-    marker = "[Video described by a model — the video itself is not kept]"
+        return f"{header}\n[{note}{'; the video is ' + kept_note if kept else ''}]"
+    marker = f"[Video described by a model — {kept_note}]"
     if note:
         marker += f"\n[{note}]"
     return f"{header}\n{marker}\n{record}"
+
+
+def _keep(url: str, platform: str, info: dict, raw: bytes, mime: str,
+          record: str | None, note: str | None):
+    """Store the downloaded video, with its record when one was made (so it is
+    never described twice). The file record, or None if it couldn't be kept."""
+    written = None
+    if record:
+        content = record + (f"\n[{note}]" if note else "")
+        written = records.Record("description", content, config.MODEL, records.VIDEO_VERSION)
+    page_url = info.get("webpage_url") or url
+    ext = "webm" if mime == "video/webm" else "mp4"
+    caption = (info.get("description") or "").strip()[:CAPTION_MAX_CHARS] or None
+    origin = {"url": page_url, "poster": _poster(platform, info)}
+    if _posted(info):
+        origin["posted"] = _posted(info)
+    if _length(info):
+        origin["duration"] = _length(info)
+    return attachments.save_fetched(
+        raw, source="web", filename=f"{platform.lower()}-{info.get('id') or 'video'}.{ext}",
+        caption=caption, origin=origin, mime_hint=mime, record=written)
 
 
 def _remaining_s() -> float | None:
@@ -268,8 +292,7 @@ def _video_file(work: str) -> str | None:
     return None
 
 
-def _header(url: str, platform: str, info: dict) -> str:
-    """Who posted it, when, and the caption — copied from the metadata."""
+def _poster(platform: str, info: dict) -> str:
     if platform == "Instagram":
         handle, name = info.get("channel"), info.get("uploader")
     else:
@@ -277,13 +300,28 @@ def _header(url: str, platform: str, info: dict) -> str:
     who = f"@{handle}" if handle else (name or "unknown poster")
     if handle and name and name != handle:
         who += f" ({name})"
-    parts = [platform, who]
+    return who
+
+
+def _posted(info: dict) -> str | None:
     date = info.get("upload_date") or ""
-    if len(date) == 8:
-        parts.append(f"posted {date[:4]}-{date[4:6]}-{date[6:]}")
+    return f"{date[:4]}-{date[4:6]}-{date[6:]}" if len(date) == 8 else None
+
+
+def _length(info: dict) -> str | None:
     duration = info.get("duration")
     if isinstance(duration, (int, float)) and duration > 0:
-        parts.append(f"{int(duration) // 60}:{int(duration) % 60:02d}")
+        return f"{int(duration) // 60}:{int(duration) % 60:02d}"
+    return None
+
+
+def _header(url: str, platform: str, info: dict) -> str:
+    """Who posted it, when, and the caption — copied from the metadata."""
+    parts = [platform, _poster(platform, info)]
+    if _posted(info):
+        parts.append(f"posted {_posted(info)}")
+    if _length(info):
+        parts.append(_length(info))
     caption = (info.get("description") or "").strip()
     if len(caption) > CAPTION_MAX_CHARS:
         caption = caption[:CAPTION_MAX_CHARS] + " […caption truncated]"

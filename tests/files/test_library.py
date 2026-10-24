@@ -259,3 +259,12 @@ def test_memory_files_hold_the_ids_written_into_them():
         assert rec.id in memory_files()
     finally:
         os.unlink(path)
+
+
+def test_a_result_says_where_the_file_came_from():
+    rec = store.add(JPEG, source="web", caption="ramen recipe",
+                    origin={"url": "https://example.com/r", "poster": "@cook", "posted": "2026-10-23"})
+    found = search.find("ramen")
+    assert found.startswith(f"{rec.marker()} — ") and \
+        "web, from https://example.com/r, posted by @cook, on 2026-10-23" in found
+    assert "@cook" in search.find("cook"), "the poster is searchable"
