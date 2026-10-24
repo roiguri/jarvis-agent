@@ -30,9 +30,11 @@ PHOTO_MAX_BYTES = 5 * 1024 * 1024
 PHOTOS_MAX = 5
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/quicktime", "video/mov"}
 REQUEST_MAX_BYTES = 30 * 1024 * 1024 - 256 * 1024  # room for the JSON and the framing
-# The fields a source often leaves out, as the estimate note names them.
-ESTIMABLE = {"prepTime": "זמן הכנה", "waitTime": "זמן המתנה", "servings": "מנות",
-             "servingsUnit": "יחידת מנה", "difficulty": "רמת קושי"}
+# The fields a source often leaves out: how the estimate note names each, and its
+# gender (for the Hebrew verb: הוא / היא; several fields take הם).
+ESTIMABLE = {"prepTime": ("זמן ההכנה", "m"), "waitTime": ("זמן ההמתנה", "m"),
+             "servings": ("כמות המנות", "f"), "servingsUnit": ("יחידת המנה", "f"),
+             "difficulty": ("רמת הקושי", "f")}
 
 
 class Ingredient(BaseModel):
@@ -119,21 +121,25 @@ def save_recipe(recipe: Recipe, source: str = "", estimated: list[str] | None = 
     try:
         return get_confirmation().request_confirmation_sync(
             description=description, action_fn=_run,
-            result_ok_text="Saved to the cookbook.", result_cancel_text="Not saved.")
+            result_ok_text="Done.", result_cancel_text="Not saved.")
     except Exception as e:
         return f"Error requesting confirmation: {e}"
 
 
 def recipe_id(source: str, content: dict) -> str:
-    """An id from the source (the recipe itself when there's none): the same reel
-    always gets the same id, so a second save is the API's 'already yours'."""
-    basis = _canonical(source) or json.dumps(content, ensure_ascii=False, sort_keys=True)
+    """An id from the source and the recipe's name (the whole recipe when there's no
+    source): the same reel always gets the same id, so a second save is the API's
+    'already yours', while a second recipe from the same source gets its own."""
+    canonical = _canonical(source)
+    basis = (f"{canonical}\n{content.get('name', '').strip()}" if canonical
+             else json.dumps(content, ensure_ascii=False, sort_keys=True))
     return "jarvis-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
 # Query parameters that only track who shared a link, never which page it is.
 _TRACKING = {"srtk", "igsh", "igshid", "si", "fbclid", "gclid", "ref", "ref_src", "is_from_webapp",
-             "sender_device", "_r", "_t", "share_id", "share_app_id"}
+             "sender_device", "_r", "_t", "share_id", "share_app_id", "t", "start", "feature",
+             "pp"}
 
 
 def _canonical(source: str) -> str:
@@ -146,7 +152,10 @@ def _canonical(source: str) -> str:
     query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
              if k.lower() not in _TRACKING and not k.lower().startswith("utm_")]
     host = parts.netloc.lower().removeprefix("www.").removeprefix("m.")
-    return urlunsplit(("https", host, parts.path.rstrip("/"), urlencode(sorted(query)), ""))
+    path = parts.path.rstrip("/")
+    if host == "youtu.be" and path:  # the short form of a watch link
+        host, query, path = "youtube.com", [*query, ("v", path.lstrip("/"))], "/watch"
+    return urlunsplit(("https", host, path, urlencode(sorted(query)), ""))
 
 
 def _check(recipe: Recipe, labels: dict[str, str], estimated: list[str], stage: str) -> list[str]:
@@ -170,6 +179,11 @@ def _check(recipe: Recipe, labels: dict[str, str], estimated: list[str], stage: 
         problems.append("give instructions or stages, exactly one")
     elif recipe.stages and len(recipe.stages) < 2:
         problems.append("stages needs two or more stages (else use instructions)")
+    for ingredient in _all_ingredients(recipe.model_dump(exclude_none=True)):
+        if "amount" in ingredient and _amount(ingredient["amount"]) is None:
+            problems.append(f"amount {ingredient['amount']!r} ({ingredient['item']}) must be a "
+                            "positive number or a fraction such as 1/2; a range or 'to taste' "
+                            "goes in item")
     unknown = [f for f in estimated if f not in ESTIMABLE]
     if unknown:
         problems.append(f"estimated can only name {', '.join(ESTIMABLE)}; not {', '.join(unknown)}")
@@ -184,11 +198,21 @@ def _content(recipe: Recipe, estimated: list[str]) -> dict:
     content = recipe.model_dump(exclude_none=True)
     for ingredient in _all_ingredients(content):
         if "amount" in ingredient:
-            ingredient["amount"] = _amount(ingredient["amount"])
+            ingredient["amount"] = _amount(ingredient["amount"])  # checked in _check
     if estimated:
-        note = "הערכה של Jarvis: " + ", ".join(ESTIMABLE[f] for f in estimated)
-        content["comments"] = [*content.get("comments", []), note]
+        content["comments"] = [*content.get("comments", []), estimate_note(estimated)]
     return content
+
+
+def estimate_note(estimated: list[str]) -> str:
+    """e.g. "זמן ההכנה וכמות המנות הם הערכה בלבד." — about the recipe, not who
+    estimated it."""
+    names = [ESTIMABLE[f][0] for f in dict.fromkeys(estimated)]
+    if len(names) == 1:
+        verb = "הוא" if ESTIMABLE[estimated[0]][1] == "m" else "היא"
+        return f"{names[0]} {verb} הערכה בלבד."
+    listed = ", ".join(names[:-1]) + " ו" + names[-1]
+    return f"{listed} הם הערכה בלבד."
 
 
 def _all_ingredients(content: dict) -> list[dict]:
@@ -198,12 +222,19 @@ def _all_ingredients(content: dict) -> list[dict]:
     return found
 
 
+_FRACTION = re.compile(r"(\d+\s*)?([½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]|\d+/[1-9]\d*)")
+
+
 def _amount(value):
-    text = str(value).strip()
-    if re.fullmatch(r"\d+(\.\d+)?", text):
+    """A plain number as a number; a fraction (1/2, 1½, 1 1/2) as given; None for
+    anything the cookbook won't take (zero, a range, words)."""
+    text = str(value).strip().replace(",", ".")
+    if re.fullmatch(r"\d*\.?\d+", text):
         number = float(text)
+        if number <= 0:
+            return None
         return int(number) if number.is_integer() else number
-    return text
+    return text if _FRACTION.fullmatch(text) else None
 
 
 def _files(photo_ids: list[str], video_id: str, caption: str):
@@ -284,7 +315,8 @@ def _summary(content: dict, labels: dict[str, str], stage: str, submit: bool,
 
 
 def _send(payload: dict, files: dict, notes: list[str]) -> str:
-    """The request, once the owner confirmed. Its outcome, phrased for the model."""
+    """The request, once the owner confirmed: its outcome, phrased for the model.
+    Raises CookbookError when nothing was saved."""
     name = payload["recipe"]["name"]
     try:
         if files["parts"]:
@@ -297,7 +329,8 @@ def _send(payload: dict, files: dict, notes: list[str]) -> str:
         else:
             status, answer = request("POST", "/recipes", json=payload)
     except CookbookError as e:
-        return f"Not saved: {e}"
+        # Raised, so the owner's prompt shows the save failed rather than ✅.
+        raise CookbookError(f"Not saved: {e}") from None
     where = f"{answer.get('path')} (id {answer.get('id')})"
     if not answer.get("created", status == 201):
         return f"“{name}” is already in the cookbook, {where}; nothing was changed."

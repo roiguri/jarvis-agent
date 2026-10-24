@@ -230,7 +230,15 @@ def test_estimates_are_marked_in_the_recipe_and_the_confirmation(created, confir
     save(source=REEL, estimated=["prepTime", "servings"])
     assert "Estimated by Jarvis: prepTime, servings" in confirm.pending[0][0]
     confirm.tap()
-    assert created["posted"][0][0]["recipe"]["comments"] == ["הערכה של Jarvis: זמן הכנה, מנות"]
+    assert created["posted"][0][0]["recipe"]["comments"] == ["זמן ההכנה וכמות המנות הם הערכה בלבד."]
+
+
+def test_the_estimate_note_is_plain_hebrew():
+    note = save_mod.estimate_note
+    assert note(["difficulty"]) == "רמת הקושי היא הערכה בלבד."
+    assert note(["prepTime"]) == "זמן ההכנה הוא הערכה בלבד."
+    assert note(["prepTime", "waitTime", "servings"]) == \
+        "זמן ההכנה, זמן ההמתנה וכמות המנות הם הערכה בלבד."
 
 
 def test_tested_and_submit_go_through(created, confirm):
@@ -269,8 +277,10 @@ def test_api_refusals_come_back_as_the_outcome(created, confirm):
         return httpx.Response(200, json=CATEGORIES)
     _client._transport = httpx.MockTransport(refuse)
     save(source=REEL)
-    assert confirm.tap() == ("Not saved: The cookbook refused the recipe (invalid-recipe). "
-                             "Fix these fields: servings: too many.")
+    with pytest.raises(_client.CookbookError) as e:
+        confirm.tap()
+    assert str(e.value) == ("Not saved: The cookbook refused the recipe (invalid-recipe). "
+                            "Fix these fields: servings: too many."), "the prompt shows a failure"
 
 
 # --- files --------------------------------------------------------------------------
@@ -351,3 +361,29 @@ def test_a_link_shared_twice_gives_the_same_id():
     assert rid("https://www.youtube.com/watch?v=AAAAAAAAAAA") != rid(
         "https://www.youtube.com/watch?v=BBBBBBBBBBB"), "the page's own parameters stay"
     assert rid("file:2s11xcez") == rid(" file:2s11xcez ")
+
+
+
+def test_a_second_recipe_from_the_same_source_gets_its_own_id():
+    assert save_mod.recipe_id(REEL, {"name": "חומוס"}) != save_mod.recipe_id(REEL, {"name": "טחינה"})
+    assert save_mod.recipe_id(REEL, {"name": "חומוס"}) == save_mod.recipe_id(REEL + "?igsh=1",
+                                                                            {"name": " חומוס "})
+
+
+def test_youtube_link_forms_and_timestamps_are_one_link():
+    rid = lambda url: save_mod.recipe_id(url, {"name": "x"})  # noqa: E731
+    assert rid("https://youtu.be/AODAwMANijw?t=30") == rid("https://www.youtube.com/watch?v=AODAwMANijw&t=1m")
+
+
+@pytest.mark.parametrize("amount, sent", [("2", 2), ("0.5", 0.5), (".5", 0.5), ("1,5", 1.5),
+                                          ("1/2", "1/2"), ("1½", "1½"), ("1 1/2", "1 1/2")])
+def test_amounts_the_cookbook_takes(amount, sent):
+    assert save_mod._amount(amount) == sent
+
+
+@pytest.mark.parametrize("amount", ["0", "2-3", "a pinch", "1/0"])
+def test_amounts_it_doesnt_are_caught_before_asking(created, confirm, amount):
+    recipe = {**RECIPE, "ingredients": [{"item": "מלח", "amount": amount}]}
+    out = save_recipe.invoke({"recipe": recipe})
+    assert out.startswith("Not saved — fix these first:") and "must be a positive number" in out
+    assert confirm.pending == []

@@ -76,7 +76,8 @@ stage, the estimated fields and the files; the request is sent only on Confirm.
 
 Sources rarely state prep time, servings or difficulty, and the API refuses a recipe without
 them. Jarvis estimates what the source doesn't say, shows the estimates as such in the draft,
-and the saved recipe gets a comment naming them (e.g. "הערכה של Jarvis: זמן הכנה, מנות"). A
+and the saved recipe gets a comment saying so, about the recipe rather than about Jarvis
+(e.g. "זמן ההכנה וכמות המנות הם הערכה בלבד."). A
 value the source states is never marked. Never invented: amounts, ingredients or steps that
 aren't in the source.
 
@@ -188,6 +189,13 @@ step video and the estimate note. Fixed after: no `attribution` was set (a rule 
 it), and the id was made from the link as given, tracking code included (`?srtk=…` changes
 per share), so the same reel shared again would have been saved twice; tracking parameters
 are now dropped before the id is made. Built in one go (C1–C4), so C1–C3 are one commit.
+
+**Review before merge (2026-10-24):** a failed save after Confirm now raises, so the owner's
+prompt shows "❌ Action failed" instead of "✅"; the id includes the recipe's name, so a second
+recipe from the same reel or page gets its own; timestamps and `youtu.be` links are one link;
+ingredient amounts are checked before asking (zero, ranges and words refused; `.5` and `1,5`
+read as numbers). The estimate note reads as a statement about the recipe ("זמן ההכנה וכמות
+המנות הם הערכה בלבד."), at the owner's request.
 
 ## Decided
 
