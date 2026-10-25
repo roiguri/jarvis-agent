@@ -346,3 +346,16 @@ def test_a_record_finished_after_a_delete_is_not_written_back():
         with index.write() as con:
             store._put_derived(con, rec.id, "description", "a photo", "m", "1")
     assert store.get_derived(rec.id) == []
+
+
+def test_an_index_from_version_1_loses_the_old_path_map_and_keeps_its_search():
+    rec = store.add(PNG, source="t")
+    store.put_derived(rec.id, "description", "a red bicycle", producer="m", version="image-1")
+    with index.write() as con:
+        con.execute("CREATE TABLE legacy_paths (path TEXT, file_id TEXT)")
+        con.execute("PRAGMA user_version = 1")
+    index._initialized.clear()
+    tables = {r["name"] for r in index.rows("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "legacy_paths" not in tables
+    assert index.rows("PRAGMA user_version")[0]["user_version"] == 2
+    assert index.rows("SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'bicycle'")
