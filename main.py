@@ -33,7 +33,6 @@ from episodes import record as episodes_record
 from files import attachments as file_attachments
 from files import startup as file_startup
 from files import worker as file_worker
-from gateway.factory import legacy_media_files
 
 # 1. Enable logging for debugging and monitoring
 logging.basicConfig(
@@ -242,7 +241,7 @@ async def main() -> None:
     keep_db_small()
     try:
         logger.info("File store: %s",
-                    await asyncio.to_thread(file_startup.prepare, legacy_media_files()))
+                    await asyncio.to_thread(file_startup.prepare))
     except Exception:
         logger.exception("File store upkeep failed")
 

@@ -1,4 +1,4 @@
-"""Saving a message's files, showing them to the model, and importing old caches."""
+"""Saving a message's files, showing them to the model, and the startup upkeep."""
 import os
 import shutil
 
@@ -7,7 +7,7 @@ import pytest
 import config
 from episodes import record as episodes_record
 from episodes import store as episodes_store
-from files import attachments, index, legacy, model_input, startup, store
+from files import attachments, index, model_input, startup, store
 
 JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"0" * 64
 OGG = b"OggS" + b"\x00" * 64
@@ -89,56 +89,17 @@ def test_content_blocks_for_a_file_too_large(monkeypatch):
     assert "too large" in block["text"]
 
 
-# --- importing the old caches ----------------------------------------------------
+# --- startup ---------------------------------------------------------------------
 
-def _owner_row(content, turn_id, ts):
-    with episodes_store.write() as con:
-        episodes_store.insert(con, ts=ts, turn_id=turn_id, thread_id="owner", scope="user",
-                              channel="telegram", role="owner", source="chat", meta=None,
-                              content=content)
-
-
-def test_import_takes_arrivals_from_history(tmp_path):
-    old = tmp_path / "image_AgACAgQAAxkBAAI.jpg"
-    old.write_bytes(JPEG)
-    _owner_row(f"what plant is this?\n[attached: {old}]", "turn-a", "2026-09-01T10:00:00+00:00")
-    _owner_row(f"[attached: {old}]", "turn-b", "2026-09-05T10:00:00+00:00")
-    assert legacy.import_caches([(str(old), "telegram")]) == 2
-    rows = index.rows("SELECT * FROM files ORDER BY created")
-    assert [(r["turn_id"], r["created"][:10], r["caption"]) for r in rows] == [
-        ("turn-a", "2026-09-01", "what plant is this?"), ("turn-b", "2026-09-05", None)]
-    assert store.by_legacy_path(str(old)).turn_id == "turn-b"
-    assert old.exists(), "copied, not moved"
-
-
-def test_import_without_history_uses_the_file_date_and_is_idempotent(tmp_path):
-    old = tmp_path / "audio_x.ogg"
-    old.write_bytes(OGG)
-    os.utime(old, (1_700_000_000, 1_700_000_000))
-    assert legacy.import_caches([(str(old), "jarvis-app")]) == 1
-    assert legacy.import_caches([(str(old), "jarvis-app")]) == 0
-    (row,) = index.rows("SELECT * FROM files")
-    assert row["created"].startswith("2023-11-14") and row["source"] == "jarvis-app"
-
-
-def test_import_skips_an_unreadable_file(tmp_path):
-    good = tmp_path / "good.jpg"
-    good.write_bytes(JPEG)
-    assert legacy.import_caches([(str(tmp_path / "gone.jpg"), "t"), (str(good), "t")]) == 1
-
-
-def test_startup_summary(tmp_path):
-    old = tmp_path / "x.jpg"
-    old.write_bytes(JPEG)
-    summary = startup.prepare([(str(old), "telegram")])
-    assert summary.startswith("imported 1 old files, queued 0 records, collected 0 unused,")
+def test_startup_summary():
+    assert startup.prepare().startswith("collected 0 unused,")
 
 
 def test_startup_survives_a_failing_step(monkeypatch):
-    def boom(entries):
+    def boom():
         raise RuntimeError("bad")
-    monkeypatch.setattr(legacy, "import_caches", boom)
-    assert "legacy import failed" in startup.prepare([])
+    monkeypatch.setattr(store, "collect_unused", boom)
+    assert "MB stored" in startup.prepare()
 
 
 def test_turn_input_with_only_files(tmp_path):

@@ -59,7 +59,6 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── files/files.sqlite     # the file store's index: one row per stored file, its derived text, search chunks
 └── logs/{chat_history,notifications}.jsonl
 
-/app/jarvis_code/gateway/*/media_cache/   # the channels' old caches, no longer written (removal: #185)
 /app/jarvis_files/ab/cd/<sha256>          # the file store's bytes, named by content; outside both
                                           #   state trees, so deploy snapshots never copy them
 ```
