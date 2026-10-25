@@ -1,7 +1,7 @@
 """save_recipe: a recipe the owner agreed on, saved to the family cookbook after a
 final confirmation.
 
-The recipe arrives as fields, however Jarvis got them; photos and a step video as
+The recipe arrives as fields, however Jarvis got them; photos and step media as
 stored files' ids. Nothing here reads a link or calls another tool. The recipe
 itself is checked by the cookbook, not here: its field-by-field refusal comes back
 as the outcome, and Jarvis fixes it and asks again. Files are prepared within the
@@ -27,6 +27,7 @@ from tools.registry import tool_register
 PHOTO_MIMES = {"image/jpeg", "image/png", "image/webp"}
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/quicktime", "video/mov"}
+STEP_MEDIA_MAX_BYTES = 50 * 1024 * 1024
 REQUEST_MAX_BYTES = 30 * 1024 * 1024 - 256 * 1024  # room for the JSON and the framing
 # The fields a source often leaves out: how the estimate note names each, and its
 # gender (for the Hebrew verb: הוא / היא; several fields take הם).
@@ -73,12 +74,17 @@ class Recipe(BaseModel):
     comments: list[str] | None = None
 
 
+class StepMedia(BaseModel):
+    file_id: str = Field(description="a stored photo or video")
+    caption: str | None = None
+
+
 @tool_register(namespace="cookbook")
 @tool
 def save_recipe(recipe: Recipe, source: str = "", estimated: list[str] | None = None,
                 stage: str = "to-try", submit: bool = False,
-                photo_file_ids: list[str] | None = None, video_file_id: str = "",
-                video_caption: str = "") -> str:
+                photo_file_ids: list[str] | None = None,
+                step_media: list[StepMedia] | None = None) -> str:
     """Save a recipe to the family cookbook, after the owner agreed on it in chat. The
     owner gets a final Confirm / Cancel; nothing is saved before that. Saved recipes
     are private. Saving the same source again changes nothing.
@@ -93,8 +99,8 @@ def save_recipe(recipe: Recipe, source: str = "", estimated: list[str] | None = 
         stage: "to-try", or "tested" if the owner has made it.
         submit: True only if the owner asked to send it for approval.
         photo_file_ids: stored photos, the main one first (at most 5).
-        video_file_id: one stored video to attach as a step.
-        video_caption: optional caption for that video.
+        step_media: stored photos or videos shown with the steps, in order, each
+            with an optional caption.
     """
     from gateway.factory import get_confirmation
 
@@ -106,7 +112,7 @@ def save_recipe(recipe: Recipe, source: str = "", estimated: list[str] | None = 
     if unknown:
         return (f"Not saved: estimated can only name {', '.join(ESTIMABLE)} "
                 f"(not {', '.join(unknown)}).")
-    files, notes, problems = _files(photo_file_ids or [], video_file_id, video_caption)
+    files, notes, problems = _files(photo_file_ids or [], step_media or [])
     if problems:
         return "Not saved: " + "; ".join(problems)
 
@@ -197,7 +203,7 @@ def _amount(value):
     return text
 
 
-def _files(photo_ids: list[str], video_id: str, caption: str):
+def _files(photo_ids: list[str], steps: list[StepMedia]):
     """(multipart file parts with their JSON entries, notes, problems)."""
     parts, notes, problems = {"images": [], "mediaInstructions": [], "parts": []}, [], []
     budget = REQUEST_MAX_BYTES
@@ -217,23 +223,46 @@ def _files(photo_ids: list[str], video_id: str, caption: str):
         budget -= len(data)
         parts["images"].append({"part": f"photo{n}"} | ({"isPrimary": True} if n == 1 else {}))
         parts["parts"].append((f"photo{n}", (f"photo{n}.{mime.split('/')[1]}", data, mime)))
-    if video_id:
-        rec = store.get(video_id)
-        mime = model_input.normalize_mime(rec.mime_type) if rec else ""
-        if rec is None or rec.kind != "video" or mime not in VIDEO_MIMES:
-            problems.append(f"{video_id} isn't a stored MP4, WebM or QuickTime video")
-        elif rec.state not in ("available", "trash"):
-            problems.append(f"{rec.marker()} is no longer stored")
-        elif rec.size > budget:
-            notes.append(f"the video ({rec.size / 2**20:.0f} MB) is left out: with the photos "
-                         "it would pass the cookbook's 30 MB limit")
-        else:
-            entry = {"part": "step1"} | ({"caption": caption} if caption.strip() else {})
-            parts["mediaInstructions"].append(entry)
-            ext = {"video/webm": "webm", "video/quicktime": "mov", "video/mov": "mov"}.get(mime, "mp4")
-            mime = "video/quicktime" if mime == "video/mov" else mime
-            parts["parts"].append(("step1", (f"step1.{ext}", store.read_bytes(rec.id), mime)))
+    for n, step in enumerate(steps, 1):
+        try:
+            data, mime = _step_file(step.file_id)
+        except ValueError as e:
+            problems.append(str(e))
+            continue
+        if len(data) > budget:
+            notes.append(f"step media {n} ({len(data) / 2**20:.0f} MB) is left out: with the "
+                         "other files it would pass the cookbook's 30 MB limit")
+            continue
+        budget -= len(data)
+        caption = (step.caption or "").strip()
+        parts["mediaInstructions"].append({"part": f"step{n}"} | ({"caption": caption} if caption else {}))
+        ext = {"video/webm": "webm", "video/quicktime": "mov", "video/mp4": "mp4"}.get(
+            mime, mime.split("/")[1])
+        parts["parts"].append((f"step{n}", (f"step{n}.{ext}", data, mime)))
     return parts, notes, problems
+
+
+def _step_file(file_id: str) -> tuple[bytes, str]:
+    """A step's bytes and type: a video as it is, a photo as the API takes it.
+    Raises ValueError, phrased for the model, when the file can't be a step."""
+    rec = store.get(file_id)
+    mime = model_input.normalize_mime(rec.mime_type) if rec else ""
+    if rec is None or not (rec.kind == "image" or (rec.kind == "video" and mime in VIDEO_MIMES)):
+        raise ValueError(f"{file_id} isn't a stored photo or MP4, WebM or QuickTime video")
+    try:
+        data = store.read_bytes(rec.id)
+    except store.FileUnavailable:
+        raise ValueError(f"{rec.marker()} is no longer stored") from None
+    if rec.kind == "video":
+        if len(data) > STEP_MEDIA_MAX_BYTES:
+            raise ValueError(f"{rec.marker()} is over the cookbook's 50 MB limit for step media")
+        return data, "video/quicktime" if mime == "video/mov" else mime
+    if mime == "image/gif":
+        return data, mime
+    try:
+        return _photo(data, mime)
+    except (OSError, ValueError):
+        raise ValueError(f"{rec.marker()} can't be converted to a JPEG, PNG or WebP photo") from None
 
 
 def _photo(data: bytes, mime: str) -> tuple[bytes, str]:
@@ -264,9 +293,10 @@ def _summary(content: dict, labels: dict[str, str], stage: str, submit: bool,
              + (" · and send it for approval" if submit else "")]
     if estimated:
         lines.append("Estimated by Jarvis: " + ", ".join(estimated))
-    n_photos, n_video = len(files["images"]), len(files["mediaInstructions"])
-    if n_photos or n_video:
-        lines.append(f"{n_photos} photo(s)" + (" and a step video" if n_video else ""))
+    n_photos, n_steps = len(files["images"]), len(files["mediaInstructions"])
+    if n_photos or n_steps:
+        lines.append(" and ".join(t for t in (n_photos and f"{n_photos} photo(s)",
+                                             n_steps and f"{n_steps} step media file(s)") if t))
     lines += [f"Note: {n}" for n in notes]
     return "\n".join(lines)
 
@@ -295,7 +325,7 @@ def _send(payload: dict, files: dict, notes: list[str]) -> str:
     if answer.get("images"):
         extras.append(f"{answer['images']} photo(s)")
     if answer.get("mediaInstructions"):
-        extras.append("a step video")
+        extras.append(f"{answer['mediaInstructions']} step media file(s)")
     if answer.get("submitted"):
         extras.append("sent for approval")
     tail = f" ({', '.join(extras)})" if extras else ""
