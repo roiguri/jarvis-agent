@@ -609,11 +609,6 @@ kind. Records make files searchable, and they stay readable after the original i
 removed. `scripts/files_verify.py` shows the queue, and `scripts/files_requeue.py --kind <kind>`
 redoes one kind after its function changes.
 
-The channels' old caches (`gateway/channels/*/media_cache/`) are no longer written.
-At startup the store imports whatever they still hold (`files/legacy.py`, fed by
-`gateway.factory.legacy_media_files()`), copying rather than moving so older code
-still finds them; their removal is tracked in #185.
-
 ### Layering invariant
 
 `tools/*` and `agent.py` contain no media path, no `MEDIA_DIR`, no resolver, and no

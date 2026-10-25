@@ -139,19 +139,6 @@ def test_a_deleted_file_takes_its_job_with_it(model):
     assert jobs() == [] and worker.run_pending() == []
 
 
-def test_startup_queues_files_without_a_record_once(model):
-    rec = store.add(JPEG, source="t")
-    store.add(ZIP, source="t")
-    with index.write() as con:
-        con.execute("DELETE FROM jobs")
-    assert worker.queue_missing() == 1, "only kinds that get a record"
-    assert worker.queue_missing() == 0
-    worker.run_pending()
-    with index.write() as con:
-        con.execute("DELETE FROM jobs")
-    assert worker.queue_missing() == 0 and store.get_derived(rec.id)
-
-
 def test_requeue_picks_up_records_older_than_the_current_version(model):
     current, outdated = store.add(JPEG + b"1", source="t"), store.add(JPEG + b"2", source="t")
     worker.run_pending()

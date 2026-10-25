@@ -486,20 +486,6 @@ def verify(check_hashes: bool = False) -> dict:
 # Legacy cache paths
 # ---------------------------------------------------------------------------
 
-def map_legacy_path(path: str, file_id: str) -> None:
-    with index.write() as con:
-        con.execute("INSERT OR IGNORE INTO legacy_paths (path, file_id) VALUES (?, ?)",
-                    (path, file_id))
-
-
-def by_legacy_path(path: str) -> FileRecord | None:
-    """The newest record an old cache path became."""
-    found = index.rows(
-        "SELECT f.* FROM legacy_paths l JOIN files f ON f.id = l.file_id WHERE l.path = ?"
-        " ORDER BY f.created DESC LIMIT 1", (path,))
-    return _record(found[0]) if found else None
-
-
 def _human_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"

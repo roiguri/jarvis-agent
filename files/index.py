@@ -11,7 +11,8 @@ Tables:
                Trigram-tokenized: a word matches inside a longer one, so a
                Hebrew word is found with a prefix attached.
   jobs         background work still to do for a file.
-  legacy_paths old channel-cache paths → the file ids they became.
+  legacy_paths old channel-cache paths → the file ids they became; read only by
+               scripts/files_migrate_history.py. TODO(#185): drop with it.
 
 Short-lived connections, WAL and a busy timeout, as in the episode store: the turn,
 tools and the background worker run on different threads.

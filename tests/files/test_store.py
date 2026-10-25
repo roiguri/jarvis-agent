@@ -300,16 +300,7 @@ def test_holder_names_are_unique():
         references.holder("y", strength="medium")
 
 
-# --- legacy paths and health -------------------------------------------------
-
-def test_legacy_paths_map_many_to_one():
-    a = store.add(PNG, source="t")
-    b = store.add(PNG, source="t")
-    store.map_legacy_path("/old/cache/x.jpg", a.id)
-    store.map_legacy_path("/old/cache/x.jpg", b.id)
-    assert store.by_legacy_path("/old/cache/x.jpg").id in {a.id, b.id}
-    assert store.by_legacy_path("/old/cache/none.jpg") is None
-
+# --- health -------------------------------------------------
 
 def test_disk_status_and_verify():
     rec = store.add(PNG, source="t")

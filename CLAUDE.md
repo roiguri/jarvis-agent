@@ -93,9 +93,6 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 /app/jarvis_files/ab/cd/<sha256>   # file store bytes, named by content hash; outside both state trees
                                    #   (never in deploy snapshots — the Proxmox backup covers them)
 
-/app/jarvis_code/gateway/channels/*/media_cache/   # the channels' old media caches: no longer written,
-                                                 #   imported into the file store at startup (removal: #185)
-
 /app/secrets/.env          # API keys and tokens — DO NOT READ THIS FILE
 ```
 

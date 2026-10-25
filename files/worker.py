@@ -1,7 +1,6 @@
 """The background worker that writes each stored file's record.
 
-store.add() queues a job in the same write as the file; queue_missing() catches up
-files stored before records existed. The worker takes one due job at a time,
+store.add() queues a job in the same write as the file. The worker takes one due job at a time,
 newest file first, and asks records.make() for the record. An attempt is counted before the model call, so a crash mid-call is retried later;
 failures back off, and after the last one the job stays with its error and is not
 retried. A file that has no bytes any more, or can't have a record, has its job
@@ -35,25 +34,6 @@ COLLECT_EVERY_S = 3600
 PAUSE_S = 2
 
 _wake: asyncio.Event | None = None
-
-
-def queue_missing() -> int:
-    """Queue every stored file of a recorded kind that has neither its record nor a
-    job: files stored before records existed. Returns how many were queued.
-
-    TODO(#185): remove with the old caches, once every instance has run it."""
-    now = index.now_iso()
-    queued = 0
-    with index.write() as con:
-        for kind, recorder in records.RECORDERS.items():
-            queued += con.execute(
-                "INSERT OR IGNORE INTO jobs (file_id, kind, next_at, created)"
-                " SELECT f.id, ?, ?, ? FROM files f"
-                " WHERE f.kind = ? AND f.state IN ('available', 'trash')"
-                " AND NOT EXISTS (SELECT 1 FROM derived d WHERE d.file_id = f.id AND d.kind = ?)"
-                " AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id)",
-                (JOB_KIND, now, now, kind, recorder.record_kind)).rowcount
-    return queued
 
 
 def requeue_outdated(kind: str) -> int:
