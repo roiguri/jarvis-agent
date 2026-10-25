@@ -11,8 +11,6 @@ Tables:
                Trigram-tokenized: a word matches inside a longer one, so a
                Hebrew word is found with a prefix attached.
   jobs         background work still to do for a file.
-  legacy_paths old channel-cache paths → the file ids they became; read only by
-               scripts/files_migrate_history.py. TODO(#185): drop with it.
 
 Short-lived connections, WAL and a busy timeout, as in the episode store: the turn,
 tools and the background worker run on different threads.
@@ -93,12 +91,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     created TEXT NOT NULL,
     UNIQUE (file_id, kind)
 );
-
-CREATE TABLE IF NOT EXISTS legacy_paths (
-    path TEXT NOT NULL,
-    file_id TEXT NOT NULL REFERENCES files(id),
-    PRIMARY KEY (path, file_id)
-);
 """
 
 _INIT_LOCK = threading.Lock()
@@ -129,19 +121,23 @@ def connect() -> sqlite3.Connection:
     return _open(INDEX_PATH)
 
 
-# PRAGMA user_version: 1 = chunks_fts is trigram-tokenized and built.
-_VERSION = 1
+# PRAGMA user_version: 1 = chunks_fts is trigram-tokenized and built;
+# 2 = the old channel caches' path map (legacy_paths) is gone.
+_VERSION = 2
 
 
 def _upgrade(con: sqlite3.Connection) -> None:
     """Bring an older index up to _VERSION. Version 1 rebuilds the search table
-    with the trigram tokenizer from `chunks`. The version is set last, so an
-    interrupted upgrade runs again on the next open."""
-    if con.execute("PRAGMA user_version").fetchone()[0] >= _VERSION:
+    with the trigram tokenizer from `chunks`; version 2 drops legacy_paths. The
+    version is set last, so an interrupted upgrade runs again on the next open."""
+    version = con.execute("PRAGMA user_version").fetchone()[0]
+    if version >= _VERSION:
         return
-    con.execute("DROP TABLE IF EXISTS chunks_fts")
-    con.executescript(_SCHEMA)
-    con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+    if version < 1:
+        con.execute("DROP TABLE IF EXISTS chunks_fts")
+        con.executescript(_SCHEMA)
+        con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+    con.execute("DROP TABLE IF EXISTS legacy_paths")
     con.execute(f"PRAGMA user_version = {_VERSION}")
     con.commit()
 

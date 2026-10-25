@@ -482,10 +482,6 @@ def verify(check_hashes: bool = False) -> dict:
             "unknown": [s for s in on_disk if s not in known], **disk_status()}
 
 
-# ---------------------------------------------------------------------------
-# Legacy cache paths
-# ---------------------------------------------------------------------------
-
 def _human_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
