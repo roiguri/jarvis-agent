@@ -53,7 +53,7 @@
     "destructive": false,
     "name": "save_recipe",
     "schema": {
-      "description": "Save a recipe to the family cookbook, after the owner agreed on it in chat. The\n    owner gets a final Confirm / Cancel; nothing is saved before that. Saved recipes\n    are private. Saving the same source again changes nothing.\n\n    Args:\n        recipe: the whole recipe, in Hebrew.\n        source: where it came from: the link, or the file ids it was read from.\n            Keeps the same recipe from being saved twice.\n        estimated: the fields you estimated because the source didn't say (of\n            prepTime, waitTime, servings, servingsUnit, difficulty); the recipe\n            gets a note naming them.\n        stage: \"to-try\", or \"tested\" if the owner has made it.\n        submit: True only if the owner asked to send it for approval.\n        photo_file_ids: stored photos, the main one first (at most 5).\n        video_file_id: one stored video to attach as a step.\n        video_caption: optional caption for that video.",
+      "description": "Save a recipe to the family cookbook, after the owner agreed on it in chat. The\n    owner gets a final Confirm / Cancel; nothing is saved before that. Saved recipes\n    are private. Saving the same source again changes nothing.\n\n    Args:\n        recipe: the whole recipe, in Hebrew.\n        source: where it came from: the link, or the file ids it was read from.\n            Keeps the same recipe from being saved twice.\n        estimated: the fields you estimated because the source didn't say (of\n            prepTime, waitTime, servings, servingsUnit, difficulty); the recipe\n            gets a note naming them.\n        stage: \"to-try\", or \"tested\" if the owner has made it.\n        submit: True only if the owner asked to send it for approval.\n        photo_file_ids: stored photos, the main one first (at most 5).\n        step_media: stored photos or videos shown with the steps, in order, each\n            with an optional caption.",
       "name": "save_recipe",
       "parameters": {
         "properties": {
@@ -378,17 +378,46 @@
             "default": "to-try",
             "type": "string"
           },
+          "step_media": {
+            "anyOf": [
+              {
+                "items": {
+                  "properties": {
+                    "caption": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Caption"
+                    },
+                    "file_id": {
+                      "description": "a stored photo or video",
+                      "title": "File Id",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file_id"
+                  ],
+                  "title": "StepMedia",
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "submit": {
             "default": false,
             "type": "boolean"
-          },
-          "video_caption": {
-            "default": "",
-            "type": "string"
-          },
-          "video_file_id": {
-            "default": "",
-            "type": "string"
           }
         },
         "required": [

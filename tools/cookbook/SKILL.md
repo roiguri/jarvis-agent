@@ -11,5 +11,5 @@ description: the family cookbook — find and read recipes, save new ones after 
 - If the source has no amounts, say so and ask the owner for them.
 - Before drafting, check `find_recipes` for a recipe with the same name, and mention it if there is one.
 - Stage is "to-try" unless the owner says they've made it ("tested"). Send for approval (`submit`) only when the owner asks.
-- Photos and a step video go by their file ids (the `file:…` in a marker): the owner's own, or a link's cover picture or video. Pass `source` (the link, or the file ids) so the same recipe is never saved twice.
+- Photos and step media (photos or videos shown with the steps, each with an optional caption) go by their file ids (the `file:…` in a marker): the owner's own, or a link's cover picture or video. Pass `source` (the link, or the file ids) so the same recipe is never saved twice.
 - If a call says the token isn't valid or access was refused, tell the owner plainly; don't retry.

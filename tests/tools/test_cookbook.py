@@ -288,21 +288,27 @@ def _png(size=(64, 48)) -> bytes:
     return out.getvalue()
 
 
-def test_photos_and_a_step_video_go_as_multipart(created, confirm):
+def test_photos_and_step_media_go_as_multipart(created, confirm):
     photo = store.add(_png(), source="t", filename="dish.png")
+    page = store.add(_png((30, 40)), source="t", filename="handwritten.png")
     video = store.add(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64, source="web",
                       filename="reel.mp4", mime_hint="video/mp4")
     assert video.kind == "video"
-    save(source=REEL, photo_file_ids=[photo.id], video_file_id=video.id, video_caption="ללוש")
-    assert "1 photo(s) and a step video" in confirm.pending[0][0]
+    save(source=REEL, photo_file_ids=[photo.id],
+         step_media=[{"file_id": video.id, "caption": "ללוש"}, {"file_id": page.id,
+                                                                "caption": "המתכון המקורי"}])
+    assert "1 photo(s) and 2 step media file(s)" in confirm.pending[0][0]
     out = confirm.tap()
-    assert "(1 photo(s), a step video)" in out
+    assert "(1 photo(s), 2 step media file(s))" in out
     (payload, request), = created["posted"]
     assert request.headers["content-type"].startswith("multipart/form-data")
     assert payload["images"] == [{"part": "photo1", "isPrimary": True}]
-    assert payload["mediaInstructions"] == [{"part": "step1", "caption": "ללוש"}]
+    assert payload["mediaInstructions"] == [{"part": "step1", "caption": "ללוש"},
+                                            {"part": "step2", "caption": "המתכון המקורי"}]
     raw = request.read()
-    assert b'name="photo1"; filename="photo1.png"' in raw and b'name="step1"' in raw
+    assert b'name="photo1"; filename="photo1.png"' in raw
+    assert b'name="step1"; filename="step1.mp4"' in raw
+    assert b'name="step2"; filename="step2.png"' in raw
     assert b'name="request"\r\nContent-Type: application/json' in raw
 
 
@@ -326,18 +332,18 @@ def test_a_large_or_unaccepted_photo_is_re_encoded_as_jpeg(monkeypatch):
 def test_files_that_cant_be_used_are_refused_before_asking(created, confirm):
     voice = store.add(b"OggS" + b"\x00" * 60, source="t", mime_hint="audio/ogg")
     assert "isn't a stored photo" in save(photo_file_ids=[voice.id])
-    assert "isn't a stored MP4" in save(video_file_id=voice.id)
+    assert "isn't a stored photo or MP4" in save(step_media=[{"file_id": voice.id}])
     gone = store.add(_png((10, 10)), source="t")
     store.delete(gone.id, "owner")
     assert "Not saved:" in save(photo_file_ids=[gone.id])
     assert confirm.pending == []
 
 
-def test_a_video_over_the_request_limit_is_left_out_and_said(created, confirm, monkeypatch):
+def test_step_media_over_the_request_limit_is_left_out_and_said(created, confirm, monkeypatch):
     monkeypatch.setattr(save_mod, "REQUEST_MAX_BYTES", 50)
     video = store.add(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64, source="web", mime_hint="video/mp4")
-    save(source=REEL, video_file_id=video.id)
-    assert "the video" in confirm.pending[0][0] and "left out" in confirm.pending[0][0]
+    save(source=REEL, step_media=[{"file_id": video.id}])
+    assert "step media 1" in confirm.pending[0][0] and "left out" in confirm.pending[0][0]
     out = confirm.tap()
     assert "left out" in out and created["posted"][0][1].headers["content-type"] == "application/json"
 
