@@ -697,7 +697,7 @@ sending back passed in S6, and the origin line and its search are tested.
 
 Delete both `media_cache.py` modules and the cache dirs once the S3a code has run long enough
 that rolling back past it is no longer wanted. The record back-fill (`worker.queue_missing()` and its startup
-step) goes with them. Every `TODO(#185)` marks what to remove.
+step) goes with them. Each removal TODO naming #185 marks what to remove.
 
 ## Out of scope (extension points)
 
