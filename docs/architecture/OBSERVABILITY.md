@@ -188,6 +188,8 @@ Telemetry was written to `logs/turns.jsonl` and `logs/tool_calls.jsonl` until 20
 
 Code that exists only until a follow-up lands carries `TODO(#N)`, naming the issue that tracks its removal. The `todo-issues` workflow (`.github/workflows/todo-issues.yml`) reopens issue N if it is closed while any marker remains on `main`, so the issue can only stay closed once the code is gone.
 
+In markdown a marker is a comment at the text it removes, `<!-- TODO(#N): … -->`: hidden when rendered, still found by the workflow. Anywhere else in a doc the text is prose and not a marker, so a doc can name a marker without keeping its issue open.
+
 ---
 
 ## Schema Evolution

@@ -5,6 +5,8 @@ name: TODO issues
 # main reopens it, with the markers listed — so the issue can only stay closed
 # once the code it tracks is gone. A PR that removes the markers and says
 # "Closes #N" closes it cleanly: by the time the issue closes, main has the merge.
+# In markdown only a comment counts (`<!-- TODO(#N): … -->`), so prose can name a
+# marker without being one.
 on:
   issues:
     types: [closed]
@@ -25,7 +27,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           N: ${{ github.event.issue.number }}
         run: |
-          hits="$(git grep -n -F "TODO(#${N})" -- . ':!.github/workflows/todo-issues.yml' || true)"
+          code="$(git grep -n -F "TODO(#${N})" -- . ':!*.md' ':!.github/workflows/todo-issues.yml' || true)"
+          docs="$(git grep -n -F "<!-- TODO(#${N})" -- '*.md' || true)"
+          hits="$(printf '%s\n%s' "$code" "$docs" | sed '/^$/d')"
           if [ -z "$hits" ]; then
             echo "No TODO(#${N}) markers on main."
             exit 0
