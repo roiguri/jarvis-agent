@@ -63,6 +63,8 @@ INSTANCE = _paths["INSTANCE"]
 
 # The model every Jarvis call uses — the agent and the side calls a tool makes
 # itself, so a model swap is one edit and tools never import agent.
+# TODO(#199): newer Gemini models reject sampling params — drop the explicit
+# temperature= args (and the library's own 1.0 default) before changing this.
 MODEL = "gemini-3-flash-preview"
 
 
