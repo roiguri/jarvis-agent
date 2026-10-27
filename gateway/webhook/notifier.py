@@ -29,6 +29,9 @@ OutboxProvider = Callable[[], Outbox]
 
 SILENCE_MOVIE = 120    # 2-min fallback — used when expected count is unknown
 SILENCE_SERIES = 600   # 10-min fallback — series timer if not all episodes arrive
+# A movie Radarr has imported waits this long for Jellyfin's ItemAdded, which
+# can lag the import by several minutes while the library scans.
+SILENCE_MOVIE_EXPECTED = 600
 
 # Jellyfin internal address (poster fetch). Set via env per deploy.
 JELLYFIN_INTERNAL = os.getenv("JELLYFIN_INTERNAL_URL", "http://jellyfin.local:8096")
@@ -288,7 +291,10 @@ class MediaNotificationManager:
             return
         if batch.timer and not batch.timer.done():
             batch.timer.cancel()
-        silence = SILENCE_MOVIE if key == "Movies" else SILENCE_SERIES
+        if key != "Movies":
+            silence = SILENCE_SERIES
+        else:
+            silence = SILENCE_MOVIE_EXPECTED if batch.expected > 0 else SILENCE_MOVIE
         batch.timer = asyncio.create_task(self._timer_dispatch(key, silence))
 
     async def _timer_dispatch(self, key: str, silence: int) -> None:
@@ -301,7 +307,12 @@ class MediaNotificationManager:
     async def _dispatch_batch(self, key: str) -> None:
         async with self._lock:
             batch = self._batches.pop(key, None)
-        if batch is None or not batch.has_content():
+        if batch is None:
+            return
+        if not batch.has_content():
+            if batch.expected > 0:
+                logger.warning("Batch %r closed with %d expected and nothing ready — no notice sent",
+                               key, batch.expected)
             return
         if batch.timer and not batch.timer.done() and batch.timer is not asyncio.current_task():
             batch.timer.cancel()
