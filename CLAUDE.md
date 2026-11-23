@@ -199,26 +199,28 @@ Two instances on one host, each rooted by its systemd unit's `JARVIS_ROOT`. Full
 runbook: **[docs/DEPLOY.md](docs/DEPLOY.md)**; rationale in
 **[docs/plans/archive/STAGING_AND_DEPLOY.md](docs/plans/archive/STAGING_AND_DEPLOY.md)**.
 
-- **Prod** — `/app/jarvis_code`, `jarvis.service`, `JARVIS_ROOT=/app`. **Deploy-only:**
+- **Prod** — `/app/jarvis_code`, `jarvis.service`, `JARVIS_ROOT=/app`. **Deploy-only (`main` only):**
   updated exclusively by `deploy/deploy.sh` (pull `origin/main` → snapshot → tag → smoke
   check → hand off), never edited in place.
-- **Staging** — `/app/jarvis_staging/code`, `jarvis-staging.service` (on demand, not
-  enabled), `JARVIS_ROOT=/app/jarvis_staging`. Where development and behavior testing
-  happen; inert by default. **New sessions start here** (see DEVELOPMENT.md § Development
-  Workflow).
+- **Staging** — `/app/jarvis_staging/code`, `jarvis-staging.service`,
+  `JARVIS_ROOT=/app/jarvis_staging`. **Deploy-only (any pushed branch):** updated via
+  `deploy/deploy-staging.sh <branch>` for live behavior testing; inert by default
+  (proactive toggles off).
 
-**This Claude Code session runs on the same host.** Development edits go in the staging
-tree; prod changes only through `deploy/deploy.sh` + a restart.
+**Development happens locally** (edit, run `venv/bin/python -m pytest` + CI guards, push
+branch). Both server checkouts are deploy-only: stage a pushed branch with
+`deploy/deploy-staging.sh <branch>` + `scripts/jrestart-staging.sh`, prove it live, merge
+to `main` via PR, then promote `main` to prod with `deploy/deploy.sh` + `scripts/jrestart.sh`.
 
 ```bash
-journalctl -u jarvis -f            # prod logs
-journalctl -u jarvis-staging -f    # staging logs
+journalctl -u jarvis -f            # prod logs (on server)
+journalctl -u jarvis-staging -f    # staging logs (on server)
 ```
 
-Claude **cannot restart** either service (no permission) and does not run `deploy.sh`'s
-restart. After a change, ask the user to restart, then verify: read the `Running code:`
-provenance block (`scripts/jrestart.sh` prints it), check logs, and send a Telegram
-message. Never infer or fake service state.
+Agents **do not run** server restarts or prod deploys. After pushing a branch or merging
+to `main`, hand off the deploy/restart command to the owner, then verify: read the
+`Running code:` provenance block (`scripts/jrestart*.sh` prints it), check logs, and test
+with the staging bot. Never infer or fake service state.
 
 ---
 

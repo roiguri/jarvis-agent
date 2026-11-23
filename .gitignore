@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 .claude/
+.agents/
 # rollback.sh writes this; it is per-checkout operational state, not code
 .rollback-marker
 evals/results/

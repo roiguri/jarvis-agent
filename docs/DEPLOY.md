@@ -9,16 +9,43 @@ in [plans/archive/STAGING_AND_DEPLOY.md](plans/archive/STAGING_AND_DEPLOY.md); t
 |---|---|---|
 | Root (`JARVIS_ROOT`) | `/app` | `/app/jarvis_staging` |
 | Code | `/app/jarvis_code` | `/app/jarvis_staging/code` |
-| Service | `jarvis.service` | `jarvis-staging.service` (started on demand, not enabled) |
+| Branch policy | `main` only | any pushed branch (or `main`) |
+| Service | `jarvis.service` | `jarvis-staging.service` |
 | Proactive (heartbeat/reminders/webhook) | on | off (inert) |
 | Bot | the real Jarvis | the staging test bot |
 
 Every state path derives from `JARVIS_ROOT` (`config.py`); an unset root refuses to
-start. **Code flows through GitHub:** develop in the staging tree → push → merge to
-`origin/main` → prod pulls with `deploy.sh`. The owner runs every restart.
+start. **Code flows through GitHub:** develop locally → push branch → deploy to staging
+with `deploy/deploy-staging.sh <branch>` → prove live → merge to `origin/main` → promote
+prod with `deploy/deploy.sh`. Both server checkouts are deploy-only, and the owner runs
+every restart.
 
 > Restarts and unit installs need root, done from the Proxmox host via `pct exec 106 -- …`
 > or `pct enter 106`. Claude/CI cannot restart the service.
+
+---
+
+## `deploy/deploy-staging.sh` — deploy a pushed branch to staging
+
+Run **from the staging checkout** (or via `pct exec 106 --`). Checks out `origin/<branch>`,
+syncs deps if `requirements.txt` changed, verifies it imports under
+`JARVIS_ROOT=/app/jarvis_staging`, and hands off. **It never restarts** — you do that after
+it prints the hand‑off.
+
+```bash
+/app/jarvis_staging/code/deploy/deploy-staging.sh feat/my-branch
+/app/jarvis_staging/code/deploy/deploy-staging.sh main   # park staging back on main
+```
+
+What it does, and why each step fails closed:
+
+1. **Clean‑tree check** — refuses uncommitted edits in `/app/jarvis_staging/code`, so staging never silently runs unpushed code or wipes ad‑hoc edits.
+2. **`fetch origin` + `checkout -B <branch> origin/<branch>`** — verifies `origin/<branch>` exists and handles both fast‑forwards and rebased feature branches.
+3. **Dep sync** — `pip install` into staging's venv only if `requirements.txt` changed.
+4. **Import smoke check** — `JARVIS_ROOT=/app/jarvis_staging venv/bin/python -c "import main"`.
+5. **Path‑isolation check** (`check_paths.py`) — no module hardcodes a prod path.
+6. **Unit assertion** — the installed `jarvis-staging.service` declares `JARVIS_ROOT=/app/jarvis_staging`.
+7. **Prints the restart hand‑off** (`scripts/jrestart-staging.sh`). No state snapshots or `deploy-*` tags (unlike prod's `deploy.sh`).
 
 ---
 
@@ -239,7 +266,7 @@ what replaces the single-writer lock the design dropped).
 
 ### Quick commands
 
-**Privilege.** `deploy.sh` and `rollback.sh` need **no** root — they do git + pip only —
+**Privilege.** `deploy.sh`, `deploy-staging.sh`, and `rollback.sh` need **no** root — they do git + pip only —
 and they **self-drop to the checkout owner** (`jarvis_user`) if you invoke them as root, so
 running git as root never corrupts the tree's ownership. The **restart** scripts *do* need
 root (they call `systemctl`). So: deploy as anyone, restart as root.
@@ -247,9 +274,10 @@ root (they call `systemctl`). So: deploy as anyone, restart as root.
 **Inside the container** (`pct enter 106`, root shell):
 
 ```bash
-/app/jarvis_code/deploy/deploy.sh                       # deploy prod (drops to jarvis_user itself)
-/app/jarvis_code/scripts/jrestart.sh                    # then restart prod + show the boot block
-/app/jarvis_staging/code/scripts/jrestart-staging.sh    # restart / cold-start staging
+/app/jarvis_staging/code/deploy/deploy-staging.sh <branch>  # deploy branch to staging (drops to jarvis_user)
+/app/jarvis_staging/code/scripts/jrestart-staging.sh        # restart staging + show the boot block
+/app/jarvis_code/deploy/deploy.sh                           # deploy prod main (drops to jarvis_user)
+/app/jarvis_code/scripts/jrestart.sh                        # restart prod + show the boot block
 ```
 
 **From the PVE host** — drop these in `/root/.bashrc` (each wraps the in-container script
@@ -259,6 +287,7 @@ with `pct exec 106`):
 alias jrestart='pct exec 106 -- /app/jarvis_code/scripts/jrestart.sh'
 alias jrestart-staging='pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh'
 alias jdeploy='pct exec 106 -- /app/jarvis_code/deploy/deploy.sh'
+alias jdeploy-staging='pct exec 106 -- /app/jarvis_staging/code/deploy/deploy-staging.sh'
 ```
 
 `jdeploy` runs the fail‑closed `deploy.sh` (it never restarts); follow a green deploy with

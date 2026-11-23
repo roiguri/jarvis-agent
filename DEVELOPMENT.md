@@ -155,41 +155,31 @@ live in the private deployment config, not in this repo.
 
 ## Development Workflow
 
-Development happens in the **staging tree**, never in prod. Prod (`/app/jarvis_code`)
-is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooling is in
-[docs/DEPLOY.md](docs/DEPLOY.md); the two-instance layout and rationale in
+Development happens **locally** on a feature branch off `main`. Both server checkouts are
+**deploy-only** — staging (`/app/jarvis_staging/code`) deploys any pushed branch via
+`deploy/deploy-staging.sh <branch>`, and prod (`/app/jarvis_code`) deploys `main` only via
+`deploy/deploy.sh`. The full tooling is in [docs/DEPLOY.md](docs/DEPLOY.md); the
+two-instance layout and rationale in
 [docs/plans/archive/STAGING_AND_DEPLOY.md](docs/plans/archive/STAGING_AND_DEPLOY.md).
 
-1. **Edit** in `/app/jarvis_staging/code` on a feature branch off `main`:
+1. **Edit & verify locally** on a feature branch off `main` (use a Python 3.11 venv to match
+   the server and CI; enable `.githooks` once per checkout via `git config core.hooksPath .githooks`):
    ```bash
-   cd /app/jarvis_staging/code
    git fetch origin && git checkout -b feat/my-change origin/main
-   ```
-2. **Test against the staging bot** (its own root, inert by default):
-   ```bash
-   pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh   # start + show boot block
-   # Read `root : /app/jarvis_staging` in the printed block, then chat with the
-   # STAGING bot in Telegram. Add a JARVIS_*_ENABLED=true line to
-   # deploy/jarvis-staging.service only for a run that deliberately exercises
-   # heartbeat / reminders / webhook.
-   pct exec 106 -- systemctl stop jarvis-staging.service                  # inert again when done
-   ```
-   Type-checking doesn't catch LLM-behavior regressions — talk to the staging bot.
-   Run the test suite before pushing (test dependencies are in `requirements-dev.txt`,
-   kept out of prod's `requirements.txt`):
-   ```bash
-   venv/bin/pip install -r requirements-dev.txt   # once per venv
+   venv/bin/pip install -r requirements.txt -r requirements-dev.txt   # once per venv
    venv/bin/python -m pytest
    venv/bin/python -m pytest --update-golden      # after an intended prompt/SKILL.md/docstring change
    ```
    `tests/golden/` snapshots the system prompt and the tool schemas; review its diff like code.
+   Also run the CI guards (`scripts/ci/check_*.py`) before pushing.
 
    Before merging a change that alters what the model sees or how a turn behaves (a prompt,
    a tool docstring, a `SKILL.md`, the model, heartbeat logic), run the evals: real-model
    scenarios with a pass rate per case, compared against the committed baseline. By hand,
    never in CI; about $0.03 per attempt. Every attempt runs in a scratch root with
    outside-reaching tools stubbed, so nothing touches staging or prod state. The API key is
-   taken from the environment, or else from staging's `secrets/.env` (never prod's).
+   taken from `GOOGLE_API_KEY` in the environment (or staging's `secrets/.env` when run on the
+   server, never prod's).
    ```bash
    venv/bin/python -m evals.run                      # all cases, 3 attempts each
    venv/bin/python -m evals.run --case 'step*' -k 1  # a subset
@@ -199,24 +189,31 @@ is **deploy-only** — touched exclusively by `deploy/deploy.sh`. The full tooli
    details (checks, tool calls, the ack, sends, tokens) are in `evals/results/` (not
    committed). Cases live in `evals/cases/` and contain no real personal data (the repo is
    public).
-3. **Ship** — push the branch, open a PR to `main` (CI runs the test suite and the four guards, all required), merge:
+2. **Stage & prove live** — push the branch, deploy it to staging on LXC 106, and restart:
    ```bash
    git push origin feat/my-change
+   # On the Proxmox host:
+   pct exec 106 -- /app/jarvis_staging/code/deploy/deploy-staging.sh feat/my-change
+   pct exec 106 -- /app/jarvis_staging/code/scripts/jrestart-staging.sh   # restart + show boot block
+   ```
+   Read `branch : feat/my-change` and `root : /app/jarvis_staging` in the printed block, then
+   test against the staging bot (Telegram and/or `jarvis-app` staging). Type-checking doesn't
+   catch LLM-behavior regressions — talk to the staging bot.
+3. **Ship** — once proven on staging, open a PR to `main` (CI runs the test suite and the
+   four guards, all required) and merge:
+   ```bash
    gh pr create --base main --fill          # merge once CI is green
    ```
-4. **Deploy** — in the prod checkout, pull the merge and hand off the restart:
+4. **Promote to prod** — pull `origin/main` into the prod checkout and hand off the restart:
    ```bash
-   cd /app/jarvis_code && ./deploy/deploy.sh     # never restarts; fails closed
-   pct exec 106 -- systemctl restart jarvis.service
+   pct exec 106 -- /app/jarvis_code/deploy/deploy.sh     # never restarts; fails closed
+   pct exec 106 -- /app/jarvis_code/scripts/jrestart.sh
    pct exec 106 -- journalctl -u jarvis.service -f
    ```
    Roll back a bad deploy with `deploy/rollback.sh <tag>` (see docs/DEPLOY.md).
-5. **New Python deps** — install in the staging venv and re-freeze; `deploy.sh`
-   re-installs in prod automatically when `requirements.txt` changes:
-   ```bash
-   /app/jarvis_staging/code/venv/bin/pip install <pkg>
-   /app/jarvis_staging/code/venv/bin/pip freeze > /app/jarvis_staging/code/requirements.txt
-   ```
+5. **New Python deps** — pin the package (and transitive deps if needed) in `requirements.txt`
+   using Python 3.11 (keep `requirements-dev.txt` packages out of `requirements.txt`); both
+   `deploy-staging.sh` and `deploy.sh` re-install automatically when `requirements.txt` changes.
 
 > Adding a tool/skill/channel is an architecture concern, not an ops one — see
 > [CLAUDE.md](CLAUDE.md) "Key Files to Know" and
