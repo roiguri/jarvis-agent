@@ -10,7 +10,7 @@
 ### Branch 1: `feat/dream-daily` (Phase 1)
 - [x] **Plan:** `docs(plans): add dreaming quality improvement plan`
 - [x] **P1-S1:** `test(evals): add prod-derived suggestion cases and precision grading`
-- [ ] **P1-S2:** `feat(dream): add homes registry, generic tool trail, media-alert filter, and guards`
+- [x] **P1-S2:** `feat(dream): add homes registry, generic tool trail, media-alert filter, and guards`
 - [ ] **P1-S3:** `feat(dream): tighten daily prompt for precision and add dream_preferences.md`
 - [ ] **Ship Phase 1:** Push `feat/dream-daily` → PR to `main` → CI green → merge → deploy to prod
 
@@ -25,7 +25,7 @@
 ### Phase 1 — Daily Dreaming Fixes (`feat/dream-daily`)
 
 - [x] **P1-S1 — Prod-derived evals & precision grading.** Add `max_suggestions` to `evals/grade.py`; add ~10 synthetic, anonymized eval cases in `evals/cases/suggestions/` covering every failure pattern observed in production (bare `"don't apply"` day, mid-chat writes to `HEARTBEAT.md` or memory already saved, media-upgrade alerts, unacknowledged morning briefings, one-off media/shopping over-interpretation, tentative recipe tweaks, short-term weekly schedule variations, stale untouched files ignored on daily, plus repeated explicit preferences and silent days). Record baseline before code changes.
-- [ ] **P1-S2 — Shared `homes.py` registry + generic tool trail + media-alert filter + guards.** Add `homes.py` (`SKILL.md` `stores:` discovery + optional `@homes.provider` hooks) and wire initial providers; drop non-conversational `notification` / `llm_notification` alerts in `conversation()`; include a tool-agnostic 1-line tool-call trail (args truncated, `-> ok`/`error`, never `tool_result` bodies); fix `MAX_TOKENS` (fail even on partial text in `dream` scope) and `WRAPPED_UP` + `NOTHING` handling.
+- [x] **P1-S2 — Shared `homes.py` registry + generic tool trail + media-alert filter + guards.** Add `homes.py` (`SKILL.md` `stores:` discovery + optional `@homes.provider` hooks) and wire initial providers; drop non-conversational `notification` / `llm_notification` alerts in `conversation()`; include a tool-agnostic 1-line tool-call trail (args truncated, `-> ok`/`error`, never `tool_result` bodies); fix `MAX_TOKENS` (fail even on partial text in `dream` scope) and `WRAPPED_UP` + `NOTHING` handling.
 - [ ] **P1-S3 — Tightened daily prompt + `dream_preferences.md`.** Drop the raw 7-day past-notes dump; inject owner-curated `jarvis_memory/dream_preferences.md` in `dream` scope only when non-empty (+ one line in `prompts/AGENTS.md` for chat feedback updates); apply the precision-first redesign to `prompts/dream.md`; update `docs/architecture/MEMORY.md` and `evals/baseline.json`.
 
 ### Phase 2 — Weekly Maintenance Pass (`feat/dream-weekly`, after Phase 1 settles in prod)

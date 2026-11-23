@@ -909,18 +909,26 @@ def ask_jarvis(
             outcome = _exhausted_outcome(tracker, turn_id, _ai_text(last_ai))
         else:
             reason = _finish_reason(last_ai)
-            if not final_response.strip() and reason not in _NORMAL_FINISH_REASONS:
+            if (not final_response.strip() and reason not in _NORMAL_FINISH_REASONS) or (
+                scope == "dream" and reason == "MAX_TOKENS"
+            ):
                 # The graph ended normally but the model stopped for its own
-                # reason and produced no text. Left alone this collapses to ""
-                # and is reported as a clean turn, which is how a request was
-                # once dropped in silence.
+                # reason and produced no text (or hit MAX_TOKENS on a dream
+                # turn, where partial text would deliver a cut-off note).
+                truncated = scope == "dream" and reason == "MAX_TOKENS" and bool(final_response.strip())
                 logger.warning(
-                    "Turn %s ended with finish_reason=%s and no text.", turn_id, reason
+                    "Turn %s ended with finish_reason=%s%s.",
+                    turn_id, reason, " (truncated dream response)" if truncated else " and no text",
                 )
                 _record_turn_error(f"finish_reason: {reason}")
+                cause = (
+                    "the model hit the output limit (`MAX_TOKENS`) mid-response"
+                    if truncated
+                    else f"the model stopped mid-response without an answer (it reported `{reason}`)"
+                )
                 outcome = _failed_outcome(
                     config, tracker,
-                    f"the model stopped mid-response without an answer (it reported `{reason}`)",
+                    cause,
                     suffix=" Rephrasing or splitting the request usually gets past it.",
                     stateless=stateless,
                 )
