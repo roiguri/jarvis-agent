@@ -14,7 +14,7 @@ from agent import ask_jarvis, ask_jarvis_once, keep_db_small
 import heartbeat_state
 import dream
 from heartbeat import run_heartbeat
-from triggers.scheduler import add_dream, add_heartbeat, init_scheduler, restore_pending
+from triggers.scheduler import add_dream, add_heartbeat, add_weekly_dream, init_scheduler, restore_pending
 from gateway.base import InboundMessage, ReplyContext
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
@@ -334,6 +334,7 @@ async def main() -> None:
     if config.HEARTBEAT_ENABLED:
         add_heartbeat(run_heartbeat)
         add_dream(dream.run_scheduled)
+        add_weekly_dream(dream.run_weekly_scheduled)
 
     # Channel up: binds the outbox loop and starts inbound handling, so
     # everything after this point (past-due reminders, scheduler jobs) can send.
@@ -360,6 +361,9 @@ async def main() -> None:
         catch_up = None
         if config.HEARTBEAT_ENABLED and dream.catch_up_due():
             catch_up = asyncio.get_running_loop().create_task(dream.run_scheduled())
+        weekly_catch_up = None
+        if config.HEARTBEAT_ENABLED and dream.weekly_catch_up_due():
+            weekly_catch_up = asyncio.get_running_loop().create_task(dream.run_weekly_scheduled())
         if config.HEARTBEAT_ENABLED:
             # Next fire time in the boot block: makes the phase checkable at a
             # glance instead of waiting for the first tick to hit the journal.

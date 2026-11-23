@@ -100,7 +100,7 @@ async def _compact(inbound: InboundMessage, args: list[str]) -> str:
 
 
 # TODO(#176): consider removing once memory suggestions end.
-@command("dream", "Write the daily log and send the memory suggestions now. Sub: /dream yesterday|today")
+@command("dream", "Write the daily log and send memory suggestions now. Sub: /dream yesterday|today|week")
 async def _dream(inbound: InboundMessage, args: list[str]) -> str:
     import datetime as _dt
 
@@ -108,11 +108,20 @@ async def _dream(inbound: InboundMessage, args: list[str]) -> str:
     from timeutils import ISRAEL_TZ
 
     which = (args[0].lower() if args else "yesterday")
-    if which not in ("yesterday", "today"):
-        return section("Usage", ["`/dream [yesterday|today]` — today covers the day so far"])
-    day = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
-    if which == "yesterday":
-        day -= _dt.timedelta(days=1)
+    if which not in ("yesterday", "today", "week"):
+        return section("Usage", ["`/dream [yesterday|today|week]` — today covers the day so far; week runs the 7-day maintenance review"])
+    today = _dt.datetime.now(_dt.timezone.utc).astimezone(ISRAEL_TZ).date()
+    if which == "week":
+        end_day = today - _dt.timedelta(days=1)
+        start_day = end_day - _dt.timedelta(days=6)
+        outcome = await dream.run_weekly(end_day)
+        return kv_section("Weekly memory review", [
+            ("Window", f"{start_day.isoformat()} to {end_day.isoformat()}"),
+            ("Suggestions", {"sent": "sent as a message",
+                             "nothing": "nothing to send (nothing worth suggesting)",
+                             "failed": "failed — see the log"}[outcome]),
+        ])
+    day = today - _dt.timedelta(days=1) if which == "yesterday" else today
     log, suggestions = await dream.run(day)
     return kv_section("Morning job", [
         ("Day", day.isoformat()),

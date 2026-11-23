@@ -38,6 +38,8 @@ FOOTER = "Suggestions only — apply one only when Roi asks."
 # TODO(#176): when the review applies changes, rewrite the prompt's "change
 # nothing" and "suggest" wording.
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "dream.md")
+WEEKLY_PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "dream_weekly.md")
+WEEKLY_DAYS = 7
 
 READ_ONLY = {"SOUL.md"}
 # Heartbeat's own files plus the owner's dreaming-preferences file (injected separately when non-empty).
@@ -194,14 +196,8 @@ def _memory_files() -> list[tuple[str, str, date]]:
     return sorted(found, key=lambda f: (rank.get(f[0], len(rank)), f[0]))
 
 
-def build_instruction(day: date, now: datetime, transcript: str) -> str:
-    """The turn's input: the review instruction, the memory files, other homes,
-    optional owner dreaming preferences, and the day's conversation."""
-    import homes
-
-    with open(PROMPT_PATH, encoding="utf-8") as f:
-        instruction = f.read().strip()
-    files = _memory_files()
+def _format_memory_block(files: list[tuple[str, str, date]]) -> tuple[str, str]:
+    """The listing block and the non-core file bodies for a review turn."""
     width = max((len(rel) + (len(" (read-only)") if rel in READ_ONLY else 0) for rel, _, _ in files), default=0)
     listing = []
     for rel, content, changed in files:
@@ -210,18 +206,76 @@ def build_instruction(day: date, now: datetime, transcript: str) -> str:
         listing.append(f"  {label:<{width}}  {len(content):>6,} chars, changed {changed:%Y-%m-%d}{where}")
     bodies = [f"--- {rel} (changed {changed:%Y-%m-%d}) ---\n{content.strip()}"
               for rel, content, changed in files if rel not in CORE_ORDER]
+    return "Memory files:\n" + "\n".join(listing) + f"\n  {NOT_SHOWN}", "\n\n".join(bodies)
+
+
+def _daily_logs(end_day: date, days: int = WEEKLY_DAYS) -> list[tuple[date, str]]:
+    """Available daily logs covering the ``days`` ending on ``end_day``, oldest first."""
+    import daily_log
+
+    found: list[tuple[date, str]] = []
+    start = end_day - timedelta(days=days - 1)
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        content = daily_log.read(day)
+        if content:
+            found.append((day, content))
+    return found
+
+
+def build_instruction(day: date, now: datetime, transcript: str) -> str:
+    """The turn's input: the review instruction, the memory files, other homes,
+    optional owner dreaming preferences, and the day's conversation."""
+    import homes
+
+    with open(PROMPT_PATH, encoding="utf-8") as f:
+        instruction = f.read().strip()
+    listing_block, bodies_block = _format_memory_block(_memory_files())
     prefs = _dream_preferences()
     parts = [
         instruction,
         f"Today: {now.astimezone(ISRAEL_TZ):%A %Y-%m-%d}, Israel time.",
-        "Memory files:\n" + "\n".join(listing) + f"\n  {NOT_SHOWN}",
-        "\n\n".join(bodies),
+        listing_block,
+        bodies_block,
         "Other homes (already tracked outside memory):\n" + homes.summarize(),
         (
             f"Owner preferences for memory suggestions (follow these; never suggest editing {PREFERENCES_FILE}):\n{prefs}"
             if prefs else ""
         ),
         f"Conversation on {day:%A %Y-%m-%d}:\n{transcript}",
+    ]
+    return "\n\n".join(p for p in parts if p)
+
+
+def build_weekly_instruction(end_day: date, now: datetime, logs: list[tuple[date, str]]) -> str:
+    """The weekly maintenance turn's input: the weekly review instruction, all
+    memory files with sizes and last-changed dates, other homes, optional owner
+    dreaming preferences, and the last 7 daily logs."""
+    import homes
+
+    with open(WEEKLY_PROMPT_PATH, encoding="utf-8") as f:
+        instruction = f.read().strip()
+    start_day = end_day - timedelta(days=WEEKLY_DAYS - 1)
+    listing_block, bodies_block = _format_memory_block(_memory_files())
+    prefs = _dream_preferences()
+    if logs:
+        logs_body = "\n\n".join(
+            f"--- daily/daily_{d:%Y-%m-%d}.md ---\n{text.strip()}" for d, text in logs
+        )
+    else:
+        logs_body = "(none)"
+    parts = [
+        instruction,
+        f"Today: {now.astimezone(ISRAEL_TZ):%A %Y-%m-%d}, Israel time.",
+        f"Review window: {start_day:%Y-%m-%d} to {end_day:%Y-%m-%d} (last {WEEKLY_DAYS} days).",
+        listing_block,
+        bodies_block,
+        "Other homes (already tracked outside memory):\n" + homes.summarize(),
+        (
+            f"Owner preferences for memory suggestions (follow these; never suggest editing {PREFERENCES_FILE}):\n{prefs}"
+            if prefs else ""
+        ),
+        f"Daily logs from the past {WEEKLY_DAYS} days:\n{logs_body}",
     ]
     return "\n\n".join(p for p in parts if p)
 
@@ -266,5 +320,36 @@ async def send(day: date) -> str:
         logger.info("memory suggestions: nothing to suggest for %s", day)
         return "nothing"
     note = f"🧠 Memory suggestions — {day:%Y-%m-%d}\n\n{text}\n\n{FOOTER}"
+    sent = await default_outbox().notify_owner(note, event=EVENT_MEDIA, metadata={"job": JOB})
+    return "sent" if sent.ok else "failed"
+
+
+async def send_weekly(end_day: date) -> str:
+    """Run the weekly maintenance review covering the 7 days ending on ``end_day``
+    and deliver its note. Returns "sent", "nothing", or "failed"."""
+    import asyncio
+
+    import agent
+    import heartbeat
+    from gateway.factory import default_outbox
+    from gateway.outbox import EVENT_MEDIA
+
+    now = datetime.now(timezone.utc)
+    logs = _daily_logs(end_day)
+    if not logs and not _memory_files():
+        logger.info("weekly memory review: no daily logs or memory files for %s, nothing sent", end_day)
+        return "nothing"
+    instruction = build_weekly_instruction(end_day, now, logs)
+    async with heartbeat.TURN_LOCK:
+        outcome = await asyncio.to_thread(agent.ask_jarvis, instruction, THREAD_ID, scope="dream")
+    if not outcome.finished:
+        logger.error("weekly memory review ending %s did not finish (%s): %s", end_day, outcome.kind, outcome.cause)
+        return "failed"
+    text = outcome.text.strip()
+    if _is_nothing(text):
+        logger.info("weekly memory review: nothing to suggest for week ending %s", end_day)
+        return "nothing"
+    start_day = end_day - timedelta(days=WEEKLY_DAYS - 1)
+    note = f"🧠 Weekly memory review — {start_day:%Y-%m-%d} to {end_day:%Y-%m-%d}\n\n{text}\n\n{FOOTER}"
     sent = await default_outbox().notify_owner(note, event=EVENT_MEDIA, metadata={"job": JOB})
     return "sent" if sent.ok else "failed"

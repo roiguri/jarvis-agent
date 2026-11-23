@@ -229,3 +229,55 @@ def test_wrapped_up_with_suggestions_still_sends(turn, fake_outbox):
     assert asyncio.run(ms.send(DAY)) == "sent"
     assert len(fake_outbox.sent) == 1
     assert "USER.md: add x" in fake_outbox.sent[0][1]
+
+
+def test_weekly_turn_reads_daily_logs_memory_files_homes_and_preferences(turn, memory_files, fake_outbox):
+    memory_files("daily/daily_2026-10-08.md", "# Daily Log\n- Too old log.")
+    memory_files("daily/daily_2026-10-10.md", "# Daily Log\n- Ran 5 km on Saturday.")
+    memory_files("daily/daily_2026-10-15.md", "# Daily Log\n- Mentioned Lisbon trip is over.")
+    memory_files("dream_preferences.md", "- Never suggest household appliances.\n")
+    calls = turn("Out of date\n1. `trips.md`: mark Lisbon as past.")
+    assert asyncio.run(ms.send_weekly(DAY)) == "sent"
+    (call,) = calls
+    assert call["thread_id"] == "dream" and call["scope"] == "dream"
+    text = call["input"]
+    assert text.startswith("Weekly memory maintenance review.")
+    assert "Review window: 2026-10-09 to 2026-10-15 (last 7 days)." in text
+    assert "--- daily/daily_2026-10-10.md ---" in text
+    assert "Ran 5 km on Saturday." in text
+    assert "--- daily/daily_2026-10-15.md ---" in text
+    assert "Mentioned Lisbon trip is over." in text
+    assert text.index("daily_2026-10-10.md") < text.index("daily_2026-10-15.md")
+    assert "Too old log." not in text
+    assert "--- fitness/plan.md (changed " in text
+    assert "Other homes (already tracked outside memory):" in text
+    assert "Owner preferences for memory suggestions" in text
+    assert "- Never suggest household appliances." in text
+    for absent in ("notes of a task", "the task list", "--- SOUL.md", "USER.md body"):
+        assert absent not in text
+    assert fake_outbox.sent == [(
+        EVENT_MEDIA,
+        "🧠 Weekly memory review — 2026-10-09 to 2026-10-15\n\n"
+        "Out of date\n1. `trips.md`: mark Lisbon as past.\n\n"
+        "Suggestions only — apply one only when Roi asks.",
+    )]
+    assert fake_outbox.meta == [{"job": "memory_suggestions"}]
+
+
+def test_weekly_runs_with_no_daily_logs_when_memory_files_exist(turn, memory_files, fake_outbox):
+    os.remove(os.path.join(config.MEMORY_DIR, "daily", "daily_2026-10-14.md"))
+    calls = turn("Nothing to suggest.")
+    assert asyncio.run(ms.send_weekly(DAY)) == "nothing"
+    assert len(calls) == 1
+    assert "Daily logs from the past 7 days:\n(none)" in calls[0]["input"]
+    assert fake_outbox.sent == []
+
+
+def test_weekly_wrapped_up_nothing_and_failed_send_nothing(turn, memory_files, fake_outbox):
+    turn(f"Nothing to suggest.\n\n{turn_budget.WRAPPED_UP_LINE}", kind=turn_budget.WRAPPED_UP)
+    assert asyncio.run(ms.send_weekly(DAY)) == "nothing"
+    assert fake_outbox.sent == []
+
+    turn("[This turn did not finish: out of time.]", kind=turn_budget.FAILED)
+    assert asyncio.run(ms.send_weekly(DAY)) == "failed"
+    assert fake_outbox.sent == []

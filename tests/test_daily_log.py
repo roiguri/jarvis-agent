@@ -126,3 +126,60 @@ def test_logs_shows_a_finished_days_log_and_today_so_far(model):
     daily_log._write(DAY, now=NOW)
     assert run("/logs 15.10.2026") == "# Daily Log - Thursday, October 15, 2026\n\n## Conversations\n- Steps: 4,956."
     assert "**Conversation**" in run("/logs today")
+
+
+def test_the_weekly_job_runs_on_sunday_and_catches_up_without_clobbering_daily(model, fake_outbox, monkeypatch):
+    # 2026-10-18 is Sunday (Israel is UTC+3 in Oct 2026 before DST switch)
+    sunday_0900 = datetime(2026, 10, 18, 6, 0, tzinfo=timezone.utc)
+    sunday_0830 = datetime(2026, 10, 18, 5, 30, tzinfo=timezone.utc)
+    sunday_1200 = datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc)
+    saturday_0900 = datetime(2026, 10, 17, 6, 0, tzinfo=timezone.utc)
+
+    weekly_calls = []
+
+    async def fake_send_weekly(end_day):
+        weekly_calls.append(end_day)
+        return "sent"
+
+    monkeypatch.setattr(memory_suggestions, "send_weekly", fake_send_weekly)
+    frozen = type("D", (datetime,), {"now": classmethod(lambda c, tz=None: sunday_0900 if tz is None else sunday_0900.astimezone(tz))})
+    for module in (dream, daily_log, memory_suggestions):
+        monkeypatch.setattr(module, "datetime", frozen)
+
+    assert not dream.weekly_catch_up_due(saturday_0900), "Saturday is not Sunday"
+    assert not dream.weekly_catch_up_due(sunday_0830), "before 09:00"
+    assert dream.weekly_catch_up_due(sunday_0900), "Sunday 09:00"
+    assert not dream.weekly_catch_up_due(sunday_1200), "past noon"
+
+    # Run daily first, then weekly: state.json must preserve both timestamps.
+    asyncio.run(dream.run_scheduled())
+    assert dream._last_run() == date(2026, 10, 18)
+    assert dream.weekly_catch_up_due(sunday_0900), "daily run must not suppress weekly"
+
+    asyncio.run(dream.run_weekly_scheduled())
+    asyncio.run(dream.run_weekly_scheduled())
+    assert weekly_calls == [date(2026, 10, 17)], "runs once on Sunday for the 7 days ending Saturday"
+    assert dream._last_run() == date(2026, 10, 18)
+    assert dream._last_weekly_run() == date(2026, 10, 18)
+    assert not dream.weekly_catch_up_due(sunday_0900)
+
+
+def test_dream_week_command_runs_weekly_review_and_conforms_to_layout(monkeypatch):
+    import main
+    from gateway.base import InboundMessage
+    from gateway.commands.format import check_reply
+
+    seen = []
+
+    async def fake_run_weekly(end_day):
+        seen.append(end_day)
+        return "sent"
+
+    monkeypatch.setattr(dream, "run_weekly", fake_run_weekly)
+    reply = asyncio.run(main.process_inbound_message(
+        InboundMessage(user_id=1, chat_id=1, thread_id=OWNER_THREAD_ID, user_text="/dream week")
+    ))
+    assert len(seen) == 1
+    assert "Weekly memory review" in reply
+    assert "sent as a message" in reply
+    assert check_reply(reply) == []
