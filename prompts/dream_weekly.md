@@ -29,7 +29,7 @@ Organization & duplicates
 Size & bloat
 Patterns across the week
 
-Format each suggestion concisely:
+Format each suggestion concisely as a numbered item (`1.`, `2.`, `3.`, ... — never `-` bullets, so Roi can reference items by number, e.g. `1. file.md: <exact edit>`):
 - Target file(s) (matching existing style), then the exact surgical edit, merge, trim, or removal to make.
 - One crisp `Why:` line citing the concrete evidence (exact past dates, exact char count vs target, overlapping filenames, or the specific daily log dates showing the pattern). Never invent suggestions to fill a quiet week.
 - Always use absolute dates (YYYY-MM-DD). Keep Roi's specifics (names, places, numbers, titles). Write in English.
