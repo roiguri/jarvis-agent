@@ -1,6 +1,6 @@
 # Dreaming Quality — Plan
 
-**Date:** 2026-11-22 · **Status:** Phase 1 shipped (`3b72194`); Phase 2 in progress on `feat/dream-weekly`.
+**Date:** 2026-11-22 · **Status:** Complete (Phase 1 merged at `3b72194`, Phase 2 merged at `a37ff47`).
 **Goal:** make daily memory suggestions high-precision and low-noise ("prefer misses over verbose or incorrect changes"), while keeping `dream` as a standard Jarvis turn (`scope="dream"`) with its normal tool surface.
 
 ---
@@ -16,7 +16,7 @@
 
 ### Branch 2: `feat/dream-weekly` (Phase 2)
 - [x] **P2-S1:** `feat(dream): add weekly maintenance review over daily logs and memory`
-- [ ] **Ship Phase 2:** Push `feat/dream-weekly` → PR to `main` → CI green → merge → deploy to prod
+- [x] **Ship Phase 2:** Push `feat/dream-weekly` → PR to `main` → CI green → merge → deploy to prod
 
 ---
 
