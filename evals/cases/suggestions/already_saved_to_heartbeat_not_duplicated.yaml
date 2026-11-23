@@ -1,0 +1,9 @@
+description: A recurring schedule correction already saved to HEARTBEAT.md via manage_heartbeat_task is not duplicated into USER.md.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "18:00", event: heartbeat, sent: "Thursday 20:00 CrossFit class isn't on the schedule. Latest slot is 19:00 — want to book that instead?"}
+  - {time: "18:20", owner: "there's no thursday class at 20:00, 19:00 is always the last. only on thursday, not other weekdays", tools: [{name: manage_heartbeat_task, args: {action: update, name: gym-booking-reminders, instruction: "Sun-Wed evening up to 20:00; Thu last class is 19:00."}, result: "Heartbeat task 'gym-booking-reminders' updated."}], jarvis: "Got it — I've updated the logic so Thursday ends at 19:00 while Sun–Wed still have 20:00."}
+expect:
+  sends: 0
+  not_called: [write_memory]

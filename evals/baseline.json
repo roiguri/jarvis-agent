@@ -1,5 +1,13 @@
 {
   "cases": {
+    "already_saved_to_heartbeat_not_duplicated": {
+      "passed": 0,
+      "runs": 3
+    },
+    "already_written_to_memory_not_duplicated": {
+      "passed": 1,
+      "runs": 3
+    },
     "background_only_day": {
       "passed": 3,
       "runs": 3
@@ -25,7 +33,7 @@
       "runs": 3
     },
     "jarvis_sent_not_attributed": {
-      "passed": 3,
+      "passed": 2,
       "runs": 3
     },
     "kept_elsewhere_not_suggested": {
@@ -34,6 +42,14 @@
     },
     "log_sent_message_not_attributed": {
       "passed": 3,
+      "runs": 3
+    },
+    "media_alerts_not_mined": {
+      "passed": 0,
+      "runs": 3
+    },
+    "mixed_day_precision": {
+      "passed": 0,
       "runs": 3
     },
     "morning_fact_recalled": {
@@ -50,6 +66,10 @@
     },
     "one_off_ignored": {
       "passed": 3,
+      "runs": 3
+    },
+    "one_off_requests_not_overinterpreted": {
+      "passed": 0,
       "runs": 3
     },
     "open_request_survives": {
@@ -77,6 +97,10 @@
       "runs": 3
     },
     "readiness_briefing_sent": {
+      "passed": 3,
+      "runs": 3
+    },
+    "rejection_only_day_ignored": {
       "passed": 3,
       "runs": 3
     },
@@ -112,6 +136,10 @@
       "passed": 3,
       "runs": 3
     },
+    "tentative_formatting_tweak_ignored": {
+      "passed": 0,
+      "runs": 3
+    },
     "tick_cannot_create_tasks": {
       "passed": 3,
       "runs": 3
@@ -124,11 +152,19 @@
       "passed": 3,
       "runs": 3
     },
+    "unacknowledged_briefing_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
     "wake_acts_on_its_task": {
       "passed": 3,
       "runs": 3
+    },
+    "weekly_schedule_variation_ignored": {
+      "passed": 1,
+      "runs": 3
     }
   },
-  "date": "2026-10-17",
+  "date": "2026-11-22",
   "model": "gemini-3-flash-preview"
 }

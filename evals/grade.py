@@ -9,6 +9,7 @@ Checks:
                   (strings match case-insensitively as substrings; others exactly)
     not_called_with: [{tool, args}] — no call of that tool with args containing these
     sends:        int — how many messages reached the owner through the Outbox
+    max_suggestions: int — at most this many numbered suggestion items across sent messages
     message_contains / message_not_contains: [strings] — over the text of every
                   message sent to the owner, case-insensitive
     message_matches / message_not_matches: [regexes] — the same text, case-insensitive
@@ -20,6 +21,19 @@ Checks:
 from __future__ import annotations
 
 import re
+
+_NUMBERED_ITEM_RE = re.compile(r"(?m)^(?:\*\*)?\d+\.(?:\*\*)?\s+")
+_FILE_ITEM_RE = re.compile(r"(?m)^(?:[-*]\s+)?(?:`|\*\*)?[A-Za-z0-9_./-]+\.(?:md|txt)(?:`|\*\*)?(?:\s*:|\s*$)")
+
+
+def count_suggestions(text: str) -> int:
+    """Count top-level suggestions in a rendered note: numbered items when
+    present, falling back to unnumbered file-headed items if the model omitted
+    numbers."""
+    numbered = len(_NUMBERED_ITEM_RE.findall(text))
+    if numbered:
+        return numbered
+    return len(_FILE_ITEM_RE.findall(text))
 
 
 def _args_match(want: dict, got: dict) -> bool:
@@ -67,7 +81,12 @@ def grade(expect: dict, result) -> list[tuple[str, bool, str]]:
     if "sends" in expect:
         checks.append((f"sends == {expect['sends']}", len(result.sends) == expect["sends"],
                        f"got {len(result.sends)}: {[s['text'][:80] for s in result.sends]}"))
-    text = "\n".join(s["text"] for s in result.sends).lower()
+    raw_text = "\n".join(s["text"] for s in result.sends)
+    if "max_suggestions" in expect:
+        count = count_suggestions(raw_text)
+        checks.append((f"suggestions <= {expect['max_suggestions']}", count <= expect["max_suggestions"],
+                       f"got {count}: {raw_text[:240]}"))
+    text = raw_text.lower()
     for s in expect.get("message_contains") or []:
         checks.append((f"message contains {s!r}", s.lower() in text, text[:200]))
     for s in expect.get("message_not_contains") or []:

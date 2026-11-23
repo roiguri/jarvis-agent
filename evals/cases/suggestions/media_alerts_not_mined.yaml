@@ -1,0 +1,21 @@
+description: One-way media upgrade alerts are not mined as project updates or facts about the owner.
+kind: suggestions
+time: "22:00"
+files:
+  active_projects.md: |
+    # Active Projects
+    - Home server: finish automated media quality upgrades and notifications.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - active_projects.md — ongoing projects
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "09:15", event: notification, sent: "**Solaris (2026)** upgraded to better quality on the media server."}
+  - {time: "12:40", event: notification, sent: "**Arrival (2016)** upgraded to 4K on the media server."}
+  - {time: "16:10", owner: "what time does the corner bakery close on Fridays?", jarvis: "It closes at 14:30 on Fridays."}
+  - {time: "20:05", event: notification, sent: "**Moon (2009)** upgraded to better quality on the media server."}
+expect:
+  sends: 0
+  not_called: [write_memory]

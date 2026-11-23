@@ -1,0 +1,25 @@
+description: A day where the owner only rejects the morning suggestions produces nothing and does not echo prior notes or propose meta-rules.
+kind: suggestions
+time: "22:00"
+files:
+  active_projects.md: |
+    # Active Projects
+    - Assistant app: finish media server notifications.
+  maintenance_log.md: |
+    # Maintenance Log
+    - Last bike service: 2025-06-10 (every 3 months).
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - active_projects.md — ongoing projects
+    - maintenance_log.md — periodic maintenance dates
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "08:30", days_ago: 1, job: memory_suggestions, event: notification, sent: "🧠 Memory suggestions\n\nFacts\n1. `active_projects.md`: mark media server notifications as completed.\nWhy: media server sent an upgrade alert.\n\nOut of date\n2. `maintenance_log.md`: last bike service is over 3 months ago."}
+  - {time: "08:00", event: notification, sent: "**Solaris (2026)** upgraded to better quality on the media server."}
+  - {time: "08:30", job: memory_suggestions, event: notification, sent: "🧠 Memory suggestions\n\nFacts\n1. `active_projects.md`: mark media server notifications as completed.\nWhy: media server sent an upgrade alert.\n\nOut of date\n2. `maintenance_log.md`: last bike service is over 3 months ago."}
+  - {time: "08:39", owner: "don't apply", jarvis: "Understood. Discarding those suggestions — no changes made."}
+expect:
+  sends: 0
+  not_called: [write_memory]
