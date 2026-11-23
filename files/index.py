@@ -11,6 +11,9 @@ Tables:
                Trigram-tokenized: a word matches inside a longer one, so a
                Hebrew word is found with a prefix attached.
   jobs         background work still to do for a file.
+  origin_links maps a channel's own attachment/origin id back to a stored file
+               without mutating files.origin (one file can be uploaded to a
+               channel more than once under distinct ids).
 
 Short-lived connections, WAL and a busy timeout, as in the episode store: the turn,
 tools and the background worker run on different threads.
@@ -91,6 +94,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     created TEXT NOT NULL,
     UNIQUE (file_id, kind)
 );
+
+CREATE TABLE IF NOT EXISTS origin_links (
+    channel TEXT NOT NULL,
+    origin_id TEXT NOT NULL,
+    file_id TEXT NOT NULL REFERENCES files(id),
+    PRIMARY KEY (channel, origin_id)
+);
+CREATE INDEX IF NOT EXISTS origin_links_file ON origin_links(file_id);
 """
 
 _INIT_LOCK = threading.Lock()
@@ -122,14 +133,16 @@ def connect() -> sqlite3.Connection:
 
 
 # PRAGMA user_version: 1 = chunks_fts is trigram-tokenized and built;
-# 2 = the old channel caches' path map (legacy_paths) is gone.
-_VERSION = 2
+# 2 = the old channel caches' path map (legacy_paths) is gone;
+# 3 = origin_links table exists and is backfilled from files.origin.
+_VERSION = 3
 
 
 def _upgrade(con: sqlite3.Connection) -> None:
     """Bring an older index up to _VERSION. Version 1 rebuilds the search table
-    with the trigram tokenizer from `chunks`; version 2 drops legacy_paths. The
-    version is set last, so an interrupted upgrade runs again on the next open."""
+    with the trigram tokenizer from `chunks`; version 2 drops legacy_paths;
+    version 3 backfills origin_links from existing files rows. The version is
+    set last, so an interrupted upgrade runs again on the next open."""
     version = con.execute("PRAGMA user_version").fetchone()[0]
     if version >= _VERSION:
         return
@@ -137,7 +150,18 @@ def _upgrade(con: sqlite3.Connection) -> None:
         con.execute("DROP TABLE IF EXISTS chunks_fts")
         con.executescript(_SCHEMA)
         con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
-    con.execute("DROP TABLE IF EXISTS legacy_paths")
+    if version < 2:
+        con.execute("DROP TABLE IF EXISTS legacy_paths")
+    if version < 3:
+        con.execute(
+            "INSERT OR IGNORE INTO origin_links (channel, origin_id, file_id)"
+            " SELECT source, json_extract(origin, '$.id'), id FROM files"
+            " WHERE source != '' AND source != 'jarvis'"
+            " AND origin IS NOT NULL AND json_valid(origin)"
+            " AND json_extract(origin, '$.id') IS NOT NULL"
+            " AND json_extract(origin, '$.id') != ''"
+            " ORDER BY created DESC, rowid DESC"
+        )
     con.execute(f"PRAGMA user_version = {_VERSION}")
     con.commit()
 

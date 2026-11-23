@@ -30,9 +30,10 @@ import config
 from tools import registry
 import heartbeat_state
 import pending_mirrors
+import reply_context
 import turn_budget
 import turn_context
-from gateway.base import OWNER_THREAD_ID
+from gateway.base import OWNER_THREAD_ID, ReplyContext
 
 # Per-turn telemetry — ContextVars + recorders for the telemetry store.
 from observability import telemetry
@@ -777,6 +778,7 @@ def ask_jarvis(
     trigger=None,
     input_role: str | None = None,
     initial_skills: set[str] | None = None,
+    reply_to: ReplyContext | None = None,
 ) -> turn_budget.TurnOutcome:
     """
     Run one agent turn and classify how it ended.
@@ -809,12 +811,23 @@ def ask_jarvis(
         initial_skills: heartbeat scope — the skills the turn starts with (the
             due tasks' warm start). Heartbeat turns keep no conversation: they
             run on ``stateless_executor`` and start from their input alone.
+        reply_to: optional ReplyContext when the user quoted an earlier message.
+            Prepended inside an untrusted boundary; quoted media stays as file
+            markers and never enters `files` / `content_blocks`.
     """
     stateless = scope in ("heartbeat", "dream")
     executor = stateless_executor if stateless else agent_executor
     now = _dt.datetime.now(_dt.timezone.utc)
     raw_input = user_input
-    user_input = f"{_turn_stamp(now)} {user_input}"
+    if reply_to is not None:
+        quoted = reply_context.format_reply_context(reply_to)
+        user_input = (
+            f"{_turn_stamp(now)}\n{quoted}\n\n{user_input}"
+            if user_input
+            else f"{_turn_stamp(now)}\n{quoted}"
+        )
+    else:
+        user_input = f"{_turn_stamp(now)} {user_input}"
     tracker = turn_budget.TurnTracker(turn_budget.POLICIES.get(scope, turn_budget.POLICIES["user"]))
     config = {
         "configurable": {"thread_id": thread_id},

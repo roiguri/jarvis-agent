@@ -169,9 +169,9 @@ class JarvisAppChannel(Channel):
     async def send_media(
         self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
         *, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str | None:
         # One owner, one conversation — chat_id is not a routing key here.
-        await self._upload_and_send(kind, payload, caption, None, filename, mime_type)
+        return await self._upload_and_send(kind, payload, caption, None, filename, mime_type)
 
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         await self._client.send_message(_with_source({"text": text}, event))
@@ -179,13 +179,13 @@ class JarvisAppChannel(Channel):
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
         *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
-        await self._upload_and_send(kind, payload, caption, event, filename, mime_type)
+    ) -> str | None:
+        return await self._upload_and_send(kind, payload, caption, event, filename, mime_type)
 
     async def _upload_and_send(
         self, kind: str, payload: bytes, caption: str | None, event: str | None = None,
         filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str:
         filename, mime_type = _upload_meta(kind, payload, filename, mime_type)
         # A full-size photo's decode takes long enough to stall the shared loop.
         meta = await asyncio.to_thread(_upload_metadata, kind, mime_type, payload)
@@ -196,6 +196,7 @@ class JarvisAppChannel(Channel):
         if caption:
             body["text"] = caption
         await self._client.send_message(_with_source(body, event))
+        return att_id
 
     def supports_block(self, kind: str) -> bool:
         return any(cls.kind == kind for cls in _BLOCK_WIRE)

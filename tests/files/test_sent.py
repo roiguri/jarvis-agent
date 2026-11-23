@@ -33,8 +33,9 @@ def clean():
 class MediaChannel:
     name = "test"
 
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, att_id=None):
         self.fail = fail
+        self.att_id = att_id
         self.sent = []
 
     async def send_to_owner_media(self, kind, payload, caption=None, *, event=None,
@@ -42,6 +43,7 @@ class MediaChannel:
         if self.fail:
             raise ConnectionError("offline")
         self.sent.append((kind, caption))
+        return self.att_id
 
 
 async def log_sink(event, text, metadata):
@@ -51,6 +53,10 @@ async def log_sink(event, text, metadata):
 
 async def save_sent(attachment, caption):
     return await asyncio.to_thread(attachments.save_sent, attachment, caption)
+
+
+async def link_origin(file_id, channel, origin_id):
+    await asyncio.to_thread(store.link_origin, file_id, channel, origin_id)
 
 
 def send(outbox, caption):
@@ -108,3 +114,41 @@ def test_a_sent_file_keeps_its_name_and_type():
                                                  mime_type="application/pdf")).ok
     (rec,) = [store.get(r["id"]) for r in index.rows("SELECT id FROM files")]
     assert (rec.filename, rec.kind) == ("lease.pdf", "document")
+
+
+def test_fresh_send_records_origin_link_for_channel_att_id():
+    att_id = "att_01H11111111111111111111111"
+    outbox = Outbox(MediaChannel(att_id=att_id), log_sink, save_sent, link_origin)
+    assert send(outbox, "Poster").ok
+    (rec,) = [store.get(r["id"]) for r in index.rows("SELECT id FROM files")]
+    assert rec.origin == {}
+    assert store.get_by_origin("test", att_id) == rec
+    assert store.get_by_origin("jarvis", att_id) is None
+    assert index.rows("SELECT channel, origin_id, file_id FROM origin_links") == [
+        {"channel": "test", "origin_id": att_id, "file_id": rec.id}
+    ]
+
+
+def test_kept_send_links_channel_att_id_without_overwriting_origin_url():
+    existing = store.add(JPEG, source="web", origin={"url": "https://example.com/poster.jpg"})
+    att_id = "att_01H22222222222222222222222"
+    outbox = Outbox(MediaChannel(att_id=att_id), log_sink, save_sent, link_origin)
+    outcome = asyncio.run(outbox.notify_owner_media(
+        "image", JPEG, "Resent poster", event=EVENT_MEDIA,
+        kept=(existing.id, existing.marker()),
+    ))
+    assert outcome.ok
+    assert len(index.rows("SELECT id FROM files")) == 1
+    assert store.get_by_origin("test", att_id) == existing
+    assert store.get(existing.id).origin == {"url": "https://example.com/poster.jpg"}
+
+
+def test_a_failed_link_never_fails_the_delivered_send():
+    async def broken_link(file_id, channel, origin_id):
+        raise RuntimeError("sqlite busy")
+
+    att_id = "att_01H33333333333333333333333"
+    outbox = Outbox(MediaChannel(att_id=att_id), log_sink, save_sent, broken_link)
+    assert send(outbox, "Poster").ok
+    (row,) = logged()
+    assert "Poster" in row["message"] and row["media"]

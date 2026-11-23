@@ -15,7 +15,7 @@ import heartbeat_state
 import dream
 from heartbeat import run_heartbeat
 from triggers.scheduler import add_dream, add_heartbeat, init_scheduler, restore_pending
-from gateway.base import InboundMessage
+from gateway.base import InboundMessage, ReplyContext
 from gateway.commands import try_handle_command
 from gateway.factory import build_stack, default_outbox
 from gateway.outbox import Outbox
@@ -32,6 +32,7 @@ from observability import store as telemetry_store
 from episodes import record as episodes_record
 from files import attachments as file_attachments
 from files import startup as file_startup
+from files import store as file_store
 from files import worker as file_worker
 
 # 1. Enable logging for debugging and monitoring
@@ -87,6 +88,7 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         channel=inbound.channel or None,
         files=records or None,
         turn_id=turn_id,
+        reply_to=inbound.reply_to,
     )
 
 
@@ -98,6 +100,7 @@ async def run_owner_turn(
     files: list | None = None,
     input_role: str | None = None,
     turn_id: str | None = None,
+    reply_to: ReplyContext | None = None,
 ) -> str:
     """One user-scope turn under the owner lock; the single path every
     conversational caller goes through. Returns the reply — for a turn that did
@@ -112,6 +115,7 @@ async def run_owner_turn(
             files=files,
             input_role=input_role,
             turn_id=turn_id,
+            reply_to=reply_to,
         )
     if outcome.text:
         await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
@@ -252,6 +256,10 @@ async def main() -> None:
 
     async def save_sent_file(attachment: dict, caption: str | None):
         return await asyncio.to_thread(file_attachments.save_sent, attachment, caption)
+
+    async def link_file_origin(file_id: str, channel: str, origin_id: str) -> None:
+        await asyncio.to_thread(file_store.link_origin, file_id, channel, origin_id)
+
     for log_path in (CHAT_LOG, NOTIFICATION_LOG):
         trim_log(log_path)
         logger.info("Log trimmed: %s", log_path)
@@ -282,6 +290,7 @@ async def main() -> None:
         on_confirmation_outcome=on_confirmation_outcome,
         log_sink=log_notification,
         save_file=save_sent_file,
+        link_origin=link_file_origin,
     )
 
     # Optional second channel: the jarvis-app hub, built only when APP_HUB_URL is
@@ -297,6 +306,8 @@ async def main() -> None:
                 on_confirmation_outcome=on_confirmation_outcome,
                 log_sink=log_notification,
                 save_file=save_sent_file,
+                link_origin=link_file_origin,
+                resolve_attachment=file_attachments.resolve_origin_attachment,
             )
         except Exception:
             logger.exception("jarvis-app channel misconfigured — continuing without it")

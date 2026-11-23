@@ -22,10 +22,10 @@ from typing import Awaitable, Callable, Protocol
 import turn_context
 
 from gateway import outbox as outbox_mod
-from gateway.base import Channel, OnMessage
+from gateway.base import Channel, OnMessage, ResolveAttachment
 from gateway.confirmation.base import Confirmation
 from gateway.confirmation.store import InMemoryConfirmationStore
-from gateway.outbox import LogSink, Outbox, SaveFile
+from gateway.outbox import LinkOrigin, LogSink, Outbox, SaveFile
 from gateway.channels.telegram.channel import TelegramChannel
 from gateway.channels.telegram.confirmation import TelegramConfirmationUI
 from gateway.channels.telegram.host import TelegramHost
@@ -206,6 +206,8 @@ def _build_telegram_stack(
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
     save_file: SaveFile | None = None,
+    link_origin: LinkOrigin | None = None,
+    resolve_attachment: ResolveAttachment | None = None,
 ) -> TelegramStack:
     """Construct and wire the Telegram channel, router, confirmation UI + store,
     outbox, and PTB host, and register the defaults for proactive sends /
@@ -217,6 +219,10 @@ def _build_telegram_stack(
     log_sink: host-injected notification-log writer the Outbox records
     event-tagged sends through (keeps the gateway free of tools-layer imports).
     save_file: host-injected step the Outbox keeps sent media through.
+    link_origin: host-injected hook linking an uploaded attachment id to a
+    stored file record.
+    resolve_attachment: accepted for uniform stack-builder dispatch (unused by
+    Telegram).
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -227,7 +233,7 @@ def _build_telegram_stack(
     owner_id = int(owner_env)
 
     channel = TelegramChannel(owner_id)
-    outbox = Outbox(channel, log_sink, save_file)
+    outbox = Outbox(channel, log_sink, save_file, link_origin)
     confirmation_ui = TelegramConfirmationUI(channel)
     store = InMemoryConfirmationStore(
         confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
@@ -250,6 +256,8 @@ def _build_jarvis_app_stack(
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
     save_file: SaveFile | None = None,
+    link_origin: LinkOrigin | None = None,
+    resolve_attachment: ResolveAttachment | None = None,
 ) -> JarvisAppStack:
     """Construct and wire the jarvis-app channel — HubClient, channel, confirmation
     store/UI, outbox, and the poll-loop router — and register the channel for
@@ -273,13 +281,16 @@ def _build_jarvis_app_stack(
 
     client = HubClient(base_url, token)
     channel = JarvisAppChannel(client, owner)
-    outbox = Outbox(channel, log_sink, save_file)
+    outbox = Outbox(channel, log_sink, save_file, link_origin)
     confirmation_ui = AppConfirmationUI(client)
     store = InMemoryConfirmationStore(
         confirmation_ui, outbox, channel.owner_thread_id, on_confirmation_outcome
     )
     confirmation_ui.bind_store(store)
-    router = JarvisAppInboundRouter(channel, client, on_message, confirmation_ui)
+    router = JarvisAppInboundRouter(
+        channel, client, on_message, confirmation_ui,
+        resolve_attachment=resolve_attachment,
+    )
 
     register_channel(channel, outbox)
     register_confirmation(channel.name, store)
@@ -302,6 +313,8 @@ def build_stack(
     on_confirmation_outcome: Callable[[str, str, Outbox], Awaitable[None]] | None = None,
     log_sink: LogSink | None = None,
     save_file: SaveFile | None = None,
+    link_origin: LinkOrigin | None = None,
+    resolve_attachment: ResolveAttachment | None = None,
 ) -> Stack:
     """Build the named channel's stack and register its proactive/confirmation
     defaults. With one channel registered this is byte-identical to building it
@@ -310,4 +323,7 @@ def build_stack(
         builder = _STACK_BUILDERS[name]
     except KeyError:
         raise ValueError(f"Unknown channel: {name!r}") from None
-    return builder(on_message, on_confirmation_outcome, log_sink, save_file)
+    return builder(
+        on_message, on_confirmation_outcome, log_sink, save_file,
+        link_origin, resolve_attachment,
+    )
