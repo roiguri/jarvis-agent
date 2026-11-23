@@ -404,6 +404,32 @@ def test_a_dream_call_gets_longer_than_a_chat_call(use_llm):
     assert agent.LLM_CALL_TIMEOUT_S < timeout <= turn_budget.POLICIES["dream"].budget.call_timeout_s
 
 
+def test_dream_max_tokens_with_partial_text_fails(use_llm):
+    """A dream turn cut off at MAX_TOKENS fails even when partial text was emitted."""
+    use_llm(FakeLLM([
+        AIMessage(
+            content="Facts\n1. USER.md: partial text cut off",
+            response_metadata={"finish_reason": "MAX_TOKENS"},
+        ),
+    ]))
+    out = agent.ask_jarvis("review", "dream", scope="dream")
+    assert out.kind == turn_budget.FAILED and not out.finished
+    assert last_turn_row().get("error") == "finish_reason: MAX_TOKENS"
+
+
+def test_user_max_tokens_with_partial_text_still_completes(use_llm):
+    """Non-dream scopes still return partial text when MAX_TOKENS is hit."""
+    use_llm(FakeLLM([
+        AIMessage(
+            content="Here is a long answer that hit the limit",
+            response_metadata={"finish_reason": "MAX_TOKENS"},
+        ),
+    ]))
+    out = agent.ask_jarvis("tell me a lot", "t_user_max")
+    assert out.kind == turn_budget.COMPLETED
+    assert "long answer" in out.text
+
+
 def test_token_budget(use_llm, set_budget):
     """Cumulative input past the ceiling ends the turn."""
     set_budget("user", max_llm_calls=50, max_input_tokens=100_000)

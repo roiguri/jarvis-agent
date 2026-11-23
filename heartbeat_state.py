@@ -25,6 +25,7 @@ from datetime import datetime, time as dt_time, timedelta, timezone
 from timeutils import ISRAEL_TZ as _ISRAEL_TZ
 
 import config
+import homes
 
 logger = logging.getLogger(__name__)
 
@@ -449,3 +450,12 @@ def stamp(
         logger.exception("heartbeat_state: failed to write stamps")
         return []
     return stamped
+
+
+@homes.provider("heartbeat", fallback="recurring scheduled checks in HEARTBEAT.md")
+def _home_summary() -> str | None:
+    tasks = parse_tasks(HEARTBEAT_PATH)
+    if not tasks:
+        return None
+    labels = [f"{t.name} (paused)" if t.paused else t.name for t in tasks]
+    return f"tasks: {homes.cap_labels(labels)}"

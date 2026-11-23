@@ -1,4 +1,4 @@
-description: A trip whose dates have passed is suggested for the past tense or removal.
+description: An untouched memory file with a past trip date is ignored on the daily pass when it never came up in yesterday's conversation.
 kind: suggestions
 time: "22:00"
 files:
@@ -14,5 +14,5 @@ files:
 conversation:
   - {time: "11:00", owner: "what's on my book list?", tools: [{name: read_memory, args: {filename: book_list.md}, result: null}], jarvis: "Here's what book_list.md holds right now."}
 expect:
-  sends: 1
-  message_contains: ["Lisbon"]
+  sends: 0
+  not_called: [write_memory]

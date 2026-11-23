@@ -1,14 +1,18 @@
 {
   "cases": {
+    "already_saved_to_heartbeat_not_duplicated": {
+      "passed": 3,
+      "runs": 3
+    },
+    "already_written_to_memory_not_duplicated": {
+      "passed": 3,
+      "runs": 3
+    },
     "background_only_day": {
       "passed": 3,
       "runs": 3
     },
     "chat_rule_followed": {
-      "passed": 3,
-      "runs": 3
-    },
-    "duplicate_files_noticed": {
       "passed": 3,
       "runs": 3
     },
@@ -29,10 +33,18 @@
       "runs": 3
     },
     "kept_elsewhere_not_suggested": {
-      "passed": 2,
+      "passed": 3,
       "runs": 3
     },
     "log_sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "media_alerts_not_mined": {
+      "passed": 3,
+      "runs": 3
+    },
+    "mixed_day_precision": {
       "passed": 3,
       "runs": 3
     },
@@ -52,15 +64,15 @@
       "passed": 3,
       "runs": 3
     },
+    "one_off_requests_not_overinterpreted": {
+      "passed": 3,
+      "runs": 3
+    },
     "open_request_survives": {
       "passed": 3,
       "runs": 3
     },
     "outcomes_recorded": {
-      "passed": 3,
-      "runs": 3
-    },
-    "passed_plan_retensed": {
       "passed": 3,
       "runs": 3
     },
@@ -80,6 +92,10 @@
       "passed": 3,
       "runs": 3
     },
+    "rejection_only_day_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
     "reply_to_briefing_used": {
       "passed": 3,
       "runs": 3
@@ -93,6 +109,10 @@
       "runs": 3
     },
     "sent_message_not_attributed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "stale_untouched_file_ignored_daily": {
       "passed": 3,
       "runs": 3
     },
@@ -112,6 +132,10 @@
       "passed": 3,
       "runs": 3
     },
+    "tentative_formatting_tweak_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
     "tick_cannot_create_tasks": {
       "passed": 3,
       "runs": 3
@@ -124,11 +148,19 @@
       "passed": 3,
       "runs": 3
     },
+    "unacknowledged_briefing_ignored": {
+      "passed": 3,
+      "runs": 3
+    },
     "wake_acts_on_its_task": {
+      "passed": 3,
+      "runs": 3
+    },
+    "weekly_schedule_variation_ignored": {
       "passed": 3,
       "runs": 3
     }
   },
-  "date": "2026-10-17",
+  "date": "2026-11-23",
   "model": "gemini-3-flash-preview"
 }

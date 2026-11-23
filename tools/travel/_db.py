@@ -10,6 +10,7 @@ from datetime import date
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import config
+import homes
 
 DB_PATH = os.path.join(config.DATA_DIR, "travel", "travel.sqlite")
 
@@ -382,3 +383,35 @@ def _label(row: sqlite3.Row) -> str:
 # opened — mode=ro fails outright on a missing file, which on a fresh instance
 # would read as a broken tool rather than an empty database.
 _init_db()
+
+
+@homes.provider("travel", fallback="trips, saved places, wishlists, and itineraries")
+def _home_summary() -> str | None:
+    if not os.path.exists(DB_PATH):
+        return None
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        trips = conn.execute(
+            "SELECT t.title, t.start_date, t.end_date, t.is_current, d.name AS destination "
+            "FROM trips t JOIN destinations d ON d.destination_id = t.destination_id "
+            "WHERE t.status = 'draft' OR t.is_current = 1 "
+            "ORDER BY t.is_current DESC, COALESCE(t.start_date, '9999'), t.trip_id"
+        ).fetchall()
+        dests = conn.execute("SELECT name FROM destinations ORDER BY name").fetchall()
+    finally:
+        conn.close()
+    parts: list[str] = []
+    if trips:
+        labels = []
+        for r in trips:
+            label = r["title"] or r["destination"]
+            if r["start_date"] and r["end_date"]:
+                label = f"{label} ({r['start_date']}..{r['end_date']})"
+            if r["is_current"]:
+                label = f"{label} [current]"
+            labels.append(label)
+        parts.append(f"trips: {homes.cap_labels(labels)}")
+    if dests:
+        parts.append(f"destinations: {homes.cap_labels([r['name'] for r in dests])}")
+    return "; ".join(parts) if parts else None

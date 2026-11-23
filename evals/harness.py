@@ -273,9 +273,14 @@ def _seed_chat(case: dict, now: datetime) -> None:
                 messages.append(AIMessage(content="", tool_calls=[{"name": call["name"], "args": call["args"],
                                                                    "id": call_id, "type": "tool_call"}]))
                 messages.append(ToolMessage(content=result, name=call["name"], tool_call_id=call_id))
+                result_meta = {"call_id": call_id}
+                if call.get("error"):
+                    result_meta["status"] = "error"
                 episode_store.insert(con, role="tool_call", tool_name=call["name"],
+                                     meta={"call_id": call_id},
                                      content=json.dumps(call["args"]), **common)
-                episode_store.insert(con, role="tool_result", tool_name=call["name"], content=result, **common)
+                episode_store.insert(con, role="tool_result", tool_name=call["name"],
+                                     meta=result_meta, content=result, **common)
             messages.append(AIMessage(content=turn["jarvis"]))
             episode_store.insert(con, role="jarvis", content=turn["jarvis"], **common)
             chat.write(json.dumps({"ts": ts, "thread_id": OWNER_THREAD_ID, "role": "assistant",
@@ -354,12 +359,14 @@ def run_case(case: dict) -> Result:
             import memory_suggestions
 
             patches.set(memory_suggestions, "datetime", frozen.datetime)
-            asyncio.run(memory_suggestions.send(now.date()))
+            if asyncio.run(memory_suggestions.send(now.date())) == "failed":
+                result.error = "memory_suggestions.send failed"
         elif case.get("kind") == "daily_log":
             import daily_log
 
             patches.set(daily_log, "datetime", frozen.datetime)
-            asyncio.run(daily_log.write(now.date()))
+            if asyncio.run(daily_log.write(now.date())) == "failed":
+                result.error = "daily_log.write failed"
             result.reply = daily_log.read(now.date()) or ""
         elif case.get("kind", "tick") == "wake":
             from triggers import store as trigger_store

@@ -1,0 +1,15 @@
+description: A fact Jarvis already saved to USER.md during the conversation is not suggested again.
+kind: suggestions
+time: "22:00"
+files:
+  USER.md: |
+    # User profile (synthetic, for evals)
+
+    - Lives in Tel Aviv. Works Sunday to Thursday at the Sarona office.
+    - Training: CrossFit twice a week, plus a 100,000-step challenge this month (target 7,500 steps a day).
+    - Prefers short messages; one nudge is enough, repeated reminders are annoying.
+conversation:
+  - {time: "11:00", owner: "by the way my team moved to the Sarona office this week, keep that in mind for lunch spots", tools: [{name: write_memory, args: {filename: USER.md, content: "# User profile\n- Lives in Tel Aviv. Works Sunday to Thursday at the Sarona office."}, result: "Successfully saved memory to USER.md"}], jarvis: "Got it, updated your profile with the Sarona office."}
+expect:
+  sends: 0
+  not_called: [write_memory]

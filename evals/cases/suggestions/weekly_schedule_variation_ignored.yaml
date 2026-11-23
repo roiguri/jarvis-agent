@@ -1,0 +1,18 @@
+description: Booking an extra class or different slot for one week does not rewrite a standing training plan or availability.
+kind: suggestions
+time: "22:00"
+files:
+  fitness_plan.md: |
+    # Fitness Plan
+    - Standing CrossFit target: 2 sessions per week (preferred times: 07:00 or 20:00).
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - fitness_plan.md — standing training plan
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "19:10", owner: "I booked three classes for next week — Sunday, Tuesday, and Thursday at 18:00", jarvis: "Nice, you're at 3/2 scheduled for next week."}
+expect:
+  sends: 0
+  not_called: [write_memory]

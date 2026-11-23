@@ -1,0 +1,19 @@
+description: One-off movie tracking and household shopping questions are not over-interpreted into project milestones or profile sections.
+kind: suggestions
+time: "22:00"
+files:
+  active_projects.md: |
+    # Active Projects
+    - Home server: media automation and notifications.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - active_projects.md — ongoing projects
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "10:15", owner: "track the movie Northern Lights for me", tools: [{name: request_media, args: {title: "Northern Lights", media_type: movie}, result: "Added Northern Lights to tracked movies."}], jarvis: "Added Northern Lights to your tracked movies."}
+  - {time: "17:30", owner: "I want to buy a cover for my stand mixer and for the storage bins above the fridge to keep dust off them", jarvis: "Here are a few washable cover options in standard mixer and bin sizes."}
+expect:
+  sends: 0
+  not_called: [write_memory]

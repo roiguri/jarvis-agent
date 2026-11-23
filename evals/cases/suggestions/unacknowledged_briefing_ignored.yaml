@@ -1,0 +1,23 @@
+description: Details in a morning briefing that the owner ignored are not extracted as facts about people or training plans.
+kind: suggestions
+time: "22:00"
+files:
+  people.md: |
+    # People
+    - Dana — sister, lives in Haifa.
+  fitness_plan.md: |
+    # Fitness Plan
+    - CrossFit twice a week.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - people.md — family and close friends
+    - fitness_plan.md — standing training plan
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "08:00", event: heartbeat, sent: "Daily Readiness: slept 7h15m. Your training partner Sam booked the 10:00 Endurance class today. Next week is 3RM Test Week at the gym."}
+  - {time: "15:20", owner: "what's the euro to shekel rate right now?", jarvis: "1 EUR is currently around 3.95 ILS."}
+expect:
+  sends: 0
+  not_called: [write_memory]
