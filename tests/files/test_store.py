@@ -357,5 +357,88 @@ def test_an_index_from_version_1_loses_the_old_path_map_and_keeps_its_search():
     index._initialized.clear()
     tables = {r["name"] for r in index.rows("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "legacy_paths" not in tables
-    assert index.rows("PRAGMA user_version")[0]["user_version"] == 2
+    assert index.rows("PRAGMA user_version")[0]["user_version"] == index._VERSION
     assert index.rows("SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'bicycle'")
+
+
+# --- origin_links and hash dedup --------------------------------------------
+
+def test_v2_to_v3_backfills_origin_links():
+    older = store.add(PNG, source="jarvis-app", origin={"id": "att_01HAAAAAAAAAAAAAAAAAAAAAAA"},
+                      created="2026-10-01T10:00:00+00:00")
+    inbound = store.add(PNG, source="jarvis-app", origin={"id": "att_01HAAAAAAAAAAAAAAAAAAAAAAA"},
+                        created="2026-10-02T10:00:00+00:00")
+    fetched = store.add(b"%PDF-1.4 poster", source="web", origin={"url": "https://example.com/a.pdf"})
+    deleted = store.add(b"gone", source="jarvis-app", origin={"id": "att_01HBBBBBBBBBBBBBBBBBBBBBBB"})
+    store.delete(deleted.id, "owner")
+
+    # Simulate a pre-v3 database that had no origin_links table yet.
+    with index.write() as con:
+        con.execute("DROP TABLE origin_links")
+        con.execute("PRAGMA user_version = 2")
+    index._initialized.clear()
+
+    assert store.get_by_origin("jarvis-app", "att_01HAAAAAAAAAAAAAAAAAAAAAAA") == inbound
+    assert older.id != inbound.id
+    assert store.get_by_origin("jarvis-app", "att_01HBBBBBBBBBBBBBBBBBBBBBBB") is None
+    assert index.rows("SELECT * FROM origin_links WHERE file_id = ?", (fetched.id,)) == []
+    assert index.rows("PRAGMA user_version")[0]["user_version"] == 3
+
+
+def test_add_auto_links_origin_id_and_get_by_origin():
+    rec = store.add(PNG, source="jarvis-app", origin={"id": "att_01HCCCCCCCCCCCCCCCCCCCCCCC"})
+    assert store.get_by_origin("jarvis-app", "att_01HCCCCCCCCCCCCCCCCCCCCCCC") == rec
+    assert store.get_by_origin("telegram", "att_01HCCCCCCCCCCCCCCCCCCCCCCC") is None
+    assert store.get_by_origin("jarvis-app", "att_unknown") is None
+
+
+def test_link_origin_preserves_origin_url_allows_multiple_uploads_and_upserts():
+    rec = store.add(PNG, source="web", origin={"url": "https://example.com/poster.png"})
+    other = store.add(b"%PDF-1.4 other", source="web")
+    att_1 = "att_01HDDDDDDDDDDDDDDDDDDDDDDD"
+    att_2 = "att_01HEEEEEEEEEEEEEEEEEEEEEEE"
+    store.link_origin(rec.id, "jarvis-app", att_1)
+    store.link_origin(rec.id, "jarvis-app", att_2)
+    # Idempotent re-link
+    store.link_origin(rec.id, "jarvis-app", att_1)
+
+    assert store.get_by_origin("jarvis-app", att_1) == rec
+    assert store.get_by_origin("jarvis-app", att_2) == rec
+    assert store.get(rec.id).origin == {"url": "https://example.com/poster.png"}
+
+    # Upsert onto a different file_id
+    store.link_origin(other.id, "jarvis-app", att_2)
+    assert store.get_by_origin("jarvis-app", att_2) == other
+
+    with pytest.raises(LookupError):
+        store.link_origin("file:zzzzzzzz", "jarvis-app", att_1)
+
+
+def test_live_delete_keeps_origin_link_pointing_to_deleted_tombstone():
+    att_id = "att_01HFFFFFFFFFFFFFFFFFFFFFFF"
+    rec = store.add(PNG, source="jarvis-app", origin={"id": att_id})
+    store.delete(rec.id, "owner")
+    found = store.get_by_origin("jarvis-app", att_id)
+    assert found is not None and found.id == rec.id and found.state == "deleted"
+    assert "deleted" in found.marker()
+
+
+def test_latest_by_hash_dedups_non_deleted():
+    sha = blobs.digest(PNG)
+    assert store.latest_by_hash(sha) is None
+
+    first = store.add(PNG, source="t", created="2026-10-01T10:00:00+00:00")
+    second = store.add(PNG, source="t", created="2026-10-02T10:00:00+00:00")
+    assert store.latest_by_hash(sha).id == second.id
+
+    # Expiring the newest makes the still-available copy preferred.
+    store.expire(second.id, "retention")
+    assert store.latest_by_hash(sha).id == first.id
+
+    # Deleting the available copy falls back to the non-deleted expired record.
+    store.delete(first.id, "owner")
+    assert store.latest_by_hash(sha).id == second.id
+
+    # Once every copy is deleted, latest_by_hash returns None.
+    store.delete(second.id, "owner")
+    assert store.latest_by_hash(sha) is None

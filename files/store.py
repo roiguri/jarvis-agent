@@ -140,9 +140,12 @@ def add(data: bytes, *, source: str, filename: str | None = None, caption: str |
     with _BYTES_LOCK:
         sha = blobs.put(data)
         now = created or index.now_iso()
+        origin_dict = origin or {}
         with index.write() as con:
             file_id = _insert(con, sha, kind, mime, len(data), name, caption, source,
-                              origin or {}, turn_id, now, retention)
+                              origin_dict, turn_id, now, retention)
+            if origin_dict.get("id"):
+                _link_origin(con, file_id, source, str(origin_dict["id"]))
             _write_chunks(con, file_id, "meta", _meta_text(name, caption, source, origin))
             if record is not None:
                 _put_derived(con, file_id, record.kind, record.content, record.producer,
@@ -287,6 +290,58 @@ def sharing_bytes(file_id: str, *, include_expired: bool = False) -> list[FileRe
         f"SELECT * FROM files WHERE hash = ? AND id != ? AND state IN ({','.join('?' * len(states))})"
         " ORDER BY created", (rec.hash, rec.id, *states))
     return [_record(r) for r in found]
+
+
+def _link_origin(con, file_id: str, channel: str, origin_id: str) -> None:
+    if not channel or not origin_id:
+        return
+    con.execute(
+        "INSERT INTO origin_links (channel, origin_id, file_id) VALUES (?, ?, ?)"
+        " ON CONFLICT(channel, origin_id) DO UPDATE SET file_id = excluded.file_id",
+        (channel, str(origin_id), file_id),
+    )
+
+
+def link_origin(file_id: str, channel: str, origin_id: str) -> None:
+    """Associate a channel-specific attachment/origin id with a stored file
+    without mutating files.origin. Upserts so re-linking is idempotent."""
+    if not channel or not origin_id:
+        return
+    fid = ids.normalize(file_id)
+    if fid is None:
+        raise LookupError(f"no such file: {file_id}")
+    with index.write() as con:
+        if not con.execute("SELECT 1 FROM files WHERE id = ?", (fid,)).fetchone():
+            raise LookupError(f"no such file: {file_id}")
+        _link_origin(con, fid, channel, origin_id)
+
+
+def get_by_origin(channel: str, origin_id: str) -> FileRecord | None:
+    """The stored record linked to `(channel, origin_id)`, or None. Links stay
+    intact across delete() so quoting a deleted file resolves to its minimal
+    tombstone record (`state == 'deleted'`) rather than re-downloading it."""
+    if not channel or not origin_id:
+        return None
+    found = index.rows(
+        "SELECT f.* FROM origin_links o JOIN files f ON f.id = o.file_id"
+        " WHERE o.channel = ? AND o.origin_id = ?",
+        (channel, str(origin_id)),
+    )
+    return _record(found[0]) if found else None
+
+
+def latest_by_hash(sha256: str) -> FileRecord | None:
+    """The newest non-deleted record sharing `sha256` (preferring available
+    records over trash/expired), or None."""
+    if not sha256:
+        return None
+    found = index.rows(
+        "SELECT * FROM files WHERE hash = ? AND state != 'deleted'"
+        " ORDER BY CASE state WHEN 'available' THEN 0 WHEN 'trash' THEN 1 ELSE 2 END,"
+        " created DESC, rowid DESC LIMIT 1",
+        (sha256,),
+    )
+    return _record(found[0]) if found else None
 
 
 # ---------------------------------------------------------------------------

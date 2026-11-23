@@ -18,7 +18,7 @@ import logging
 import re
 
 from gateway.apps import AppError, dispatch, list_apps
-from gateway.base import InboundMessage, OnMessage
+from gateway.base import InboundMessage, OnMessage, ReplyContext, ResolveAttachment
 from gateway.blocks import BlockAction, render_submission
 from gateway.commands import list_commands
 from gateway.channels.jarvis_app.channel import JarvisAppChannel
@@ -81,11 +81,13 @@ class JarvisAppInboundRouter:
         client: HubClient,
         on_message: OnMessage,
         confirmation_ui: AppConfirmationUI,
+        resolve_attachment: ResolveAttachment | None = None,
     ) -> None:
         self._channel = channel
         self._client = client
         self._on_message = on_message
         self._confirmation_ui = confirmation_ui
+        self._resolve_attachment = resolve_attachment
         self._queue: asyncio.Queue = asyncio.Queue()
         # App queries get their own queue and drain task. The turn queue is
         # serialised so two messages never run overlapping LLM turns on one
@@ -321,7 +323,16 @@ class JarvisAppInboundRouter:
         if not text and raw_attachments and not attachments:
             text = "[an attachment was sent but could not be retrieved]"
 
-        await self._run_turn(text, attachments)
+        # Read `reply_to_message` alone — never `message.meta.reply_to`, which
+        # is a slim display snapshot for the app's quote bubble.
+        reply_raw = update.get("reply_to_message")
+        reply_to = (
+            await self._build_reply_context(reply_raw)
+            if isinstance(reply_raw, dict) and reply_raw
+            else None
+        )
+
+        await self._run_turn(text, attachments, reply_to=reply_to)
 
     async def _handle_action(self, action: BlockAction) -> None:
         """Dispatch one tap by block kind. `confirmation` resolves below the
@@ -363,7 +374,13 @@ class JarvisAppInboundRouter:
                 "jarvis-app PATCH logged failed for form %s", action.callback_id
             )
 
-    async def _run_turn(self, text: str, attachments: list[dict]) -> None:
+    async def _run_turn(
+        self,
+        text: str,
+        attachments: list[dict],
+        *,
+        reply_to: ReplyContext | None = None,
+    ) -> None:
         # The hub carries no per-message user id (the bot token scopes the single
         # owner), so user_id/chat_id are placeholders — nothing downstream reads
         # them; the thread id is what namespaces the conversation.
@@ -374,6 +391,7 @@ class JarvisAppInboundRouter:
             user_text=text,
             channel=self._channel.name,
             attachments=attachments,
+            reply_to=reply_to,
         )
         beat = asyncio.create_task(self._thinking_beat())
         try:
@@ -387,6 +405,86 @@ class JarvisAppInboundRouter:
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
+
+    async def _build_reply_context(self, reply_raw: dict) -> ReplyContext:
+        """Translate a hub `reply_to_message` object into a neutral ReplyContext.
+        Quoted attachments become `[file:…]` markers (never raw inline bytes)."""
+        raw_role = reply_raw.get("role")
+        role = raw_role if isinstance(raw_role, str) and raw_role else "user"
+        raw_text = reply_raw.get("text")
+        text = raw_text if isinstance(raw_text, str) else ""
+        raw_created = reply_raw.get("created_at")
+        created_at = raw_created if isinstance(raw_created, str) else None
+        meta = reply_raw.get("meta")
+        raw_source = meta.get("source") if isinstance(meta, dict) else None
+        source = raw_source if isinstance(raw_source, str) else None
+
+        raw_blocks = reply_raw.get("blocks")
+        block_summaries: list[str] = []
+        if isinstance(raw_blocks, list):
+            for b in raw_blocks:
+                if not isinstance(b, dict):
+                    continue
+                summary = b["summary"].strip() if isinstance(b.get("summary"), str) else ""
+                kind = b["kind"].strip() if isinstance(b.get("kind"), str) else ""
+                state = b["state"].strip() if isinstance(b.get("state"), str) else ""
+                if summary:
+                    label = f"{kind} ({state})" if kind and state else kind
+                    block_summaries.append(f"[{label}: {summary}]" if label else summary)
+                elif kind:
+                    block_summaries.append(f"[{kind} ({state})]" if state else f"[{kind}]")
+
+        raw_attachments = reply_raw.get("attachments")
+        file_markers = await self._resolve_reply_attachments(
+            raw_attachments if isinstance(raw_attachments, list) else [],
+            caption=text,
+        )
+
+        return ReplyContext(
+            role=role,
+            text=text,
+            created_at=created_at,
+            source=source,
+            block_summaries=block_summaries,
+            file_markers=file_markers,
+        )
+
+    async def _resolve_reply_attachments(
+        self, raw: list[dict], *, caption: str
+    ) -> list[str]:
+        """Resolve each attachment in `reply_to_message` to its `[file:…]`
+        marker via the host-injected resolver (zero downloads on cache hit)."""
+        markers: list[str] = []
+        for att in raw:
+            if not isinstance(att, dict):
+                continue
+            att_id = att.get("id")
+            if not isinstance(att_id, str) or not _ATT_ID_RE.match(att_id):
+                logger.warning(
+                    "jarvis-app skipping quoted attachment with malformed id %r", att_id
+                )
+                continue
+            if self._resolve_attachment is None:
+                markers.append("[quoted attachment could not be retrieved]")
+                continue
+            hub_kind = att.get("kind") or "file"
+            mime_type = att.get("mime_type") or ""
+            meta = {
+                "kind": _neutral_kind(hub_kind, mime_type),
+                "mime_type": mime_type,
+                "filename": att.get("filename"),
+                "caption": caption,
+            }
+
+            async def _fetch(aid: str = att_id) -> bytes:
+                return await self._client.download_attachment(aid)
+
+            marker = await self._resolve_attachment(
+                self._channel.name, att_id, _fetch, meta
+            )
+            if marker:
+                markers.append(marker)
+        return markers
 
     async def _thinking_beat(self) -> None:
         """Beat while a turn runs, so the app can show its thinking indicator.

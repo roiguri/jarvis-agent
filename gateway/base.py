@@ -36,6 +36,34 @@ def media_send_wait_s(n_bytes: int) -> float:
 
 
 @dataclass
+class ReplyContext:
+    """Channel-agnostic metadata for a message the user quoted/replied to.
+
+    Quoted attachments are represented exclusively as resolved `[file:…]`
+    markers (or an honest note if retrieval failed) — raw media bytes are never
+    inlined for quoted messages; the model inspects them on demand via
+    `open_file`.
+    """
+
+    role: str
+    text: str
+    created_at: str | None = None
+    source: str | None = None
+    block_summaries: list[str] = field(default_factory=list)
+    file_markers: list[str] = field(default_factory=list)
+
+
+# Resolves a quoted channel attachment `(channel, origin_id)` to a `[file:…]`
+# marker (or an honest fallback note). `fetch` is awaited only on a cache miss;
+# `meta` carries `{kind, mime_type, filename, caption}` for fallback saving.
+# Injected by the host so the gateway never imports the file store.
+ResolveAttachment = Callable[
+    [str, str, Callable[[], Awaitable[bytes]], dict],
+    Awaitable[str],
+]
+
+
+@dataclass
 class InboundMessage:
     """Channel-agnostic message shape delivered by a channel to the app domain.
 
@@ -56,6 +84,8 @@ class InboundMessage:
     # `filename` may be None; `source` is the channel's name; `origin_id` is the
     # channel's own id for the file.
     attachments: list[dict] = field(default_factory=list)
+    # Populated when the user quoted/replied to an earlier message.
+    reply_to: ReplyContext | None = None
 
 
 # Inbound handler contract: a channel produces an InboundMessage and awaits this
@@ -81,10 +111,11 @@ class Channel(ABC):
     async def send_media(
         self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
         *, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str | None:
         """Reply with media to a known chat. `kind` is image, audio, video,
         document or file; `filename` and `mime_type` are hints a channel may use
-        (a document's name). Channels that can't represent `kind` raise
+        (a document's name). Returns the channel's uploaded attachment id when
+        available, else None. Channels that can't represent `kind` raise
         NotImplementedError; the caller downgrades or skips."""
 
     @abstractmethod
@@ -103,9 +134,10 @@ class Channel(ABC):
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
         *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str | None:
         """Media send to the channel's owner (posters, a stored file sent back).
-        `event` as in send_to_owner; `kind`, `filename`, `mime_type` as in send_media."""
+        `event` as in send_to_owner; `kind`, `filename`, `mime_type` and return
+        value as in send_media."""
 
     @abstractmethod
     def authorize(self, raw_user_id: str) -> bool:

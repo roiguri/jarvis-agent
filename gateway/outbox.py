@@ -48,6 +48,11 @@ LogSink = Callable[[str, str, dict], Awaitable[None]]
 # Injected by the host so the gateway never imports the file store.
 SaveFile = Callable[[dict, str | None], Awaitable[tuple[str, str] | None]]
 
+# Links a stored file to a channel's uploaded attachment id:
+# (file_id, channel_name, origin_id) -> None. Injected by the host so the
+# gateway never imports the file store.
+LinkOrigin = Callable[[str, str, str], Awaitable[None]]
+
 # The source a sent file's record names.
 SENT_SOURCE = "jarvis"
 
@@ -86,10 +91,12 @@ def loop_bound() -> bool:
 
 class Outbox:
     def __init__(self, channel: Channel, log_sink: LogSink | None = None,
-                 save_file: SaveFile | None = None) -> None:
+                 save_file: SaveFile | None = None,
+                 link_origin: LinkOrigin | None = None) -> None:
         self._channel = channel
         self._log_sink = log_sink
         self._save_file = save_file
+        self._link_origin = link_origin
 
     async def notify_owner(
         self,
@@ -123,19 +130,26 @@ class Outbox:
         """Send media to the owner. Same logging/failure semantics as
         notify_owner. Once delivered, the file is saved and the log entry is the
         caption plus the file's marker. `kept` is (id, marker) for a file that is
-        already stored: it is not saved again, and its own marker is logged."""
+        already stored: it is not saved again, and its own marker is logged.
+        When the channel returns an uploaded attachment id, it is linked to the
+        stored file record via `link_origin` (best-effort)."""
         try:
-            await self._channel.send_to_owner_media(kind, payload, caption, event=event,
-                                                    filename=filename, mime_type=mime_type)
+            att_id = await self._channel.send_to_owner_media(
+                kind, payload, caption, event=event,
+                filename=filename, mime_type=mime_type,
+            )
         except Exception as e:
             logger.exception("Outbox: failed to send owner media (event=%s)", event)
             return SendOutcome(ok=False, error=str(e) or type(e).__name__)
-        saved = kept if kept is not None else await self._save(kind, payload, caption,
-                                                               filename, mime_type)
+        saved = kept if kept is not None else await self._save(
+            kind, payload, caption, filename, mime_type,
+        )
         if saved is None:
             await self._log(event, caption or f"[{kind}]", metadata)
         else:
             file_id, marker = saved
+            if att_id:
+                await self._link(file_id, att_id)
             text = "\n".join([caption, marker]) if caption else marker
             await self._log(event, text, {**(metadata or {}), "media": [file_id]})
         return SendOutcome(ok=True)
@@ -178,6 +192,18 @@ class Outbox:
         except Exception:
             logger.exception("Outbox: saving a sent file failed (kind=%s)", kind)
             return None
+
+    async def _link(self, file_id: str, origin_id: str) -> None:
+        """Linking must never turn a delivered message into a reported failure."""
+        if self._link_origin is None:
+            return
+        try:
+            await self._link_origin(file_id, self._channel.name, origin_id)
+        except Exception:
+            logger.exception(
+                "Outbox: linking sent file %s to %s:%s failed",
+                file_id, self._channel.name, origin_id,
+            )
 
     async def _log(self, event: str | None, text: str, metadata: dict | None) -> None:
         """Notification logging must never turn a delivered message into a

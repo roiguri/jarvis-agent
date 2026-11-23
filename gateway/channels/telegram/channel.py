@@ -125,8 +125,9 @@ class TelegramChannel(Channel):
     async def send_media(
         self, chat_id: str, kind: str, payload: bytes, caption: str | None = None,
         *, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str | None:
         await self._send_file(int(chat_id), kind, payload, caption, filename, mime_type)
+        return None
 
     async def send_to_owner(self, text: str, *, event: str | None = None) -> None:
         await self._send_text(self._owner_id, text)
@@ -134,8 +135,9 @@ class TelegramChannel(Channel):
     async def send_to_owner_media(
         self, kind: str, payload: bytes, caption: str | None = None,
         *, event: str | None = None, filename: str | None = None, mime_type: str | None = None,
-    ) -> None:
+    ) -> str | None:
         await self._send_file(self._owner_id, kind, payload, caption, filename, mime_type)
+        return None
 
     def authorize(self, raw_user_id: str) -> bool:
         try:

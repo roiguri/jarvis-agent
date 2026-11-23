@@ -10,9 +10,11 @@ the message instead, so the reply can say so rather than ignore it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Awaitable, Callable
 
-from files import store
+from files import blobs, store
 from files.model_input import article
 
 logger = logging.getLogger(__name__)
@@ -72,3 +74,60 @@ def save_fetched(data: bytes, *, source: str, filename: str | None = None,
     except Exception:
         logger.exception("could not keep a fetched file (%s)", source)
         return None
+
+
+async def resolve_origin_attachment(
+    channel: str,
+    origin_id: str,
+    fetch: Callable[[], Awaitable[bytes]],
+    meta: dict,
+) -> str:
+    """Resolve a quoted channel attachment `(channel, origin_id)` to its
+    `[file:…]` marker without downloading when already linked in the store.
+
+    Fallback (pre-link messages): calls `fetch()` once, deduplicates by SHA-256
+    against existing non-deleted records (linking if found), else saves once.
+    Never raises — download or storage failures become an honest note."""
+    try:
+        rec = await asyncio.to_thread(store.get_by_origin, channel, origin_id)
+    except Exception as exc:
+        logger.warning("%s origin lookup for %s failed: %s", channel, origin_id, exc)
+        rec = None
+    if rec is not None:
+        return rec.marker()
+
+    try:
+        data = await fetch()
+    except Exception as exc:
+        logger.warning("%s quoted attachment %s download failed: %s", channel, origin_id, exc)
+        return "[quoted attachment could not be retrieved]"
+
+    if not data:
+        return "[quoted attachment could not be retrieved]"
+
+    def _dedup_or_save() -> str:
+        sha = blobs.digest(data)
+        existing = store.latest_by_hash(sha)
+        if existing is not None and existing.state != "missing":
+            store.link_origin(existing.id, channel, origin_id)
+            return existing.marker()
+        attachment = {
+            "kind": meta.get("kind") or "file",
+            "mime_type": meta.get("mime_type") or "",
+            "data": data,
+            "filename": meta.get("filename"),
+            "source": channel,
+            "origin_id": origin_id,
+        }
+        records, notes = save_attachments(
+            [attachment], caption=meta.get("caption") or ""
+        )
+        if records:
+            return records[0].marker()
+        return notes[0] if notes else "[quoted attachment could not be retrieved]"
+
+    try:
+        return await asyncio.to_thread(_dedup_or_save)
+    except Exception as exc:
+        logger.warning("%s quoted attachment %s save failed: %s", channel, origin_id, exc)
+        return "[quoted attachment could not be retrieved]"
