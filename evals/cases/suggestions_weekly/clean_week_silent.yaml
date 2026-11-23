@@ -1,0 +1,27 @@
+description: Tidy memory with routine daily logs, dream_preferences respected, and no cross-day pattern produces Nothing to suggest.
+kind: suggestions_weekly
+time: "09:00"
+files:
+  dream_preferences.md: |
+    - Keep book_list.md as a standalone memory file; do not suggest moving it to collections.
+daily_logs:
+  - days_ago: 5
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked for the weather in Tel Aviv and checked his step count for the day (8,100 steps).
+  - days_ago: 3
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked what was on his book list and checked a movie release date.
+  - days_ago: 1
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked to set a one-off reminder to call the dentist at 16:00.
+expect:
+  sends: 0

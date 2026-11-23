@@ -1,6 +1,6 @@
 # Dreaming Quality — Plan
 
-**Date:** 2026-11-22 · **Status:** Phase 1 in progress on `feat/dream-daily`.
+**Date:** 2026-11-22 · **Status:** Phase 1 shipped (`3b72194`); Phase 2 in progress on `feat/dream-weekly`.
 **Goal:** make daily memory suggestions high-precision and low-noise ("prefer misses over verbose or incorrect changes"), while keeping `dream` as a standard Jarvis turn (`scope="dream"`) with its normal tool surface.
 
 ---
@@ -12,10 +12,10 @@
 - [x] **P1-S1:** `test(evals): add prod-derived suggestion cases and precision grading`
 - [x] **P1-S2:** `feat(dream): add homes registry, generic tool trail, media-alert filter, and guards`
 - [x] **P1-S3:** `feat(dream): tighten daily prompt for precision and add dream_preferences.md`
-- [ ] **Ship Phase 1:** Push `feat/dream-daily` → PR to `main` → CI green → merge → deploy to prod
+- [x] **Ship Phase 1:** Push `feat/dream-daily` → PR to `main` → CI green → merge → deploy to prod
 
 ### Branch 2: `feat/dream-weekly` (Phase 2)
-- [ ] **P2-S1:** `feat(dream): add weekly maintenance review over daily logs and memory`
+- [x] **P2-S1:** `feat(dream): add weekly maintenance review over daily logs and memory`
 - [ ] **Ship Phase 2:** Push `feat/dream-weekly` → PR to `main` → CI green → merge → deploy to prod
 
 ---
@@ -30,7 +30,7 @@
 
 ### Phase 2 — Weekly Maintenance Pass (`feat/dream-weekly`, after Phase 1 settles in prod)
 
-- [ ] **P2-S1 — Weekly maintenance review & evals.** Add `prompts/dream_weekly.md` reading the last 7 `daily/daily_YYYY-MM-DD.md` logs, all memory files (with last-changed dates), `homes.summarize()`, and `dream_preferences.md` (if non-empty); wire Sunday schedule in `triggers/scheduler.py` and `/dream week` in `gateway/commands/handlers.py`; add weekly eval cases (completed trip archival, duplicate files, `USER.md`/`MEMORY.md` bloat, multi-day patterns).
+- [x] **P2-S1 — Weekly maintenance review & evals.** Add `prompts/dream_weekly.md` reading the last 7 `daily/daily_YYYY-MM-DD.md` logs, all memory files (with last-changed dates), `homes.summarize()`, and `dream_preferences.md` (if non-empty); wire Sunday schedule in `triggers/scheduler.py` and `/dream week` in `gateway/commands/handlers.py`; add weekly eval cases (completed trip archival, duplicate files, `USER.md`/`MEMORY.md` bloat, multi-day patterns).
 
 ---
 

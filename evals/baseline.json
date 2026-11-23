@@ -12,7 +12,23 @@
       "passed": 3,
       "runs": 3
     },
+    "better_home_suggested": {
+      "passed": 3,
+      "runs": 3
+    },
     "chat_rule_followed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "clean_week_silent": {
+      "passed": 3,
+      "runs": 3
+    },
+    "core_file_bloat_noticed": {
+      "passed": 3,
+      "runs": 3
+    },
+    "duplicate_files_noticed": {
       "passed": 3,
       "runs": 3
     },
@@ -52,6 +68,10 @@
       "passed": 3,
       "runs": 3
     },
+    "multiday_pattern_noticed": {
+      "passed": 3,
+      "runs": 3
+    },
     "negative_tool_claim_ignored": {
       "passed": 3,
       "runs": 3
@@ -73,6 +93,10 @@
       "runs": 3
     },
     "outcomes_recorded": {
+      "passed": 3,
+      "runs": 3
+    },
+    "passed_plan_retensed": {
       "passed": 3,
       "runs": 3
     },

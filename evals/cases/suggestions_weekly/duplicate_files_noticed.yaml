@@ -1,0 +1,31 @@
+description: Weekly review spots two overlapping files on the same subject and suggests merging them.
+kind: suggestions_weekly
+time: "09:00"
+files:
+  running_plan.md: |
+    # Running plan
+    - Easy runs Sunday and Tuesday, 5 km.
+    - Long run Friday morning, building to 12 km.
+  running_notes.md: |
+    # Running notes
+    - Long run on Fridays, currently 10 km.
+    - Easy 5 km on Sunday and Tuesday.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - running_plan.md — the running plan
+    - running_notes.md — notes on running
+    - heartbeat/ — notes files for each heartbeat task
+    - daily/ — daily logs
+daily_logs:
+  - days_ago: 2
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi logged a 10 km Friday morning long run.
+expect:
+  sends: 1
+  max_suggestions: 5
+  message_matches: ["running_(plan|notes)\\.md.*running_(plan|notes)\\.md|merge|combine"]

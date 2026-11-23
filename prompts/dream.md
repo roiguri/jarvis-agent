@@ -30,7 +30,7 @@ Corrections & preferences
 Facts
 Out of date
 
-Format each suggestion concisely:
+Format each suggestion concisely as a numbered item (`1.`, `2.`, `3.` — never `-` bullets, so Roi can reference items by number, e.g. `1. file.md: <exact edit>`):
 - Target file (matching its existing style — do not invent new sections for a single minor fact), then the exact surgical text to add or change.
 - One crisp `Why:` line quoting Roi's exact words from an [owner] line. Never quote [jarvis] or [jarvis-sent] as Roi's words, and never invent suggestions to fill a quiet day.
 - Date a fact ("as of YYYY-MM-DD") only when it is genuinely time-sensitive; always use absolute dates (YYYY-MM-DD). Keep Roi's specifics (names, places, numbers, titles). Write in English; quotes stay in Roi's language.

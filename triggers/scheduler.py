@@ -70,6 +70,30 @@ def add_dream(run) -> None:
     )
 
 
+def add_weekly_dream(run) -> None:
+    """Register the Sunday weekly memory maintenance job (Israel time).
+    A run held up past WEEKLY_CATCH_UP_UNTIL is dropped."""
+    import dream as ms
+    from timeutils import ISRAEL_TZ
+
+    grace = (
+        datetime.combine(datetime.min, ms.WEEKLY_CATCH_UP_UNTIL)
+        - datetime.combine(datetime.min, ms.WEEKLY_RUN_AT)
+    )
+    get_scheduler().add_job(
+        run,
+        CronTrigger(
+            day_of_week="sun",
+            hour=ms.WEEKLY_RUN_AT.hour,
+            minute=ms.WEEKLY_RUN_AT.minute,
+            timezone=ISRAEL_TZ,
+        ),
+        id="dream_weekly",
+        replace_existing=True,
+        misfire_grace_time=int(grace.total_seconds()),
+    )
+
+
 def _job_id(trigger_id: str) -> str:
     return f"trigger_{trigger_id}"
 
