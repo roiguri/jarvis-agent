@@ -43,6 +43,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── USER.md                # durable user profile/prefs (agent-writable, no confirm)
 ├── MEMORY.md              # agent-maintained master index of memory files
 ├── HEARTBEAT.md           # recurring task list (edited via manage_heartbeat_task)
+├── dream_preferences.md   # optional owner preferences for morning memory suggestions (dream scope only)
 ├── heartbeat/*.md         # per-task NOTES files (narrative state; machine last_run lives in jarvis_data)
 ├── daily/daily_YYYY-MM-DD.md   # daily logs, written the morning after (see "Daily log")
 ├── *.txt / *.md           # long-term memory the agent writes freely
@@ -50,7 +51,8 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 
 /app/jarvis_code/prompts/  # DEV-controlled, committed, NOT agent-writable
 ├── AGENTS.md              # always-on operating rules
-└── heartbeat.md           # heartbeat-scope-only tick rules
+├── heartbeat.md           # heartbeat-scope-only tick rules
+└── dream.md               # daily memory-suggestions review instruction
 
 /app/jarvis_data/          # tool-opaque state — never in the memory tool surface
 ├── fitness/fitness.sqlite
@@ -101,6 +103,7 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `prompts/heartbeat.md` | **jarvis_code/prompts** | heartbeat scope only | **no** | **no** (deploy only) | n/a |
 | `MEMORY.md` | jarvis_memory | every turn (both scopes, after USER.md) | yes | yes | no (delete blocked) |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
+| `dream_preferences.md` | jarvis_memory | dream scope only (injected only when non-empty) | yes | yes (created lazily on owner feedback) | no |
 | `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | no (the episode store holds the same messages) | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | no (the episode store holds the same sends) | append-only (heartbeat + gateway writers) | n/a |
 | `episodes.sqlite` | jarvis_data/episodes | user scope — the today view (heartbeat activity) | via `search_history` tool | code only, as things happen | n/a |
@@ -273,26 +276,33 @@ day. The turn's input is the instruction in `prompts/dream.md`, followed by:
 
 - the memory files the agent maintains, each under its path with its size and last-changed date
   (SOUL.md marked read-only; SOUL.md, USER.md and MEMORY.md are listed but not repeated, since the
-  system prompt already holds them); HEARTBEAT.md, `heartbeat/` notes and `daily/` are not shown;
-- its own suggestion notes from the past 7 days, so it does not repeat one the owner did not take
-  up without new reason;
-- yesterday's owner conversation, through compaction's transcript builder: the owner's messages,
-  Jarvis's replies and Jarvis's own sends (`[owner]` / `[jarvis]` / `[jarvis-sent]`), earlier notes
-  left out; tool traffic and the heartbeat's inner work are left out too.
+  system prompt already holds them); HEARTBEAT.md, `dream_preferences.md`, `heartbeat/` notes and
+  `daily/` are not shown;
+- a summary of other homes (`homes.summarize()` in `homes.py`), discovered from `SKILL.md` `stores:`
+  frontmatter and optional read-only `@homes.provider` hooks (`collections`, `travel`, `heartbeat`,
+  `triggers`), failing open to static descriptions if a store is absent or errors;
+- `dream_preferences.md` (optional, owner-curated feedback on what suggestions should or shouldn't
+  include), injected only when the file exists and is non-empty;
+- yesterday's owner conversation from the episode store: the owner's messages, Jarvis's replies,
+  conversational sends (`heartbeat` and `reminder` — one-way `notification` / `llm_notification`
+  media alerts and earlier suggestion notes are dropped), and a tool-agnostic one-line `[tool]`
+  call trail (truncated args plus `-> ok` / `-> error` matched by `call_id`, never `tool_result`
+  bodies).
 
-Only the instruction says to change nothing; no code blocks a write. Memory is one of several places
-Jarvis keeps things (collections, reminders, heartbeat tasks, logs), and the instruction asks the
-turn not to suggest what already has a home elsewhere. It trusts what the conversation shows ("added
-to your Reading List") and uses a tool only when it can't tell. The instruction asks for at most seven
-suggestions in sections (corrections and preferences, facts, out of date, organization, guesses),
-each with the file, the exact change and a quoted reason. What counts as organized, duplicated or
-too large is the model's judgement; code imposes no rules on memory.
+Only the instruction says to change nothing; no code blocks a write. The daily pass optimizes for
+high precision ("prefer misses over noise"): at most 3 suggestions across 3 sections
+(`Corrections & preferences`, `Facts`, `Out of date`), scoped strictly to yesterday's conversation
+(no `Guesses`, no `Organization` audits, and no untouched-file staleness checks). Actions already
+persisted via a `[tool]` call or tracked in another home are treated as settled.
 
-The turn's final answer is the note, or "Nothing to suggest.", which sends nothing. Code adds a header and a closing line ("apply one only when Roi asks") and sends the
-note as a `notification` event with `job: "memory_suggestions"` in its metadata, which also lifts the
-pending-mirror's per-entry cap so the whole note reaches the conversation: the owner can answer
-"do 2 and 5" and Jarvis applies them with its memory tools. A day with no owner message runs no
-turn; a turn that does not finish sends nothing and is logged as failed.
+The turn's final answer is the note, or "Nothing to suggest.", which sends nothing (including on a
+`WRAPPED_UP` turn after stripping the wrap-up footer). In `dream` scope, `finish_reason ==
+"MAX_TOKENS"` fails the turn even if partial text was emitted so a truncated note is never sent.
+Code adds a header and a closing line and sends the note as a `notification` event with
+`job: "memory_suggestions"` in its metadata, which lifts the pending-mirror's per-entry cap so the
+whole note reaches the conversation: the owner can answer in chat and Jarvis applies requested edits
+with its memory tools. A day with no owner message runs no turn; a turn that does not finish sends
+nothing and is logged as failed.
 
 ---
 
