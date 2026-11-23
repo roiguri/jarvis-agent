@@ -1,0 +1,10 @@
+description: A tentative formatting tweak while drafting a single recipe is not promoted to a permanent standing rule.
+kind: suggestions
+time: "22:00"
+conversation:
+  - {time: "18:00", owner: "save this lentil soup recipe to the cookbook", jarvis: "Here's a draft with the ingredients, paragraph instructions, and a Notes section with estimated prep time."}
+  - {time: "18:04", owner: "maybe try splitting the instructions into numbered steps? and no need to include those extra notes", jarvis: "Updated the draft with numbered steps and removed the notes. Ready to save?"}
+  - {time: "18:06", owner: "looks good, save it", tools: [{name: save_recipe, args: {name: "Lentil Soup"}, result: "Recipe saved (#42)."}], jarvis: "Saved Lentil Soup to the cookbook."}
+expect:
+  sends: 0
+  not_called: [write_memory]

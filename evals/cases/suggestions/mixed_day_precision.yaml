@@ -1,0 +1,25 @@
+description: On a noisy multi-topic day, only the one durable repeated preference is suggested and all noise is ignored.
+kind: suggestions
+time: "22:00"
+files:
+  active_projects.md: |
+    # Active Projects
+    - Home server: media notifications and automation.
+  MEMORY.md: |
+    # Memory index
+
+    - book_list.md — books to read, with status
+    - active_projects.md — ongoing projects
+    - heartbeat/ — notes files for each heartbeat task
+conversation:
+  - {time: "08:00", event: heartbeat, sent: "Daily Readiness: slept 7h. Sam booked 10:00 Endurance today."}
+  - {time: "10:30", event: notification, sent: "**Cloud Atlas (2012)** upgraded to better quality on the media server."}
+  - {time: "13:00", owner: "find a protective dust cover for my coffee grinder", jarvis: "Here are two washable grinder covers that fit standard sizes."}
+  - {time: "19:00", owner: "when saving recipes to the cookbook, make sure the source includes the link", jarvis: "Got it, I'll add the source link."}
+  - {time: "19:02", owner: "from now on, always include the actual source URL on every saved recipe", jarvis: "Understood — I'll always include the actual source URL in the cookbook."}
+expect:
+  sends: 1
+  max_suggestions: 1
+  not_called: [write_memory]
+  message_contains: ["URL"]
+  message_not_matches: ["media", "upgrade", "cloud atlas", "grinder", "sam", "endurance"]
