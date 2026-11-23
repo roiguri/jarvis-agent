@@ -158,6 +158,13 @@ def _seed(case: dict, now: datetime):
         with open(path, "w", encoding="utf-8") as f:
             f.write(body)
 
+    for entry in case.get("daily_logs") or []:
+        day = now.date() - timedelta(days=int(entry["days_ago"]))
+        path = os.path.join(config.MEMORY_DIR, "daily", f"daily_{day.isoformat()}.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(entry["text"])
+
     def at(hhmm: str) -> datetime:
         hh, mm = map(int, hhmm.split(":"))
         return now.replace(hour=hh, minute=mm)
@@ -361,6 +368,13 @@ def run_case(case: dict) -> Result:
             patches.set(memory_suggestions, "datetime", frozen.datetime)
             if asyncio.run(memory_suggestions.send(now.date())) == "failed":
                 result.error = "memory_suggestions.send failed"
+        elif case.get("kind") == "suggestions_weekly":
+            import memory_suggestions
+
+            patches.set(memory_suggestions, "datetime", frozen.datetime)
+            end_day = now.date() - timedelta(days=1)
+            if asyncio.run(memory_suggestions.send_weekly(end_day)) == "failed":
+                result.error = "memory_suggestions.send_weekly failed"
         elif case.get("kind") == "daily_log":
             import daily_log
 

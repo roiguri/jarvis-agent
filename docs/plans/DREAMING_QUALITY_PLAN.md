@@ -15,7 +15,7 @@
 - [x] **Ship Phase 1:** Push `feat/dream-daily` → PR to `main` → CI green → merge → deploy to prod
 
 ### Branch 2: `feat/dream-weekly` (Phase 2)
-- [ ] **P2-S1:** `feat(dream): add weekly maintenance review over daily logs and memory`
+- [x] **P2-S1:** `feat(dream): add weekly maintenance review over daily logs and memory`
 - [ ] **Ship Phase 2:** Push `feat/dream-weekly` → PR to `main` → CI green → merge → deploy to prod
 
 ---
@@ -30,7 +30,7 @@
 
 ### Phase 2 — Weekly Maintenance Pass (`feat/dream-weekly`, after Phase 1 settles in prod)
 
-- [ ] **P2-S1 — Weekly maintenance review & evals.** Add `prompts/dream_weekly.md` reading the last 7 `daily/daily_YYYY-MM-DD.md` logs, all memory files (with last-changed dates), `homes.summarize()`, and `dream_preferences.md` (if non-empty); wire Sunday schedule in `triggers/scheduler.py` and `/dream week` in `gateway/commands/handlers.py`; add weekly eval cases (completed trip archival, duplicate files, `USER.md`/`MEMORY.md` bloat, multi-day patterns).
+- [x] **P2-S1 — Weekly maintenance review & evals.** Add `prompts/dream_weekly.md` reading the last 7 `daily/daily_YYYY-MM-DD.md` logs, all memory files (with last-changed dates), `homes.summarize()`, and `dream_preferences.md` (if non-empty); wire Sunday schedule in `triggers/scheduler.py` and `/dream week` in `gateway/commands/handlers.py`; add weekly eval cases (completed trip archival, duplicate files, `USER.md`/`MEMORY.md` bloat, multi-day patterns).
 
 ---
 

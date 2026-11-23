@@ -248,9 +248,12 @@ Each compaction is a telemetry job row (`job = "compaction"`) with its model cal
 ## The morning job
 
 `dream.py` runs each morning at 08:30 Israel time, when the heartbeat is enabled (a process started
-before noon catches up a missed run, tracked in `jarvis_data/dream/state.json`). For yesterday it
-writes the daily log (one model call) and sends the memory suggestions (one background turn); neither
-sees the other's output. `/dream [yesterday|today]` runs both by hand.
+before noon catches up a missed run, tracked in `jarvis_data/dream/state.json` under `last_run`).
+For yesterday it writes the daily log (one model call) and sends the memory suggestions (one
+background turn); neither sees the other's output. On Sundays at 09:00 Israel time (catch-up until
+noon, tracked under `last_weekly_run` in the same `state.json`), it also runs the weekly memory
+maintenance review over the last 7 daily logs (ending Saturday). `/dream [yesterday|today|week]`
+runs either pass by hand.
 
 ## Daily log
 
@@ -295,14 +298,25 @@ high precision ("prefer misses over noise"): at most 3 suggestions across 3 sect
 (no `Guesses`, no `Organization` audits, and no untouched-file staleness checks). Actions already
 persisted via a `[tool]` call or tracked in another home are treated as settled.
 
+The **weekly pass** (`send_weekly`, prompt in `prompts/dream_weekly.md`, run on Sundays at 09:00
+Israel time or via `/dream week`) covers what the daily pass intentionally excludes: completed or
+past-dated plans and stale untouched files (`Out of date`), duplicate or misfiled files and
+`MEMORY.md` index drift (`Organization & duplicates`), `USER.md` (>4,000 chars) or `MEMORY.md`
+(>8,000 chars) bloat (`Size & bloat`), and recurring multi-day habits across the week (`Patterns
+across the week`), capped at 5 suggestions. Its input is the same memory listing/bodies,
+`homes.summarize()`, optional `dream_preferences.md`, and the last 7 `daily/daily_YYYY-MM-DD.md`
+logs (never raw chat transcripts).
+
 The turn's final answer is the note, or "Nothing to suggest.", which sends nothing (including on a
 `WRAPPED_UP` turn after stripping the wrap-up footer). In `dream` scope, `finish_reason ==
 "MAX_TOKENS"` fails the turn even if partial text was emitted so a truncated note is never sent.
-Code adds a header and a closing line and sends the note as a `notification` event with
-`job: "memory_suggestions"` in its metadata, which lifts the pending-mirror's per-entry cap so the
-whole note reaches the conversation: the owner can answer in chat and Jarvis applies requested edits
-with its memory tools. A day with no owner message runs no turn; a turn that does not finish sends
-nothing and is logged as failed.
+Code adds a header (`🧠 Memory suggestions — YYYY-MM-DD` for daily, `🧠 Weekly memory review —
+YYYY-MM-DD to YYYY-MM-DD` for weekly) and a closing line and sends the note as a `notification`
+event with `job: "memory_suggestions"` in its metadata, which lifts the pending-mirror's per-entry
+cap so the whole note reaches the conversation: the owner can answer in chat and Jarvis applies
+requested edits with its memory tools. A daily pass with no owner message (or a weekly pass with
+neither daily logs nor memory files) runs no turn; a turn that does not finish sends nothing and is
+logged as failed.
 
 ---
 

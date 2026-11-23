@@ -1,0 +1,27 @@
+description: Weekly review spots a recurring multi-day pattern across several daily logs and suggests adding it to memory.
+kind: suggestions_weekly
+time: "09:00"
+daily_logs:
+  - days_ago: 6
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked for vegetarian lunch ideas near the office, mentioning he's trying to eat vegetarian on weekdays.
+  - days_ago: 4
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked for a quick vegetarian dinner recipe for Tuesday night, noting he's sticking to vegetarian meals Sunday through Thursday.
+  - days_ago: 2
+    text: |
+      # Daily Log
+
+      ## Conversations
+      - Roi asked Jarvis to suggest a vegetarian lunch spot for Thursday, reminding Jarvis he keeps weekdays vegetarian now.
+expect:
+  sends: 1
+  max_suggestions: 5
+  message_matches: ["vegetarian"]
+  message_contains: ["USER.md"]
