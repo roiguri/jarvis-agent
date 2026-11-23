@@ -1,6 +1,6 @@
 """Memory suggestions: each morning Jarvis runs one background turn over
-yesterday's conversation, every memory file and its own notes from the past
-week, and sends the owner suggestions for the memory. The turn runs in the
+yesterday's conversation, every memory file, and a summary of other homes,
+and sends the owner suggestions for the memory. The turn runs in the
 "dream" scope with its usual tools; only its instruction (prompts/dream.md)
 says to change nothing, and its final answer is the note. The owner
 reads the suggestions and decides (he can answer in the conversation, and
@@ -30,18 +30,18 @@ logger = logging.getLogger(__name__)
 JOB = "memory_suggestions"          # names the send in its notification metadata
 THREAD_ID = "dream"                 # tags the turn's records; the turn keeps no conversation
 NOTHING = "Nothing to suggest."
-PAST_NOTES_DAYS = 7
+PREFERENCES_FILE = "dream_preferences.md"
 # TODO(#176): when the review applies changes, the note reports what changed:
 # reword the title (in send) and this footer.
 FOOTER = "Suggestions only — apply one only when Roi asks."
 
 # TODO(#176): when the review applies changes, rewrite the prompt's "change
-# nothing" and "suggest" wording, and the past-notes rule.
+# nothing" and "suggest" wording.
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "dream.md")
 
 READ_ONLY = {"SOUL.md"}
-# The heartbeat's own files: the task list, its notes, and the old daily logs.
-EXCLUDED_FILES = {"HEARTBEAT.md"}
+# Heartbeat's own files plus the owner's dreaming-preferences file (injected separately when non-empty).
+EXCLUDED_FILES = {"HEARTBEAT.md", PREFERENCES_FILE}
 EXCLUDED_DIRS = {"heartbeat", "daily"}
 NOT_SHOWN = "(not shown: HEARTBEAT.md, heartbeat/ task notes, daily/ logs — the heartbeat's own files)"
 # Already in the turn's system prompt; listed here, not repeated.
@@ -157,15 +157,15 @@ def conversation(day: date, until: datetime | None = None) -> str | None:
     return "\n".join(lines)
 
 
-def past_notes(now: datetime) -> list[tuple[date, str]]:
-    """The suggestion notes sent in the past week: (Israel date sent, text)."""
-    from episodes import store
-
-    since = (now - timedelta(days=PAST_NOTES_DAYS)).astimezone(timezone.utc).isoformat()
-    rows = store.rows("SELECT ts, meta, content FROM episodes WHERE role = 'jarvis_sent' AND ts >= ? "
-                      "ORDER BY ts, id", (since,))
-    return [(datetime.fromisoformat(r["ts"]).astimezone(ISRAEL_TZ).date(), r["content"])
-            for r in rows if _is_note(r)]
+def _dream_preferences() -> str | None:
+    """Owner-curated preferences for memory suggestions, or None if absent/empty."""
+    path = os.path.join(config.MEMORY_DIR, PREFERENCES_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return text or None
 
 
 def _memory_files() -> list[tuple[str, str, date]]:
@@ -196,7 +196,7 @@ def _memory_files() -> list[tuple[str, str, date]]:
 
 def build_instruction(day: date, now: datetime, transcript: str) -> str:
     """The turn's input: the review instruction, the memory files, other homes,
-    the past week's notes, and the day's conversation."""
+    optional owner dreaming preferences, and the day's conversation."""
     import homes
 
     with open(PROMPT_PATH, encoding="utf-8") as f:
@@ -210,15 +210,17 @@ def build_instruction(day: date, now: datetime, transcript: str) -> str:
         listing.append(f"  {label:<{width}}  {len(content):>6,} chars, changed {changed:%Y-%m-%d}{where}")
     bodies = [f"--- {rel} (changed {changed:%Y-%m-%d}) ---\n{content.strip()}"
               for rel, content, changed in files if rel not in CORE_ORDER]
-    notes = past_notes(now)
-    notes_text = "\n\n".join(f"--- sent {sent:%Y-%m-%d} ---\n{text.strip()}" for sent, text in notes) or "(none)"
+    prefs = _dream_preferences()
     parts = [
         instruction,
         f"Today: {now.astimezone(ISRAEL_TZ):%A %Y-%m-%d}, Israel time.",
         "Memory files:\n" + "\n".join(listing) + f"\n  {NOT_SHOWN}",
         "\n\n".join(bodies),
         "Other homes (already tracked outside memory):\n" + homes.summarize(),
-        f"Your notes from the past {PAST_NOTES_DAYS} days:\n{notes_text}",
+        (
+            f"Owner preferences for memory suggestions (follow these; never suggest editing {PREFERENCES_FILE}):\n{prefs}"
+            if prefs else ""
+        ),
         f"Conversation on {day:%A %Y-%m-%d}:\n{transcript}",
     ]
     return "\n\n".join(p for p in parts if p)

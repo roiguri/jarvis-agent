@@ -55,8 +55,9 @@ def memory_files():
     write("heartbeat/step_check.md", "notes of a task")
     write("daily/daily_2026-10-14.md", "an old daily log")
     yield write
-    for path in made:
-        os.remove(path)
+    for path in dict.fromkeys(made):
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def seed_day():
@@ -84,7 +85,7 @@ def seed_day():
                      content="a message from the next day", **common)
 
 
-def test_the_turn_reads_the_conversation_the_memory_files_and_past_notes(turn, memory_files, fake_outbox):
+def test_the_turn_reads_the_conversation_memory_files_and_homes(turn, memory_files, fake_outbox):
     seed_day()
     calls = turn("Facts\n1. USER.md: add ...")
     assert asyncio.run(ms.send(DAY)) == "sent"
@@ -97,17 +98,33 @@ def test_the_turn_reads_the_conversation_the_memory_files_and_past_notes(turn, m
     assert '[2026-10-15 12:00 tool] read_memory(filename="USER.md") -> ok' in text
     assert "[2026-10-15 12:00 jarvis] Got it, two lines." in text
     assert "[2026-10-15 08:00 jarvis-sent] Morning readiness: slept 7h." in text
-    for absent in ("SECRET TOOL OUTPUT", "HEARTBEAT INNER WORK", "next day"):
+    for absent in (
+        "SECRET TOOL OUTPUT", "HEARTBEAT INNER WORK", "next day",
+        "YESTERDAYS NOTE", "make a list file", "A WEEK-OLD NOTE",
+        "Your notes from the past", "Owner preferences for memory suggestions",
+    ):
         assert absent not in text
     assert "Other homes (already tracked outside memory):" in text
     assert "--- fitness/plan.md (changed " in text and "Runs on Tuesdays." in text
     for absent in ("notes of a task", "an old daily log", "the task list", "--- SOUL.md", "USER.md body"):
         assert absent not in text, "core files are in the system prompt; the heartbeat's own files are not shown"
     assert "SOUL.md (read-only)" in text and "(not shown: HEARTBEAT.md" in text
-    notes = text[text.index("Your notes from the past 7 days:"):text.index("Conversation on")]
-    assert "--- sent 2026-10-14 ---" in notes and "make a list file" in notes
-    assert "YESTERDAYS NOTE" in notes and "A WEEK-OLD NOTE" not in text
-    assert text.count("YESTERDAYS NOTE") == 1, "a past note is shown once, not again in the transcript"
+
+
+def test_dream_preferences_injected_only_when_non_empty(turn, memory_files, fake_outbox):
+    seed_day()
+    memory_files("dream_preferences.md", "   \n\n  ")
+    calls = turn("Nothing to suggest.")
+    assert asyncio.run(ms.send(DAY)) == "nothing"
+    assert "Owner preferences for memory suggestions" not in calls[-1]["input"]
+    assert "dream_preferences.md" not in [rel for rel, _, _ in ms._memory_files()]
+
+    memory_files("dream_preferences.md", "- Never suggest household appliances.\n")
+    assert asyncio.run(ms.send(DAY)) == "nothing"
+    prompt = calls[-1]["input"]
+    assert "Owner preferences for memory suggestions" in prompt
+    assert "- Never suggest household appliances." in prompt
+    assert "dream_preferences.md" not in [rel for rel, _, _ in ms._memory_files()]
 
 
 def test_a_day_without_an_owner_message_runs_no_turn(turn, fake_outbox):
