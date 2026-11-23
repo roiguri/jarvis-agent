@@ -1,6 +1,7 @@
 ---
 name: cookbook
 description: the family cookbook — find and read recipes, save new ones after talking them through
+stores: family recipes (ingredients, steps, source URLs, photos)
 ---
 - Address a recipe by its id from `find_recipes`; never guess one.
 - The cookbook searches names only. To find a recipe by an ingredient, list the owner's recipes and open the likely ones with `get_recipe`.

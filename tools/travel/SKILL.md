@@ -1,6 +1,7 @@
 ---
 name: travel
 description: trips, saved places, per-trip wishlists, and hourly itineraries
+stores: trips, saved places, wishlists, and itineraries
 ---
 - Address a trip by its `trip_id` and a destination by its exact name. If you don't know either, list them and pick from what comes back — never guess, and never invent a second spelling of a destination that already exists.
 - Scheduling a place does not remove it from the wishlist, and the same place may be scheduled on more than one day. Never treat scheduling as moving something out of the wishlist.

@@ -11,6 +11,7 @@ import os
 import sqlite3
 
 import config
+import homes
 from tools.collections import _fields
 from tools.collections._fields import FieldError
 
@@ -362,3 +363,20 @@ def _require_item(conn: sqlite3.Connection, item_id) -> tuple[sqlite3.Row, sqlit
 
 # At import, so the read-only URI the app opens never meets a missing file.
 _init_db()
+
+
+@homes.provider("collections", fallback="structured lists and collections")
+def _home_summary() -> str | None:
+    if not os.path.exists(DB_PATH):
+        return None
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT name FROM collections WHERE archived_at IS NULL ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    return f"active: {homes.cap_labels([r['name'] for r in rows])}"

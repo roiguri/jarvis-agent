@@ -19,6 +19,7 @@ import threading
 import time
 
 import config
+import homes
 from triggers.model import Trigger
 
 logger = logging.getLogger(__name__)
@@ -161,4 +162,12 @@ def set_task_skills(names: list[str], skills: list[str]) -> None:
         for name in names:
             data["task_skills"][name] = sorted(skills)
         _write(data)
+
+
+@homes.provider("triggers", fallback="one-off reminders and scheduled wakes")
+def _home_summary() -> str | None:
+    if not os.path.exists(STORE_PATH):
+        return None
+    count = len(all_triggers())
+    return f"{count} pending" if count else None
 

@@ -1,6 +1,7 @@
 ---
 name: fitness
 description: gym attendance, workout logs, running sessions
+stores: gym class bookings, workout logs, PBs & running sessions
 ---
 - Before discussing or logging a running session, check MEMORY.md for your running-program notes (current phase, next session). A running session's description must match the program phase and session number (e.g. 'Phase 0 Session 1: 30-min brisk walk'). pain_level is 0=none, 1=slight, 2=moderate, 3=stop-sign; if ≥ 2, flag it clearly in your response.
 - Log workout stats and WOD results immediately when Roi reports them — never acknowledge without saving. A run in one message is one `log_cardio_stats` call (it records the session too, when needed).

@@ -1,6 +1,7 @@
 ---
 name: collections
 description: structured lists — reading list, shopping list, books, and any other collection the owner keeps
+stores: structured lists and collections
 ---
 - Address an item by its id and a collection by its exact name. If you don't know either, list first and pick from what comes back — never guess, and never create a second spelling of a collection that already exists.
 - Before creating a collection, consult the owner: first whether it is needed at all (could it go in an existing collection, or is it prose for a memory file?), then its shape — status or not (and which states), sections or not, which fields. Propose a concrete structure and create it only once they agree. Lean simple: title and notes cover most things; suggest custom fields only for something the owner wants to track structured (a price, a rating, an author), and reuse field names and types other collections already use rather than inventing near-synonyms.

@@ -15,7 +15,7 @@ import pending_mirrors
 import turn_budget
 from episodes import store
 from gateway.base import OWNER_THREAD_ID
-from gateway.outbox import EVENT_MEDIA
+from gateway.outbox import EVENT_HEARTBEAT, EVENT_LLM_MEDIA, EVENT_MEDIA, EVENT_REMINDER
 from tests.fakes import frozen_datetime
 
 DAY = date(2026, 10, 15)
@@ -73,9 +73,9 @@ def seed_day():
         store.insert(con, ts="2026-10-15T09:00:00+00:00", turn_id="t", role="owner",
                      content="from now on keep briefings to two lines", **common)
         store.insert(con, ts="2026-10-15T09:00:01+00:00", turn_id="t", role="tool_call",
-                     tool_name="read_memory", content='{"filename": "USER.md"}', **common)
+                     tool_name="read_memory", meta={"call_id": "c1"}, content='{"filename": "USER.md"}', **common)
         store.insert(con, ts="2026-10-15T09:00:02+00:00", turn_id="t", role="tool_result",
-                     tool_name="read_memory", content="SECRET TOOL OUTPUT", **common)
+                     tool_name="read_memory", meta={"call_id": "c1"}, content="SECRET TOOL OUTPUT", **common)
         store.insert(con, ts="2026-10-15T09:00:03+00:00", turn_id="t", role="jarvis",
                      content="Got it, two lines.", **common)
         store.insert(con, ts="2026-10-15T10:00:00+00:00", turn_id="h", thread_id="heartbeat",
@@ -94,10 +94,12 @@ def test_the_turn_reads_the_conversation_the_memory_files_and_past_notes(turn, m
     assert text.startswith("Morning memory review.")
     assert "Today: Friday 2026-10-16, Israel time." in text
     assert "[2026-10-15 12:00 owner] from now on keep briefings to two lines" in text
+    assert '[2026-10-15 12:00 tool] read_memory(filename="USER.md") -> ok' in text
     assert "[2026-10-15 12:00 jarvis] Got it, two lines." in text
     assert "[2026-10-15 08:00 jarvis-sent] Morning readiness: slept 7h." in text
-    for absent in ("SECRET TOOL OUTPUT", "read_memory", "HEARTBEAT INNER WORK", "next day"):
+    for absent in ("SECRET TOOL OUTPUT", "HEARTBEAT INNER WORK", "next day"):
         assert absent not in text
+    assert "Other homes (already tracked outside memory):" in text
     assert "--- fitness/plan.md (changed " in text and "Runs on Tuesdays." in text
     for absent in ("notes of a task", "an old daily log", "the task list", "--- SOUL.md", "USER.md body"):
         assert absent not in text, "core files are in the system prompt; the heartbeat's own files are not shown"
@@ -147,3 +149,66 @@ def test_the_mirror_carries_the_whole_note():
                             "message": note, "job": "memory_suggestions"}) + "\n")
     block, _ = pending_mirrors.drain_pending()
     assert f"[Notification] {note}" in block
+
+
+def test_media_alerts_dropped_while_conversational_sends_kept():
+    with store.write() as con:
+        common = dict(thread_id=OWNER_THREAD_ID, scope="user", source="chat")
+        store.insert(con, ts="2026-10-15T06:00:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"event": EVENT_MEDIA}, content="**Solaris** upgraded to 4K.")
+        store.insert(con, ts="2026-10-15T06:10:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"event": EVENT_LLM_MEDIA}, content="New episode ready.")
+        store.insert(con, ts="2026-10-15T06:20:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"event": EVENT_HEARTBEAT}, content="Daily readiness: 7h sleep.")
+        store.insert(con, ts="2026-10-15T06:30:00+00:00", role="jarvis_sent", source="outbox",
+                     meta={"event": EVENT_REMINDER}, content="Reminder: dentist at 16:00.")
+        store.insert(con, ts="2026-10-15T09:00:00+00:00", turn_id="t", role="owner",
+                     content="thanks", **common)
+    transcript = ms.conversation(DAY, until=NOW)
+    assert transcript is not None
+    assert "Solaris" not in transcript
+    assert "New episode ready" not in transcript
+    assert "Daily readiness: 7h sleep." in transcript
+    assert "Reminder: dentist at 16:00." in transcript
+
+
+def test_tool_trail_truncates_args_and_marks_errors_without_bodies():
+    long_val = "A" * 200
+    with store.write() as con:
+        common = dict(thread_id=OWNER_THREAD_ID, scope="user", source="chat", turn_id="t")
+        store.insert(con, ts="2026-10-15T09:00:00+00:00", role="owner",
+                     content="update the heartbeat task", **common)
+        store.insert(con, ts="2026-10-15T09:00:01+00:00", role="tool_call",
+                     tool_name="manage_heartbeat_task", meta={"call_id": "c-ok"},
+                     content=json.dumps({"action": "update", "instruction": long_val}), **common)
+        store.insert(con, ts="2026-10-15T09:00:02+00:00", role="tool_result",
+                     tool_name="manage_heartbeat_task", meta={"call_id": "c-ok"},
+                     content="OK_RESULT_BODY_SHOULD_NOT_LEAK", **common)
+        store.insert(con, ts="2026-10-15T09:00:03+00:00", role="tool_call",
+                     tool_name="save_recipe", meta={"call_id": "c-err"},
+                     content=json.dumps({"name": "Lentil Soup"}), **common)
+        store.insert(con, ts="2026-10-15T09:00:04+00:00", role="tool_result",
+                     tool_name="save_recipe", meta={"call_id": "c-err", "status": "error"},
+                     content="ERR_RESULT_BODY_SHOULD_NOT_LEAK", **common)
+    transcript = ms.conversation(DAY, until=NOW)
+    assert transcript is not None
+    assert "manage_heartbeat_task(" in transcript and "-> ok" in transcript
+    assert 'save_recipe(name="Lentil Soup") -> error' in transcript
+    assert long_val not in transcript and "…" in transcript
+    assert "OK_RESULT_BODY_SHOULD_NOT_LEAK" not in transcript
+    assert "ERR_RESULT_BODY_SHOULD_NOT_LEAK" not in transcript
+
+
+def test_wrapped_up_nothing_to_suggest_sends_nothing(turn, fake_outbox):
+    seed_day()
+    turn(f"Nothing to suggest.\n\n{turn_budget.WRAPPED_UP_LINE}", kind=turn_budget.WRAPPED_UP)
+    assert asyncio.run(ms.send(DAY)) == "nothing"
+    assert fake_outbox.sent == []
+
+
+def test_wrapped_up_with_suggestions_still_sends(turn, fake_outbox):
+    seed_day()
+    turn(f"Facts\n1. USER.md: add x\n\n{turn_budget.WRAPPED_UP_LINE}", kind=turn_budget.WRAPPED_UP)
+    assert asyncio.run(ms.send(DAY)) == "sent"
+    assert len(fake_outbox.sent) == 1
+    assert "USER.md: add x" in fake_outbox.sent[0][1]
