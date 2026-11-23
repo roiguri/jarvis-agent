@@ -39,6 +39,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 # only; "both" = deliberately renders/uses both clocks.
 ANCHORS: dict[str, tuple[str, str]] = {
     "agent.py": ("both", "Israel turn stamp + envelope date + away-only owner clock"),
+    "reply_context.py": ("both", "quoted message timestamp in Israel time, plus away-mode owner local clock matching _turn_stamp"),
     "gateway/apps/fitness.py": ("home", "Arbox gym is physically in Israel"),
     "gateway/commands/handlers.py": ("both", "/tz shows both clocks; /logs and /usage cut Israel days"),
     "heartbeat.py": ("home", "tick-failure notice is Israel time by design"),
