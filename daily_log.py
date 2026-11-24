@@ -26,8 +26,6 @@ PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "daily_log.md")
 TIMEOUT_S = 180
 MAX_TOKENS = 16384   # the model's thinking counts against it too
 
-_llm = None
-
 
 class Truncated(Exception):
     """The model stopped at the output cap; a cut log is not written."""
@@ -46,14 +44,9 @@ def read(day: date) -> str | None:
 
 
 def _model():
-    global _llm
-    if _llm is None:
-        import agent
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    import llm
 
-        _llm = ChatGoogleGenerativeAI(model=agent.llm.model, temperature=0, max_retries=1,
-                                      timeout=TIMEOUT_S, max_tokens=MAX_TOKENS)
-    return _llm
+    return llm.get_client("daily_log")
 
 
 def build_input(day: date, until: datetime | None = None) -> str | None:

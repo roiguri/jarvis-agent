@@ -119,21 +119,23 @@ def side_call(parts: list[dict], prompt: str, *, job: str, timeout_s: float,
     failed call — the error is the finish reason."""
     from google.genai.types import MediaResolution
     from langchain_core.messages import HumanMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
 
+    import llm as llm_clients
     from observability import telemetry
 
-    extra = {"media_resolution": MediaResolution.MEDIA_RESOLUTION_LOW} if low_resolution else {}
-    llm = ChatGoogleGenerativeAI(
-        model=config.MODEL, temperature=0, max_retries=1, timeout=timeout_s,
-        max_output_tokens=max_output_tokens, thinking_level="low", **extra,
-    )
+    overrides: dict[str, object] = {
+        "timeout_s": timeout_s,
+        "max_output_tokens": max_output_tokens,
+    }
+    if low_resolution:
+        overrides["media_resolution"] = MediaResolution.MEDIA_RESOLUTION_LOW
+    client = llm_clients.get_client("media").with_overrides(**overrides)
     message = HumanMessage(content=[*parts, {"type": "text", "text": prompt}])
     # Its own job row, so a running turn's call count and call indexes stay its own.
     with telemetry.job(job):
         t0 = time.perf_counter()
         try:
-            response = llm.invoke([message])
+            response = client.invoke([message])
         except Exception as e:
             latency = int((time.perf_counter() - t0) * 1000)
             telemetry.record_llm_call(None, latency_ms=latency, error=f"{type(e).__name__}: {e}")

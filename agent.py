@@ -14,7 +14,6 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.messages import (
     AIMessage, HumanMessage, SystemMessage, ToolMessage, convert_to_messages,
 )
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentState
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, START, END
@@ -29,6 +28,7 @@ import config
 # The tool registry is the single source of the agent's tool surface.
 from tools import registry
 import heartbeat_state
+import llm as llm_clients
 import pending_mirrors
 import reply_context
 import turn_budget
@@ -186,7 +186,7 @@ DB_PATH = os.path.join(config.MEMORY_DIR, "threads.sqlite")
 # 6m48s and 65k output tokens inside ONE call, which no step budget can catch —
 # the graph never advances while it happens. 60s is ~2x the slowest per-call
 # average ever logged (31s) and above the p99 duration of a WHOLE turn (37s).
-LLM_CALL_TIMEOUT_S = 60
+LLM_CALL_TIMEOUT_S = llm_clients.DEFAULT_CALL_TIMEOUT_S
 # Floor for a call's timeout once it is capped to the turn's remaining budget:
 # a near-zero timeout would only turn "out of time" into an opaque failure.
 MIN_CALL_TIMEOUT_S = 15
@@ -197,12 +197,16 @@ MIN_CALL_TIMEOUT_S = 15
 # is how one silently dropped a request while telemetry recorded it as clean.
 _NORMAL_FINISH_REASONS = {"STOP", "FINISH_REASON_UNSPECIFIED", ""}
 
-llm = ChatGoogleGenerativeAI(
-    model=config.MODEL,
-    temperature=0.2, # Lower temperature for more deterministic tool usage
-    max_retries=2,
-    timeout=LLM_CALL_TIMEOUT_S,
-)
+_DEFAULT_LLM = llm_clients.get_client("user")
+llm = _DEFAULT_LLM
+
+
+def _client_for(scope: str):
+    """Resolve the model client for ``scope``. When a test has replaced
+    ``agent.llm`` (e.g. via ``use_llm``), honor that fake across every scope."""
+    if llm is not _DEFAULT_LLM:
+        return llm
+    return llm_clients.get_client(scope if scope in llm_clients.PROFILES else "user")
 
 # ---------------------------------------------------------------------------
 # File-driven identity — assembled per turn (hot reload; no startup cache)
@@ -591,13 +595,14 @@ def _llm_node(state: JarvisState) -> dict:
     # text left in history would be imitated by later turns.
     tracker = turn_budget.TRACKER.get()
     tracker.check()
+    client = _client_for(scope)
     tools = []
     if tracker.exhausted_by:
-        runnable = llm
+        runnable = client
         messages.append(HumanMessage(content=tracker.policy.exhaustion_ask))
     else:
         tools = registry.get_tools(scope, active)
-        runnable = llm.bind_tools(tools)
+        runnable = client.bind_tools(tools)
         if tracker.wrapped_up:
             messages.append(HumanMessage(content=tracker.policy.wrap_up_notice))
     prompt = build_system_prompt(scope, active, due_tasks)

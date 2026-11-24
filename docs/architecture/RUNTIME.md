@@ -313,6 +313,26 @@ Core-tool schemas are injected by LangGraph from `bind_tools`, not enumerated in
 
 ---
 
+## Model Entry Point & Thinking Budgets (`llm.py`)
+
+Every Gemini call in Jarvis — the agent loop (`user`, `heartbeat`, `dream` scopes), `compaction.py`, `daily_log.py`, and `files/records.py` — goes through [llm.py](../../llm.py) instead of instantiating `ChatGoogleGenerativeAI` directly:
+
+- **`ModelProfile` (frozen dataclass)** declares `model`, `thinking_level`, `temperature`, `max_retries`, `timeout_s`, `max_output_tokens`, and optional `media_resolution` as data in `llm.PROFILES` (mirroring `turn_budget.POLICIES`). Unset (`None`) optional fields are omitted from the underlying client kwargs.
+- **`ModelClient`** wraps `ChatGoogleGenerativeAI` lazily on first use, exposes `bind_tools`, `with_structured_output`, `invoke`, and `with_overrides(...)` (used by `files/records.py` for per-recorder caps/resolution without duplicating client construction).
+- **Per-scope routing in `agent._llm_node()`:** `_client_for(scope)` resolves `llm.get_client(scope)` (`user`, `heartbeat`, `dream`), while honoring any test fake installed on `agent.llm` via `use_llm`.
+- **`llm.py` imports only `config`**, never `agent`, so background jobs (`compaction`, `daily_log`) and tools (`files/records`) never import `agent` just to discover the model name.
+
+| Profile | Caller | `thinking_level` | `max_output_tokens` |
+|---|---|---:|---:|
+| `user` | `agent.py` (`scope="user"`) | `medium` | — |
+| `heartbeat` | `agent.py` (`scope="heartbeat"`) | `medium` | — |
+| `dream` | `agent.py` (`scope="dream"`) | `low` | `16384` |
+| `daily_log` | `daily_log.py` | `low` | `16384` |
+| `compaction` | `compaction.py` | `low` | `8192` |
+| `media` | `files/records.py` | `low` | `4096` (overridden per recorder) |
+
+---
+
 ## Concurrency
 
 `active_skills` lives in the SQLite checkpoint. The only race is **a heartbeat tick mutating a checkpoint while a user turn for the same thread is mid-flight**. The threads are distinct (`heartbeat` vs `owner`), so cross-thread checkpoint contention is not a concern; intra-thread concurrency is serialized by running one turn per thread at a time (the owner-turn lock in [main.py](../../main.py) and `TURN_LOCK` in [heartbeat.py](../../heartbeat.py)). The broader heartbeat ↔ user concurrency model (skip/defer/interrupt, checkpoint injection for heartbeat-initiated conversations) is specified in [ARCHITECTURE_PLAN.md](../plans/archive/ARCHITECTURE_PLAN.md) "Concurrency Model" and is not re-derived here.

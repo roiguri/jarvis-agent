@@ -112,24 +112,16 @@ class CompactionState(BaseModel):
 
 
 # The summary is a background job nobody waits on, and reading ~36 hours of
-# transcript can take longer than a turn's per-call limit; its own model
-# settings, then: same model, a longer limit, no sampling variety. A normal
-# record is under 1k output tokens; the cap ends a degenerate repeating answer
-# early instead of letting it run to the time limit.
+# transcript can take longer than a turn's per-call limit; its model settings
+# live in llm.PROFILES["compaction"].
 SUMMARY_TIMEOUT_S = 180
 SUMMARY_MAX_TOKENS = 8192
-_summarizer = None
 
 
 def _summarizer_llm():
-    global _summarizer
-    if _summarizer is None:
-        import agent
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    import llm
 
-        _summarizer = ChatGoogleGenerativeAI(model=agent.llm.model, temperature=0, max_retries=1,
-                                             timeout=SUMMARY_TIMEOUT_S, max_tokens=SUMMARY_MAX_TOKENS)
-    return _summarizer
+    return llm.get_client("compaction")
 
 
 def _call_model(system: str, user: str) -> tuple[dict | None, object]:
