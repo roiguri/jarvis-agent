@@ -22,10 +22,8 @@ from gateway.outbox import Outbox
 from gateway.webhook.notifier import MediaNotificationManager
 from gateway.webhook.server import create_webhook_app
 from tools.core import (
-    append_chat_log,
     async_append_notification_log,
     trim_log,
-    CHAT_LOG,
     NOTIFICATION_LOG,
 )
 from observability import store as telemetry_store
@@ -57,11 +55,9 @@ _owner_turn_lock = asyncio.Lock()
 
 
 async def process_inbound_message(inbound: InboundMessage) -> str | None:
-    """Domain-level processing: chat history + agent call. No channel-specific parsing here."""
+    """Domain-level processing: slash commands + agent call. No channel-specific parsing here."""
     command_reply = await try_handle_command(inbound)
     if command_reply is not None:
-        await asyncio.to_thread(append_chat_log, "user", inbound.user_text, inbound.thread_id)
-        await asyncio.to_thread(append_chat_log, "assistant", command_reply, inbound.thread_id)
         await asyncio.to_thread(
             episodes_record.slash_command, thread_id=inbound.thread_id,
             channel=inbound.channel or None, command=inbound.user_text, reply=command_reply,
@@ -77,10 +73,6 @@ async def process_inbound_message(inbound: InboundMessage) -> str | None:
         caption=inbound.user_text, turn_id=turn_id,
     )
     user_text = "\n".join([inbound.user_text, *notes]).strip()
-    await asyncio.to_thread(
-        append_chat_log, "user", user_text, inbound.thread_id,
-        file_ids=[r.id for r in records],
-    )
 
     return await run_owner_turn(
         user_text,
@@ -105,7 +97,7 @@ async def run_owner_turn(
     """One user-scope turn under the owner lock; the single path every
     conversational caller goes through. Returns the reply — for a turn that did
     not finish, the runtime's honest account of what happened and what already
-    landed — and chat-logs it when non-empty."""
+    landed."""
     async with _owner_turn_lock:
         outcome = await asyncio.to_thread(
             ask_jarvis,
@@ -117,8 +109,6 @@ async def run_owner_turn(
             turn_id=turn_id,
             reply_to=reply_to,
         )
-    if outcome.text:
-        await asyncio.to_thread(append_chat_log, "assistant", outcome.text, thread_id)
     _schedule_compaction(thread_id)
     file_worker.kick()
     return outcome.text
@@ -260,9 +250,8 @@ async def main() -> None:
     async def link_file_origin(file_id: str, channel: str, origin_id: str) -> None:
         await asyncio.to_thread(file_store.link_origin, file_id, channel, origin_id)
 
-    for log_path in (CHAT_LOG, NOTIFICATION_LOG):
-        trim_log(log_path)
-        logger.info("Log trimmed: %s", log_path)
+    trim_log(NOTIFICATION_LOG)
+    logger.info("Log trimmed: %s", NOTIFICATION_LOG)
 
     async def on_confirmation_outcome(
         system_text: str, thread_id: str, outbox: Outbox
@@ -272,10 +261,9 @@ async def main() -> None:
         reply via that channel's outbox. thread_id/outbox are the origin
         channel's, supplied by its confirmation store."""
         try:
-            await asyncio.to_thread(append_chat_log, "user", system_text, thread_id)
             reply = await run_owner_turn(system_text, thread_id, input_role="system")
             if reply:
-                # Conversational reply, already chat-logged — no notification event.
+                # Conversational reply, already in the episode store — no notification event.
                 await outbox.notify_owner(reply)
         except Exception:
             logger.exception("Failed to deliver confirmation outcome")

@@ -270,3 +270,55 @@ def test_day_view_shows_background_and_the_conversation():
     assert len(conversation[1]) - len("12:00 Roi: ") == today.DAY_TEXT_CAP
     assert conversation[2] == "12:00 Jarvis: a reply"
     assert len(conversation) == 3, "no slash commands, quiet ticks or other days"
+
+
+# --- Heartbeat's today-chat slice (#194) -----------------------------------------
+
+def test_heartbeat_today_chat_slice_reads_episode_store(monkeypatch):
+    from tests.fakes import frozen_datetime_module
+
+    now = datetime(2026, 10, 16, 10, 0, tzinfo=timezone.utc)  # 13:00 Israel (UTC+3)
+    monkeypatch.setattr(agent, "_dt", frozen_datetime_module(now))
+    with store.write() as con:
+        # Excluded: yesterday
+        store.insert(con, ts="2026-10-15T20:00:00+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="chat", content="yesterday")
+        # Included: owner message, jarvis reply, slash command, confirmation outcome
+        store.insert(con, ts="2026-10-16T06:15:00+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="chat", content="ran 5k already")
+        store.insert(con, ts="2026-10-16T06:16:00+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="tool_call", source="chat", tool_name="log_workout",
+                     content='{"km": 5}')
+        store.insert(con, ts="2026-10-16T06:16:01+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="tool_result", source="chat", tool_name="log_workout",
+                     content="logged")
+        store.insert(con, ts="2026-10-16T06:16:02+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="jarvis", source="chat", content="Logged your 5k.")
+        store.insert(con, ts="2026-10-16T07:00:00+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="owner", source="slash_command", content="/status")
+        store.insert(con, ts="2026-10-16T07:00:01+00:00", thread_id=OWNER_THREAD_ID,
+                     scope="user", role="jarvis", source="slash_command", content="All good.")
+        # Excluded: heartbeat thread and *_test thread
+        store.insert(con, ts="2026-10-16T08:00:00+00:00", thread_id="heartbeat",
+                     scope="heartbeat", role="jarvis", source="heartbeat", content="tick note")
+        store.insert(con, ts="2026-10-16T08:05:00+00:00", thread_id="owner_test",
+                     scope="user", role="owner", source="chat", content="test noise")
+    out = agent._load_recent_user_chat()
+    assert out.splitlines() == [
+        "--- Today's chat with Roi (Israel time) ---",
+        "[09:15] user: ran 5k already",
+        "[09:16] assistant: Logged your 5k.",
+        "[10:00] user: /status",
+        "[10:00] assistant: All good.",
+    ]
+
+
+def test_trace_joins_chat_from_episode_store_by_turn_id(use_llm, capsys):
+    from scripts import trace
+
+    use_llm(FakeLLM([AIMessage(content="hello from trace")]))
+    agent.ask_jarvis("ping trace", OWNER_THREAD_ID)
+    assert trace.main(["--last", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "CHAT[owner]  ping trace" in out
+    assert "CHAT[jarvis]  hello from trace" in out

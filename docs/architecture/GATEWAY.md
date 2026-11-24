@@ -153,7 +153,7 @@ sequenceDiagram
     Store-)User: on_outcome(...) or outbox.notify_owner(...)
 ```
 
-The store is **channel-agnostic**. The UI plug-in is the only Telegram-specific (or email-specific, etc.) piece. The outcome is delivered through the host-injected `on_outcome` callback (which feeds it back through the agent for a conversational acknowledgement) or, if none is wired, posted verbatim via the Outbox — with **no** notification event either way: confirmation outcomes are conversation, recorded in `chat_history.jsonl`, never in `notifications.jsonl`.
+The store is **channel-agnostic**. The UI plug-in is the only Telegram-specific (or email-specific, etc.) piece. The outcome is delivered through the host-injected `on_outcome` callback (which feeds it back through the agent for a conversational acknowledgement) or, if none is wired, posted verbatim via the Outbox — with **no** notification event either way: confirmation outcomes are conversation, recorded in `episodes.sqlite`, never in `notifications.jsonl`.
 
 ---
 
@@ -193,7 +193,7 @@ async def try_handle_command(inbound) -> str | None
     # Otherwise return None — caller proceeds with the agent.
 ```
 
-`process_inbound_message` (`main.py`) calls `try_handle_command(inbound)` **first**. A non-`None` result short-circuits: it is logged to `chat_history.jsonl` just like an agent reply (so subsequent turns see the command/reply exchange) and sent via the channel's normal reply path.
+`process_inbound_message` (`main.py`) calls `try_handle_command(inbound)` **first**. A non-`None` result short-circuits: it is recorded in `episodes.sqlite` (`episodes_record.slash_command`) just like an agent reply and sent via the channel's normal reply path.
 
 ### Reply formatting — one layout, two renderers
 
@@ -386,7 +386,7 @@ action_id, message_id, callback_id, values)` and dispatches by kind:
 an ordinary inbound turn — `render_submission()` turns the values into text
 (`[Submitted form push-day-a3f1] bench_reps: 8 · core: (left empty)`; `null`
 stays visibly distinct from zero, the one distinction the hub preserves), which
-is persisted to `chat_history.jsonl` by the shared handler before the model
+is persisted to `episodes.sqlite` before the model
 runs. No deterministic handler touches a database on submit — what to do with
 the values is the model's decision in thread context.
 
@@ -641,8 +641,8 @@ Domain code reaches channels through factory accessors, never through a channel 
 
 ## `thread_id` Namespacing
 
-Two threads exist. `thread_id` is the LangGraph checkpointer key and the `chat_history.jsonl`
-tag — and nothing else: it does **not** name a channel.
+Two threads exist. `thread_id` is the LangGraph checkpointer key and the episode store
+thread tag — and nothing else: it does **not** name a channel.
 
 | Thread | Holds |
 |---|---|

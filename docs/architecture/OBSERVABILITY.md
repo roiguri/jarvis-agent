@@ -100,7 +100,7 @@ A `uuid4().hex` minted at the **top of every turn** and stamped on every row wri
 - **Where it's minted.** `ask_jarvis` (the single entry point used by both user and heartbeat), or `telemetry.job()` for work outside a turn.
 - **How it's propagated.** Through a `contextvars.ContextVar` named `TURN_ID`. **Not** through `JarvisState` — it is per-invocation and must not survive a checkpoint write.
 - **Why `ContextVar`.** Each `asyncio.to_thread(ask_jarvis, ...)` gets its own copy of the parent context, so a heartbeat tick and a user turn running concurrently never see each other's id.
-- **Join semantics.** Store tables join by `turn_id` exactly. `chat_history.jsonl` / `notifications.jsonl` carry no id (the model reads that schema), so `trace.py` matches them by thread and time window.
+- **Join semantics.** Telemetry and episode store tables join by `turn_id` exactly (`trace.py` reads conversation rows from `episodes.sqlite` by `turn_id`). `notifications.jsonl` carries no id, so `trace.py` matches it by time window.
 
 ---
 
@@ -206,6 +206,6 @@ Prefer a new column over changing an existing one's meaning, so old rows stay re
 
 ## Relationship to Other Architecture Docs
 
-- [MEMORY.md](MEMORY.md) owns the `chat_history.jsonl` and `notifications.jsonl` schemas — this layer reads them for `trace.py` but does not modify them.
+- [MEMORY.md](MEMORY.md) owns the `episodes.sqlite` and `notifications.jsonl` schemas — this layer reads them for `trace.py` but does not modify them.
 - [RUNTIME.md](RUNTIME.md) owns the agent loop and tool registry. This layer hooks into the chokepoints (`_llm_node`, `_tool_node`, `ask_jarvis`) but does not change the loop's behavior.
 - [GATEWAY.md](GATEWAY.md) owns the channels. `/usage` is a gateway-layer slash command that delegates to this layer.

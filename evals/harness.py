@@ -150,7 +150,7 @@ def _seed(case: dict, now: datetime):
     import config
     from episodes import store as episode_store
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-    from tools.core.history import CHAT_LOG, NOTIFICATION_LOG
+    from tools.core.history import NOTIFICATION_LOG
 
     for rel, body in (case.get("files") or {}).items():
         path = os.path.join(config.MEMORY_DIR, rel)
@@ -169,17 +169,18 @@ def _seed(case: dict, now: datetime):
         hh, mm = map(int, hhmm.split(":"))
         return now.replace(hour=hh, minute=mm)
 
-    with open(CHAT_LOG, "w", encoding="utf-8") as f:
-        for row in case.get("chat") or []:
-            f.write(json.dumps({"ts": at(row["time"]).astimezone(timezone.utc).isoformat(),
-                                "thread_id": "owner", "role": row["role"],
-                                "content": row["text"]}) + "\n")
+    role_map = {"user": "owner", "assistant": "jarvis"}
 
-    # Earlier background activity today, in every form a version of the code
-    # might read it from: episode rows (the today view), heartbeat-thread
-    # history (a tick that replays earlier ticks), and the notification log.
+    # Earlier chat and background activity today in the episode store, plus
+    # heartbeat-thread history and the notification log.
     history = []
     with episode_store.write() as con, open(NOTIFICATION_LOG, "w", encoding="utf-8") as notes:
+        for row in case.get("chat") or []:
+            ts = at(row["time"]).astimezone(timezone.utc).isoformat()
+            episode_store.insert(
+                con, ts=ts, thread_id="owner", scope="user", source="chat",
+                role=role_map.get(row["role"], row["role"]), content=row["text"],
+            )
         for i, e in enumerate(case.get("earlier") or []):
             ts = at(e["time"]).astimezone(timezone.utc).isoformat()
             source = e.get("kind", "tick")
@@ -220,10 +221,10 @@ FILLER_TOPICS = [
 
 def _seed_chat(case: dict, now: datetime) -> None:
     """An owner conversation from earlier in the day, written the way a real
-    day leaves it: every row in the episode store and the chat log, and the
-    thread holding whatever its window keeps. ``filler`` adds that many
-    ordinary memory-lookup turns after the scripted ones, so the earliest
-    scripted turns fall out of the window."""
+    day leaves it: every row in the episode store, and the thread holding
+    whatever its window keeps. ``filler`` adds that many ordinary
+    memory-lookup turns after the scripted ones, so the earliest scripted
+    turns fall out of the window."""
     import json
 
     import agent
@@ -231,7 +232,6 @@ def _seed_chat(case: dict, now: datetime) -> None:
     from episodes import store as episode_store
     from gateway.base import OWNER_THREAD_ID
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-    from tools.core.history import CHAT_LOG
 
     def at(hhmm: str) -> datetime:
         hh, mm = map(int, hhmm.split(":"))
@@ -250,7 +250,7 @@ def _seed_chat(case: dict, now: datetime) -> None:
                           "jarvis": f"Here's what {filename} holds right now."})
 
     messages, pending_sent = [], []
-    with episode_store.write() as con, open(CHAT_LOG, "w", encoding="utf-8") as chat:
+    with episode_store.write() as con:
         for i, turn in enumerate(turns):
             ts = (at(turn["time"]) - timedelta(days=turn.get("days_ago", 0))).astimezone(timezone.utc).isoformat()
             if "sent" in turn:
@@ -269,8 +269,6 @@ def _seed_chat(case: dict, now: datetime) -> None:
                 pending_sent = []
             messages.append(HumanMessage(content=f"{agent._turn_stamp(at(turn['time']))} {turn['owner']}"))
             episode_store.insert(con, role="owner", content=turn["owner"], **common)
-            chat.write(json.dumps({"ts": ts, "thread_id": OWNER_THREAD_ID, "role": "user",
-                                   "content": turn["owner"]}) + "\n")
             for j, call in enumerate(turn.get("tools") or []):
                 result = call["result"]
                 if result is None:  # a filler lookup reads the real fixture file
@@ -290,8 +288,6 @@ def _seed_chat(case: dict, now: datetime) -> None:
                                      meta=result_meta, content=result, **common)
             messages.append(AIMessage(content=turn["jarvis"]))
             episode_store.insert(con, role="jarvis", content=turn["jarvis"], **common)
-            chat.write(json.dumps({"ts": ts, "thread_id": OWNER_THREAD_ID, "role": "assistant",
-                                   "content": turn["jarvis"]}) + "\n")
     if messages:
         # One write carrying user input: the reducer trims it to the window,
         # as a day of real turns would have.

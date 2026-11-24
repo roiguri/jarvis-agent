@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Per-turn timeline from the telemetry store: each turn's model calls and
-tool calls in order, plus chat_history.jsonl and notifications.jsonl matched
-by (thread_id, time window).
+tool calls in order, plus conversation rows from the episode store (joined by
+turn_id) and notifications.jsonl matched by time window.
 
 Run from the code root:
 
@@ -24,9 +24,10 @@ from datetime import datetime, timedelta, timezone
 # Make repo root importable when invoked directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from episodes import store as episode_store
 from observability import store
 from timeutils import ISRAEL_TZ as IL_TZ
-from tools.core.history import CHAT_LOG, NOTIFICATION_LOG
+from tools.core.history import NOTIFICATION_LOG
 
 
 def _read_jsonl(path: str) -> list[dict]:
@@ -154,25 +155,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No turns found in {store.STORE_PATH}", file=sys.stderr)
             return 1
 
-    all_chat = _read_jsonl(CHAT_LOG)
     all_notifs = _read_jsonl(NOTIFICATION_LOG)
 
     for turn in selected:
         tid = turn["turn_id"]
-        thread_id = turn.get("thread_id")
         t0 = _parse(turn["started_at"] or turn["ts"])
         t1 = _parse(turn["ended_at"]) if turn.get("ended_at") else t0
-        # Slack on each side so the model's outbound reply (logged just after
-        # the agent returns) still falls inside the window for chat lookup.
         window_start = t0 - timedelta(seconds=2)
         window_end = t1 + timedelta(seconds=2)
         calls = store.rows("SELECT * FROM llm_calls WHERE turn_id = ? ORDER BY call_index", (tid,))
         tools = store.rows("SELECT * FROM tool_calls WHERE turn_id = ? ORDER BY ts", (tid,))
-        my_chat = [
-            c for c in all_chat
-            if c.get("thread_id") == thread_id
-            and window_start <= _parse(c["ts"]) <= window_end
-        ]
+        my_chat = episode_store.rows(
+            "SELECT ts, role, content FROM episodes "
+            "WHERE turn_id = ? AND role IN ('owner', 'jarvis', 'system') "
+            "ORDER BY ts ASC, id ASC",
+            (tid,),
+        )
         my_notifs = [
             n for n in all_notifs
             if window_start <= _parse(n["ts"]) <= window_end

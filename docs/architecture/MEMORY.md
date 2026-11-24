@@ -59,7 +59,7 @@ Grouping by subject ("all scheduling stuff together") put a tool-opaque SQLite D
 ├── triggers/triggers.json # code-owned: pending triggers, gate state, task last_run stamps (gate input — see HEARTBEAT.md doc)
 ├── episodes/episodes.sqlite  # the episode store — everything that happened (see "Episode store")
 ├── files/files.sqlite     # the file store's index: one row per stored file, its derived text, search chunks
-└── logs/{chat_history,notifications}.jsonl
+└── logs/notifications.jsonl
 
 /app/jarvis_files/ab/cd/<sha256>          # the file store's bytes, named by content; outside both
                                           #   state trees, so deploy snapshots never copy them
@@ -104,9 +104,8 @@ Deletion is blocked for files the system needs to exist; `SOUL.md` additionally 
 | `MEMORY.md` | jarvis_memory | every turn (both scopes, after USER.md) | yes | yes | no (delete blocked) |
 | `HEARTBEAT.md` | jarvis_memory | heartbeat scope only — **due task blocks only** (non-due collapse to a note; see [HEARTBEAT.md doc](HEARTBEAT.md)) | yes | task edits via `manage_heartbeat_task` (validated before write); raw `write_memory` rejected in code | no (delete of file blocked) |
 | `dream_preferences.md` | jarvis_memory | dream scope only (injected only when non-empty) | yes | yes (created lazily on owner feedback) | no |
-| `chat_history.jsonl` | jarvis_data/logs | heartbeat scope — today's slice | no (the episode store holds the same messages) | append-only (gateway writes per turn) | n/a |
 | `notifications.jsonl` | jarvis_data/logs | user scope — undrained rows mirrored into the owner thread as one user-role block (cursor-tracked; not a prompt slice) | no (the episode store holds the same sends) | append-only (heartbeat + gateway writers) | n/a |
-| `episodes.sqlite` | jarvis_data/episodes | user scope — the today view (heartbeat activity) | via `search_history` tool | code only, as things happen | n/a |
+| `episodes.sqlite` | jarvis_data/episodes | user scope — today view (heartbeat activity); heartbeat scope — today's user chat + today view | via `search_history` tool | code only, as things happen | n/a |
 
 **`MEMORY.md` is injected** (since the context redesign's S3). It is the agent's master *index*: with it in context the agent knows what files exist without a `read_memory` call, which earlier turns spent on most memory questions. It was kept out at first to save tokens; at ~2k chars (~450 tokens) the trade favours injecting it.
 
@@ -132,7 +131,7 @@ MEMORY.md          (jarvis_memory — index of memory files)
    _HEARTBEAT_FRAMING (terse tick) + prompts/heartbeat.md
    + HEARTBEAT.md — due task blocks only when due_tasks is a list
      (non-due tasks collapse to a one-line note; None = every task but gated ones)
-   + today's user chat (live slice of chat_history.jsonl)
+   + today's user chat (live slice from the episode store)
    + today view (episode store) + yesterday's daily log (daily/)
 compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
 ```
@@ -141,7 +140,7 @@ compact_skill_list(scope, active_skills)   # OWNED BY RUNTIME.md, slotted here
 to the turn's input (`_turn_stamp`: `[Saturday, 2026-10-03 14:05 Israel time]`, plus the owner's
 clock in `/tz` away mode). Every call in the turn therefore sees the same "now", and the prompt —
 rebuilt per call — changes only when the date does. The stamp lives in the checkpoint, so history
-messages keep the time they arrived; `chat_history.jsonl` stays unstamped (it has its own `ts`).
+messages keep the time they arrived; episode store rows stay unstamped (each carries its own `ts`).
 
 ### Hot reload, crash-safety
 
@@ -152,7 +151,7 @@ Every file is read per turn via `load_or_blank(path)`: returns the stripped file
 Scope changes *which prompt content* is assembled; tool reachability is owned by [RUNTIME.md](RUNTIME.md) (scope-neutral by default, with per-tool `scopes` opt-in). This layer owns only the file composition of each branch:
 
 - **`user`** — conversational framing + the **today view**. Proactive sends (briefings, reminders) are not a prompt slice: the pending-mirror drain delivers them into the owner thread as conversation history at the next user turn, so replies to them have their antecedent.
-- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice of `chat_history.jsonl`, every thread except `heartbeat` and `*_test`) + the today view + **yesterday's daily log** (`daily/daily_YYYY-MM-DD.md`, written the morning after; older days via `read_memory` or `search_history`). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
+- **`heartbeat`** — terse framing + `prompts/heartbeat.md` (the tick rules, present *only* here so they never add noise to user turns) + `HEARTBEAT.md` **filtered to the due task blocks** (the gate's due-list arrives via `JarvisState["heartbeat_due_tasks"]`; non-due tasks collapse to a one-line note — see [HEARTBEAT.md doc](HEARTBEAT.md)) + **today's user-thread chat** (live slice from `episodes.sqlite`, every thread except `heartbeat` and `*_test`) + the today view + **yesterday's daily log** (`daily/daily_YYYY-MM-DD.md`, written the morning after; older days via `read_memory` or `search_history`). The chat slice is what lets the tick detect tasks the owner has already addressed and write a `User handled this on … — skipping today` note instead of duplicating a briefing.
 
 Both live slices are read **directly** by `build_system_prompt` (no tool call), bounded by start-of-Israel-day plus a per-entry length cap, so they add finite tokens regardless of total log size. The today view comes from the episode store the same way.
 
@@ -200,8 +199,8 @@ messaged the owner, and wakes, from their `heartbeat_respond` calls (latest 20).
 
 **History before the store.** Each instance imported `chat_history.jsonl` and `notifications.jsonl`
 once when the store arrived (rows with `source = import` and no turn id; the time is in the `meta`
-table as `log_import`, where the integrity check starts). Both logs are still written until
-`chat_history.jsonl` is retired.
+table as `log_import`, where the integrity check starts). `chat_history.jsonl` has since been
+retired (#194); `notifications.jsonl` remains as the pending-mirror queue.
 
 **Integrity.** `scripts/context_report.py` lists, per day, telemetry turns missing from the store.
 Backups copy the store with SQLite's online backup (`deploy/backup_state.sh`).

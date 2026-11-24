@@ -88,7 +88,7 @@ Jarvis is a stateful, proactive AI assistant running as a systemd service on a h
 ├── web/tmp/                        # fetch_url's video downloads — one temp dir per call, removed
 │                                   #   after it; leftovers older than an hour swept on next use
 └── logs/
-    └── chat_history.jsonl, notifications.jsonl  # 90-day JSONL; superseded by the episode store, still written
+    └── notifications.jsonl         # 90-day JSONL; still drives the pending-mirror queue (pending_mirrors.py)
 
 /app/jarvis_files/ab/cd/<sha256>   # file store bytes, named by content hash; outside both state trees
                                    #   (never in deploy snapshots — the Proxmox backup covers them)
@@ -141,7 +141,7 @@ MEMORY.md          (memory dir — index of memory files; agent-maintained)
 compact_skill_list (registry — every skill's SKILL.md description; active skills' rule bodies too)
 ```
 
-**Live cross-scope awareness.** Each scope's prompt now includes a live, log-derived view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `chat_history.jsonl`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. Yesterday reaches the heartbeat as its daily log, written by the morning job from the episode store.
+**Live cross-scope awareness.** Each scope's prompt now includes a live view of what the other side did *today*: the user scope receives pending proactive sends as mirrored conversation history (the pending-mirror drain in `ask_jarvis`: undrained `notifications.jsonl` rows become one user-role block in the turn input, cursor-tracked in `jarvis_data/agent/mirror_cursor.json`); the heartbeat scope receives today's user-thread chat (every non-heartbeat thread in `episodes.sqlite`). Both are read directly by `build_system_prompt` (no tool call), bounded by start-of-Israel-day and a per-entry length cap. This lets the heartbeat skip a task the user already addressed in chat, and lets the chat assistant reference a briefing the tick just sent as real history — a reply to it has its antecedent in the thread. Yesterday reaches the heartbeat as its daily log, written by the morning job from the episode store.
 
 `MEMORY.md` is injected in both scopes, so the agent knows what memory files exist without a tool call. USER.md and MEMORY.md have size targets (4,000 / 8,000 chars) that the nightly consolidation keeps them under; writes are never refused for size, and the prompt includes at most 3× a target (`CORE_FILE_TARGETS` in `agent.py`). Per-tool schemas are **not** in the prompt — they come from `llm.bind_tools()` with the scoped tool set. A skill's rules (`SKILL.md` body) appear **only when that skill is active**. `AGENTS.md`/`heartbeat.md` change by code deploy only; `SOUL.md` writes trigger a Telegram confirmation (enforced in `write_memory`). `AGENTS.md` is physically outside the `_get_safe_path` sandbox, so memory tools cannot read or write it.
 
@@ -183,7 +183,7 @@ The heartbeat and user agents share SOUL.md/AGENTS.md/USER.md and the same tool 
 | `owner` | The one owner conversation — all channels stamp it (compacted past ~20k tokens to a record + the last 3 turns; 50-message trim as a backstop) |
 | `heartbeat` | Scheduled background checks and scheduled wakes — no saved conversation (each run starts fresh); the id still tags their records |
 
-Only user-scope turns write to `chat_history.jsonl` (tagged by `thread_id`); heartbeat and wake turns are not logged there. Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn), and the heartbeat also gets yesterday's daily log.
+Cross-thread awareness flows through two paths: delivered proactive sends reach the owner thread via the pending-mirror drain while today's user chat is injected into the heartbeat prompt by `build_system_prompt` (live, per-turn, from `episodes.sqlite`), and the heartbeat also gets yesterday's daily log.
 
 ---
 

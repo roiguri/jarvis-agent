@@ -68,7 +68,7 @@ class InboundMessage:
     """Channel-agnostic message shape delivered by a channel to the app domain.
 
     `thread_id` namespaces per-conversation state (LangGraph checkpointer key +
-    chat_history.jsonl tag). All owner traffic carries OWNER_THREAD_ID.
+    episode store thread). All owner traffic carries OWNER_THREAD_ID.
     """
 
     user_id: int
