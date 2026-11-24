@@ -18,7 +18,6 @@ from tools.registry import tool_register
 _LOG_DIR = os.path.join(config.DATA_DIR, "logs")
 
 NOTIFICATION_LOG = os.path.join(_LOG_DIR, "notifications.jsonl")
-CHAT_LOG = os.path.join(_LOG_DIR, "chat_history.jsonl")
 LOG_RETENTION_DAYS = 90
 
 # Serializes appends across all JSONL writers in this process. Append-mode
@@ -84,26 +83,6 @@ def append_notification_log(event_type: str, message: str, metadata: dict | None
 async def async_append_notification_log(event_type: str, message: str, metadata: dict | None = None) -> None:
     """Async wrapper around append_notification_log for use in async contexts."""
     await asyncio.to_thread(append_notification_log, event_type, message, metadata)
-
-
-def append_chat_log(role: str, content: str, thread_id: str, file_ids: list[str] | None = None) -> None:
-    """Append one chat message to chat_history.jsonl. Synchronous.
-
-    Args:
-        role: "user" or "assistant"
-        content: text content
-        thread_id: conversation thread identifier
-        file_ids: ids of the files the message brought (e.g. ["file:k7m2q9xd"])
-    """
-    record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "thread_id": thread_id,
-        "role": role,
-        "content": content,
-    }
-    if file_ids:
-        record["media"] = file_ids
-    _append_line(CHAT_LOG, record)
 
 
 @tool_register(namespace="core")

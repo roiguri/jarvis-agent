@@ -13,11 +13,9 @@ from tools.core.memory import (
 )
 from tools.core.history import (
     NOTIFICATION_LOG,
-    CHAT_LOG,
     trim_log,
     append_notification_log,
     async_append_notification_log,
-    append_chat_log,
     search_history,
 )
 from tools.core.scheduling import manage_trigger
@@ -33,11 +31,9 @@ __all__ = [
     "list_memory",
     "delete_memory",
     "NOTIFICATION_LOG",
-    "CHAT_LOG",
     "trim_log",
     "append_notification_log",
     "async_append_notification_log",
-    "append_chat_log",
     "search_history",
     "manage_trigger",
     "activate_skill",

@@ -340,55 +340,56 @@ def _today_israel_start_utc() -> _dt.datetime:
     return start_il.astimezone(_dt.timezone.utc)
 
 
+_CHAT_ROLE_LABELS = {"owner": "user", "jarvis": "assistant", "system": "user"}
+
+
 def _load_recent_user_chat(limit: int = 60) -> str:
     """Today's user-thread chat (heartbeat scope) — gives the tick visibility
     into what Roi has already discussed today so it can skip already-handled
     tasks instead of duplicating briefings.
 
-    Reads chat_history.jsonl directly to avoid pulling in the tool import path.
-    That log is shared by both threads, so this drops the heartbeat's own thread
-    (else the tick would read its own briefings back) and test rows, keeping
-    today's user-channel messages. Truncates each message to keep the prompt
-    bounded.
+    Reads today's user-scope conversational rows (owner messages, Jarvis
+    replies, slash commands, and confirmation outcomes; never tool traffic or
+    heartbeat/test threads) from the episode store. Truncates each message to
+    keep the prompt bounded.
     """
-    import json
+    from episodes import store as episode_store
     from heartbeat import HEARTBEAT_THREAD_ID
-    chat_log = os.path.join(config.DATA_DIR, "logs", "chat_history.jsonl")
-    if not os.path.exists(chat_log):
-        return ""
-    since = _today_israel_start_utc()
-    records = []
+
+    since = _today_israel_start_utc().isoformat()
     try:
-        with open(chat_log, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    tid = rec.get("thread_id", "")
-                    if not tid or tid == HEARTBEAT_THREAD_ID or tid.endswith("_test"):
-                        continue
-                    ts = _dt.datetime.fromisoformat(rec["ts"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=_dt.timezone.utc)
-                    if ts >= since:
-                        records.append(rec)
-                except (KeyError, ValueError, json.JSONDecodeError):
-                    continue
-    except OSError:
+        records = episode_store.rows(
+            "SELECT ts, role, content FROM episodes "
+            "WHERE ts >= ? "
+            "  AND thread_id IS NOT NULL AND thread_id != '' "
+            "  AND thread_id != ? AND thread_id NOT LIKE '%_test' "
+            "  AND role IN ('owner', 'jarvis', 'system') "
+            "  AND (scope = 'user' OR scope IS NULL) "
+            "ORDER BY ts ASC, id ASC",
+            (since, HEARTBEAT_THREAD_ID),
+        )
+    except Exception:
+        logger.exception("Failed to load recent user chat from episode store")
         return ""
     if not records:
         return ""
     records = records[-limit:]
     lines = []
     for r in records:
-        ts_local = _dt.datetime.fromisoformat(r["ts"]).astimezone(_ISRAEL_TZ).strftime("%H:%M")
-        role = r.get("role", "?")
-        content = r.get("content", "").replace("\n", " ").strip()
+        try:
+            ts = _dt.datetime.fromisoformat(r["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            continue
+        ts_local = ts.astimezone(_ISRAEL_TZ).strftime("%H:%M")
+        role = _CHAT_ROLE_LABELS.get(r.get("role", ""), r.get("role", "?"))
+        content = (r.get("content") or "").replace("\n", " ").strip()
         if len(content) > 240:
             content = content[:240] + "..."
         lines.append(f"[{ts_local}] {role}: {content}")
+    if not lines:
+        return ""
     return "--- Today's chat with Roi (Israel time) ---\n" + "\n".join(lines)
 
 
