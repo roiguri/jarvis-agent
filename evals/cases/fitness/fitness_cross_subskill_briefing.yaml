@@ -1,0 +1,18 @@
+description: Pre-class briefing spans schedule lookup and PR history without calling get_daily_programming or log_workout.
+kind: chat
+time: "17:30"
+files:
+  USER.md: |
+    # User Profile
+    - Name: Roi
+    - Gym: CrossFit Neve Tzedek (Arbox, WOD track)
+message: "What's my upcoming CrossFit class and what are my PRs for the lifts in it?"
+stubs:
+  fetch_upcoming_arbox_classes: |
+    Upcoming Arbox bookings:
+    - Today 19:00 WOD: Front Squat 5x3 + 10-min AMRAP (pull-ups, burpees)
+  query_exercise_history: "Front Squat history: 75kg x 3 (PR), 70kg x 5."
+expect:
+  called: [fetch_upcoming_arbox_classes, query_exercise_history]
+  not_called: [get_daily_programming, log_workout]
+  allowed_tools: [activate_skill, read_memory, fetch_upcoming_arbox_classes, query_exercise_history]

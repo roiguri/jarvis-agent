@@ -1,0 +1,20 @@
+description: Asking about another track (PUMP) reaches for get_daily_programming.
+kind: chat
+time: "18:00"
+files:
+  USER.md: |
+    # User Profile
+    - Name: Roi
+    - Gym: CrossFit Neve Tzedek (Arbox, WOD track)
+message: "What's the PUMP workout tomorrow compared to WOD?"
+stubs:
+  get_daily_programming: |
+    Tomorrow's programming (all tracks):
+    - WOD: Back Squat 5x5 + 12-min AMRAP (wall balls, box jumps)
+    - PUMP: DB Bench Press 4x10 + Cable Rows 4x12 + Biceps/Triceps superset
+  fetch_weekly_gym_schedule: |
+    Tomorrow (WOD track):
+    - 18:00 WOD — Back Squat 5x5 + 12-min AMRAP (wall balls, box jumps)
+expect:
+  called: [get_daily_programming]
+  allowed_tools: [activate_skill, read_memory, get_daily_programming, fetch_weekly_gym_schedule]

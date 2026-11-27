@@ -1,0 +1,17 @@
+description: Logging an Arbox CrossFit class enriches it with log_exercise_stats and log_wod_result and never calls log_workout.
+kind: chat
+time: "20:15"
+files:
+  USER.md: |
+    # User Profile
+    - Name: Roi
+    - Gym: CrossFit Neve Tzedek (Arbox, WOD track)
+message: "Just finished my 19:00 CrossFit class — hit 85kg 3RM back squat and 14:20 on the Metcon"
+stubs:
+  get_today_workout_id: "Found today's scheduled workout: workout_id=42 (19:00 CrossFit WOD, status=scheduled)."
+  log_exercise_stats: "Logged Back Squat 85kg x 3 on workout_id=42."
+  log_wod_result: "Logged Metcon 14:20 on workout_id=42."
+expect:
+  called: [log_exercise_stats, log_wod_result]
+  not_called: [log_workout]
+  allowed_tools: [activate_skill, read_memory, get_today_workout_id, log_exercise_stats, log_wod_result]
