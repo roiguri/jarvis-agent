@@ -25,6 +25,7 @@ from observability.telemetry import (
 from observability.usage import (
     MODEL_PRICES,
     estimate_usd,
+    estimate_usd_parts,
     load_turns,
     summarize_usage,
     format_usage_table,
@@ -45,6 +46,7 @@ __all__ = [
     # Read side (usage).
     "MODEL_PRICES",
     "estimate_usd",
+    "estimate_usd_parts",
     "load_turns",
     "summarize_usage",
     "format_usage_table",
