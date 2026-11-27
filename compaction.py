@@ -39,8 +39,8 @@ from timeutils import ISRAEL_TZ
 logger = logging.getLogger(__name__)
 
 # Compact when the window's messages before the kept turns pass this many chars
-# (~20k tokens at ~4.3 chars a token).
-TRIGGER_CHARS = 86_000
+# (~10.5k tokens at ~4.3 chars a token).
+TRIGGER_CHARS = 45_000
 KEEP_TURNS = 3
 HORIZON = timedelta(hours=36)
 OPEN_REQUEST_TTL = timedelta(days=3)

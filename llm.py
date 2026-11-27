@@ -72,7 +72,7 @@ PROFILES: dict[str, ModelProfile] = {
     ),
     "heartbeat": ModelProfile(
         name="heartbeat",
-        thinking_level="medium",
+        thinking_level="low",
         temperature=0.2,
         max_retries=2,
         timeout_s=DEFAULT_CALL_TIMEOUT_S,

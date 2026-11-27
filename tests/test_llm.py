@@ -24,6 +24,7 @@ def test_every_expected_profile_exists():
         assert llm.PROFILES[name].name == name
         assert llm.PROFILES[name].model == config.MODEL
         assert llm.PROFILES[name].thinking_level in ("minimal", "low", "medium", "high")
+    assert llm.PROFILES["heartbeat"].thinking_level == "low"
 
 
 def test_unknown_profile_raises():
