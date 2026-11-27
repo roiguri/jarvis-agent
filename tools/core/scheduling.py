@@ -60,29 +60,22 @@ def manage_trigger(
     instruction: str | None = None,
     trigger_id: str | None = None,
 ) -> str:
-    """Create, list, or cancel one-off scheduled actions: reminders and wakes.
+    """Create, list, or cancel one-off scheduled actions (reminders and wakes).
+    For RECURRING work use manage_heartbeat_task.
 
-    action='create': Schedule one action at `at`. Give exactly one of:
-        message: a REMINDER — this text is sent to the user verbatim at that time.
-            No model runs. Use for a fixed nudge ("call the dentist").
-        instruction: a WAKE — at that time you run a background turn with this
-            instruction and your tools, and can message the user (or send a form).
-            Use when the moment needs fresh data or judgment ("check whether the
-            download finished and tell the user", "ask how the workout went").
-        Call create exactly ONCE per request; the response confirms the scheduled
-        time so you can verify.
-    action='list': Show every pending reminder and wake with IDs and times.
-        Use before cancelling, or when the user asks what is scheduled.
-    action='cancel': Cancel one by ID. To change one: cancel it, then create anew.
-
-    For RECURRING work use manage_heartbeat_task, not this tool.
+    action='create': Schedule at `at` with exactly one of:
+    - `message`: REMINDER — sent verbatim, no model runs (fixed nudges).
+    - `instruction`: WAKE — runs a background turn with tools (needs fresh data/judgment).
+    Call create once per request; verify the confirmed time in the response.
+    action='list': List pending triggers with IDs and times.
+    action='cancel': Cancel by `trigger_id` (to reschedule: cancel, then create).
 
     Args:
-        action: 'create', 'list', or 'cancel'
-        at: ISO 8601 UTC datetime, e.g. '2026-05-08T09:00:00Z' (required for 'create')
-        message: Reminder text (create a reminder)
-        instruction: What to do when woken (create a wake)
-        trigger_id: Short ID from 'list' output (required for 'cancel')
+        action: 'create' | 'list' | 'cancel'.
+        at: ISO 8601 UTC datetime, e.g. '2026-05-08T09:00:00Z' (required for create).
+        message: Reminder text (creates a reminder).
+        instruction: Wake instruction (creates a wake).
+        trigger_id: ID from 'list' (required for cancel).
     """
     if action == "create":
         if not at or bool(message) == bool(instruction):

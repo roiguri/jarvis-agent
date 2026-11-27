@@ -6,4 +6,4 @@ expect:
   called_with:
     - {tool: manage_trigger, args: {action: "create", instruction: "download"}}
   not_called: [manage_heartbeat_task]
-  allowed_tools: [manage_trigger]
+  allowed_tools: [manage_trigger, activate_skill, get_radarr_queue, get_sonarr_queue]
