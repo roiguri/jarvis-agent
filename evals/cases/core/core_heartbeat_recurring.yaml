@@ -1,0 +1,9 @@
+description: Recurring proactive request uses manage_heartbeat_task(action=create), never manage_trigger or write_memory.
+kind: chat
+time: "14:00"
+message: "Every Sunday at 09:00 check my book list and suggest one book to read"
+expect:
+  called_with:
+    - {tool: manage_heartbeat_task, args: {action: "create"}}
+  not_called: [manage_trigger, write_memory]
+  allowed_tools: [manage_heartbeat_task, read_memory]

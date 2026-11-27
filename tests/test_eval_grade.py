@@ -62,3 +62,33 @@ def test_max_suggestions_passes_within_bound_and_fails_above():
     by_name = {name: ok for name, ok, _ in bad_checks}
     assert by_name["message contains 'URL'"] is True
     assert by_name["suggestions <= 1"] is False
+
+
+def test_allowed_tools_passes_for_subset_and_fails_on_unexpected():
+    res = SimpleNamespace(
+        error=None,
+        calls=[
+            {"tool": "activate_skill", "args": {"namespaces": ["fitness"]}},
+            {"tool": "fetch_weekly_gym_schedule", "args": {}},
+        ],
+        ack=None,
+        reply="Classes tomorrow at 19:00.",
+        sends=[],
+    )
+    ok = grade({"allowed_tools": ["activate_skill", "fetch_weekly_gym_schedule", "read_memory"]}, res)
+    assert all(passed for _, passed, _ in ok)
+
+    res_bad = SimpleNamespace(
+        error=None,
+        calls=[
+            {"tool": "activate_skill", "args": {"namespaces": ["fitness"]}},
+            {"tool": "fetch_weekly_gym_schedule", "args": {}},
+            {"tool": "get_daily_programming", "args": {}},
+        ],
+        ack=None,
+        reply="Classes tomorrow at 19:00.",
+        sends=[],
+    )
+    bad = grade({"allowed_tools": ["activate_skill", "fetch_weekly_gym_schedule"]}, res_bad)
+    assert any(name == "only allowed tools called" and not passed and "get_daily_programming" in detail
+               for name, passed, detail in bad)

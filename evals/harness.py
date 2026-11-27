@@ -343,6 +343,9 @@ def run_case(case: dict) -> Result:
         frozen = _frozen_module(now.astimezone(timezone.utc))
         patches.set(agent, "_dt", frozen)
         patches.set(heartbeat, "datetime", frozen)
+        from triggers import scheduler as trigger_scheduler
+        patches.set(trigger_scheduler, "arm", lambda _t: None)
+        patches.set(trigger_scheduler, "disarm", lambda _id: None)
         patches.set(factory, "default_outbox", lambda: outbox)
         patches.set(heartbeat, "TURN_LOCK", asyncio.Lock())
         if case.get("kind") == "chat":

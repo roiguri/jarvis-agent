@@ -5,6 +5,7 @@ Checks:
     ack:          {notify: bool, acted_tasks: [names]}  (acted_tasks as a set)
     called:       [tool names] — each called at least once
     not_called:   [tool names] — none of them called
+    allowed_tools: [tool names] — every tool call must be in this set (fails on any unexpected tool)
     called_with:  [{tool, args}] — some call of that tool whose args contain these
                   (strings match case-insensitively as substrings; others exactly)
     not_called_with: [{tool, args}] — no call of that tool with args containing these
@@ -71,6 +72,14 @@ def grade(expect: dict, result) -> list[tuple[str, bool, str]]:
         checks.append((f"called {name}", name in called, f"calls: {called}"))
     for name in expect.get("not_called") or []:
         checks.append((f"did not call {name}", name not in called, f"calls: {called}"))
+    if "allowed_tools" in expect:
+        allowed = set(expect["allowed_tools"] or [])
+        unexpected = [t for t in called if t not in allowed]
+        checks.append((
+            f"only allowed tools called",
+            not unexpected,
+            f"unexpected: {unexpected} (allowed: {sorted(allowed)})",
+        ))
     for spec in expect.get("called_with") or []:
         hits = [c for c in result.calls if c["tool"] == spec["tool"] and _args_match(spec["args"], c["args"])]
         seen = [c["args"] for c in result.calls if c["tool"] == spec["tool"]]

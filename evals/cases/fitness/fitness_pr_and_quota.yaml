@@ -1,0 +1,16 @@
+description: PR and weekly quota questions use fixed fitness tools rather than raw query_fitness_db.
+kind: chat
+time: "17:00"
+files:
+  USER.md: |
+    # User Profile
+    - Name: Roi
+    - Gym: CrossFit Neve Tzedek (Arbox, 2x/week CrossFit + 2x/week Running)
+message: "What's my deadlift PR and how am I doing on my weekly workout quota?"
+stubs:
+  query_exercise_history: "Deadlift history: 110kg x 3 (all-time PR), 100kg x 5."
+  get_weekly_fitness_summary: "Current week quota: CrossFit 1/2 completed, Running 1/2 completed."
+expect:
+  called: [query_exercise_history, get_weekly_fitness_summary]
+  not_called: [query_fitness_db]
+  allowed_tools: [activate_skill, read_memory, query_exercise_history, get_weekly_fitness_summary]

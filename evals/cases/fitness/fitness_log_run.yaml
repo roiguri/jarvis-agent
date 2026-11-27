@@ -1,0 +1,18 @@
+description: Logging a run uses a single log_cardio_stats call and never calls log_workout.
+kind: chat
+time: "08:30"
+files:
+  MEMORY.md: |
+    # Memory Index
+    - `running_program.md`: Current running program phase and next session.
+  running_program.md: |
+    # Running Program
+    Current phase: Phase 2 Session 4: 5km easy aerobic run.
+message: "Did my 5km run in 26 minutes, average HR 158, no pain"
+stubs:
+  log_cardio_stats: "Logged Phase 2 Session 4: 5.0km run (26:00, avg HR 158, pain 0)."
+expect:
+  called_with:
+    - {tool: log_cardio_stats, args: {distance_km: 5}}
+  not_called: [log_workout]
+  allowed_tools: [activate_skill, read_memory, list_memory, write_memory, get_today_workout_id, log_cardio_stats]
