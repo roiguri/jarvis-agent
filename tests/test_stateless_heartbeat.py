@@ -80,12 +80,12 @@ def test_each_tick_starts_from_its_input_alone(use_llm):
 
 def test_warm_start_skills_are_bound_from_the_first_call(use_llm):
     use_llm(FakeLLM([ack(1), AIMessage(content="ok")]))
-    out = agent.ask_jarvis("tick", "heartbeat", scope="heartbeat", initial_skills={"fitness"})
+    out = agent.ask_jarvis("tick", "heartbeat", scope="heartbeat", initial_skills={"fitness/plans"})
     turn = load_turns()[-1]
     first = {r["tool"] for r in telemetry_store.rows(
         "SELECT tool FROM bound_tools WHERE turn_id = ? AND first_call_index = 1", (turn["turn_id"],))}
     assert "query_fitness_db" in first
-    assert out.active_skills == ("fitness",)
+    assert out.active_skills == ("fitness/plans",)
 
 
 def test_stamped_tasks_remember_their_skills_for_next_time(use_llm, heartbeat_md, run_tick):

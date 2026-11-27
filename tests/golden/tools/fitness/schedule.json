@@ -1,0 +1,71 @@
+[
+  {
+    "destructive": false,
+    "name": "fetch_upcoming_arbox_classes",
+    "schema": {
+      "description": "Fetch Roi's registered Arbox classes (72h horizon) and their WODs, upsert to the\n    fitness DB, and remove locally cancelled bookings.\n\n    Returns registered classes (times + WODs) plus any dropped-class notices.",
+      "name": "fetch_upcoming_arbox_classes",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "fetch_weekly_gym_schedule",
+    "schema": {
+      "description": "Read-only: fetch all upcoming gym classes (booked or not) with WODs for scouting\n    and booking decisions. Does not write to the DB.\n\n    Args:\n        days_ahead: Days ahead to fetch (default 7).",
+      "name": "fetch_weekly_gym_schedule",
+      "parameters": {
+        "properties": {
+          "days_ahead": {
+            "default": 7,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_daily_programming",
+    "schema": {
+      "description": "Show ALL Arbox tracks for a date in full (WOD, Endurance, PUMP, W.LIFTING, etc.).\n\n    Use only when Roi explicitly asks about another track or wants to compare tracks;\n    WOD and Saturday Endurance are already returned by the schedule tools.\n\n    Args:\n        date: 'YYYY-MM-DD' (defaults to today, Israel time).",
+      "name": "get_daily_programming",
+      "parameters": {
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "sync_arbox_attendance",
+    "schema": {
+      "description": "Sync Arbox's attendance log to the fitness DB: marks attended classes 'completed'\n    and unattended past classes 'missed'. Returns counts.",
+      "name": "sync_arbox_attendance",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

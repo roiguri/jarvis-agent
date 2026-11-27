@@ -1,0 +1,179 @@
+[
+  {
+    "destructive": false,
+    "name": "get_adherence_report",
+    "schema": {
+      "description": "Weekly adherence (completed vs target) over the last N weeks, per plan.\n\n    Use for 'how consistent have I been?', streak/trend questions, or multi-week\n    reviews. Complements get_weekly_fitness_summary (current week only). Weeks\n    are Sunday-start, matching get_weekly_fitness_summary's quota math.\n\n    Args:\n        plan_id: Limit to one plan. Default: all active plans.\n        weeks: Trailing weeks to report (default 8, clamped 1-52).",
+      "name": "get_adherence_report",
+      "parameters": {
+        "properties": {
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "weeks": {
+            "default": 8,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "get_weekly_fitness_summary",
+    "schema": {
+      "description": "Get a summary of this week's fitness activity: quota progress and logged lifts.\n\n    Use for weekly check-ins, Sunday reviews, or when the user asks 'how am I doing this week?'\n\n    Returns: sessions completed vs target, list of workouts, and recent exercise logs.",
+      "name": "get_weekly_fitness_summary",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "manage_fitness_plan",
+    "schema": {
+      "description": "Create, update, or list fitness plans.\n\n    Args:\n        action: 'create' (needs name, tracking_mode, weekly_target_count),\n            'update' (needs plan_id + any fields to change), or 'list'.\n        plan_id: Plan to modify (required for 'update').\n        name: Plan name (e.g. 'Weekly CrossFit').\n        tracking_mode: 'flexible_quota' (weekly count) or 'strict_sequential' (ordered sessions).\n        weekly_target_count: Target sessions per week.\n        status: 'active', 'paused', or 'completed'.\n        start_date: 'YYYY-MM-DD' (create defaults to today; adherence ignores earlier weeks).\n        binding: Feed channel — 'arbox', 'running', or 'manual' (create defaults to 'manual';\n            at most one active plan per binding).",
+      "name": "manage_fitness_plan",
+      "parameters": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tracking_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "weekly_target_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "query_exercise_history",
+    "schema": {
+      "description": "Look up the personal best AND most recent session for a given exercise.\n\n    Use before a class to check what weights Roi has hit before.\n    Does a case-insensitive fuzzy match on the exercise name.\n\n    Args:\n        exercise_name: Exercise to look up (e.g. 'deadlift', 'Back Squat', 'clean')",
+      "name": "query_exercise_history",
+      "parameters": {
+        "properties": {
+          "exercise_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "exercise_name"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "query_fitness_db",
+    "schema": {
+      "description": "Run a read-only SELECT against the fitness DB for ad-hoc analysis (date ranges,\n    joins, custom aggregates) that the fixed tools don't cover.\n\n    Pass empty sql to inspect the live schema (tables, columns, row counts).\n    Rules: single SELECT or WITH...SELECT only; capped at 200 rows.\n    workouts.scheduled_time is Israel-local 'YYYY-MM-DD HH:MM:00';\n    status in ('scheduled','completed','missed'); source in ('arbox','manual').\n\n    Args:\n        sql: Single read-only SELECT/WITH, or '' to describe schema.",
+      "name": "query_fitness_db",
+      "parameters": {
+        "properties": {
+          "sql": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]

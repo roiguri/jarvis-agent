@@ -68,16 +68,16 @@ def test_turn_writes_linked_rows(use_llm):
 
 def test_bound_tools_record_when_each_tool_joined(use_llm):
     use_llm(FakeLLM([
-        ai(calls=[tool_call("activate_skill", {"namespaces": ["fitness"]}, 1)]),
+        ai(calls=[tool_call("activate_skill", {"namespaces": ["fitness/plans"]}, 1)]),
         ai("ok"),
     ]))
-    agent.ask_jarvis("activate fitness", "t_bound")
+    agent.ask_jarvis("activate fitness plans", "t_bound")
     [turn] = turn_rows()
     bound = {r["tool"]: r for r in store.rows(
         "SELECT * FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
     assert bound["list_memory"]["first_call_index"] == 1, "core tools bound from the first call"
     assert bound["query_fitness_db"]["first_call_index"] == 2, "a skill's tools join when activated"
-    assert bound["query_fitness_db"]["namespace"] == "fitness"
+    assert bound["query_fitness_db"]["namespace"] == "fitness/plans"
     assert all(r["schema_chars"] > 0 for r in bound.values())
     calls = calls_of(turn["turn_id"])
     assert calls[1]["bound_tool_count"] > calls[0]["bound_tool_count"]
