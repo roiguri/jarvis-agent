@@ -473,6 +473,7 @@ def arbox_fake(monkeypatch):
     """Arbox's fetch returns ``registered``; DB syncs are recorded in ``applied``."""
     registered, applied = [], []
     monkeypatch.setattr(arbox, "_fetch_registered", lambda: list(registered))
+    monkeypatch.setattr(arbox, "_sync_attendance", lambda: (0, 0))
     monkeypatch.setattr(arbox, "_apply_registered",
                         lambda regs: applied.append([c["id"] for c in regs]) or "synced")
     monkeypatch.setattr(gates, "_failures", {})

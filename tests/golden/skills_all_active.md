@@ -5,7 +5,7 @@
 - fitness: gym attendance, workout logs, running sessions
   - fitness/logging: log workouts, lifts, WOD results, running and cardio sessions
   - fitness/plans: weekly quota summary, adherence streaks, lift PR history, fitness plans, ad-hoc DB queries
-  - fitness/schedule: Arbox class bookings, weekly gym schedule, daily programming, attendance sync
+  - fitness/schedule: Arbox class bookings, weekly gym schedule, daily programming
 - github: GitHub project management — repos, issues, PRs
 - google_health: Pixel Watch daily health status (steps, activity, recovery, vitals), sleep and workouts (Google Health API)
 - media: TV/movie search, library management, download tracking
@@ -48,7 +48,7 @@
 
 ## fitness — rules
 This skill is split into sub-skills. Activate only the one(s) you need:
-- fitness/schedule — Arbox class bookings, weekly gym schedule, daily programming, attendance sync
+- fitness/schedule — Arbox class bookings, weekly gym schedule, daily programming
 - fitness/logging — log workouts, lifts, WOD results, running/cardio sessions
 - fitness/plans — weekly quota summary, adherence streaks, lift PR history, fitness plans, ad-hoc DB queries
 

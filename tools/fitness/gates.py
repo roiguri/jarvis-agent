@@ -1,11 +1,13 @@
 """The Arbox registration gate: the crossfit task's hourly check, in code.
 
-The check only reads Arbox and compares the registered classes with the last
-committed set. The handler syncs the DB and keeps two keyed wakes per class
-(a briefing before it, a check-in when it ends); a dropped class cancels them.
-Any change — new, moved or dropped — also wakes Jarvis at once with the whole
-change, to talk about the week against quota. The first run only records the
-starting set, so it schedules per-class wakes but no change wake. What each
+The check reads Arbox, compares registered classes with the last committed set,
+and silently resolves past scheduled Arbox classes to completed/missed in the
+fitness DB (DB-first, no-op when nothing is pending, never wakes the LLM). The
+handler syncs upcoming registrations to the DB and keeps two keyed wakes per
+class (a briefing before it, a check-in when it ends); a dropped class cancels
+them. Any change — new, moved or dropped — also wakes Jarvis at once with the
+whole change, to talk about the week against quota. The first run only records
+the starting set, so it schedules per-class wakes but no change wake. What each
 wake says is the task's prose in HEARTBEAT.md, not this module.
 
 Arbox has been seen to answer with an empty set by mistake, which would read
@@ -14,12 +16,15 @@ believed only when the next tick sees it too.
 """
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 
 from tools.fitness._db import ISRAEL_TZ
-from tools.fitness.classes import _apply_registered, _fetch_registered
+from tools.fitness.classes import _apply_registered, _fetch_registered, _sync_attendance
 from triggers.gates import Cancel, GateResult, Upsert, gate, gate_handler
 from triggers.model import Turn
+
+logger = logging.getLogger(__name__)
 
 GATE = "arbox_registrations"
 BRIEFING_LEAD = timedelta(hours=2)
@@ -43,6 +48,10 @@ def _hhmm(t: datetime) -> str:
 
 @gate(GATE)
 def check(state: dict | None) -> GateResult:
+    try:
+        _sync_attendance()
+    except Exception:
+        logger.warning("arbox attendance sync failed during gate check", exc_info=True)
     known = (state or {}).get("classes", {})
     registered = _fetch_registered()
     now = datetime.now(timezone.utc)
