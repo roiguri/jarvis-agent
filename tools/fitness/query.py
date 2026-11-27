@@ -9,28 +9,19 @@ from tools.fitness._db import _FITNESS_RO_URI, _QUERY_ROW_CAP
 from tools.registry import tool_register
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/plans")
 @tool
 def query_fitness_db(sql: str = "") -> str:
-    """Run a read-only SELECT against the fitness DB for ad-hoc analysis.
+    """Run a read-only SELECT against the fitness DB for ad-hoc analysis (date ranges,
+    joins, custom aggregates) that the fixed tools don't cover.
 
-    Use for questions the fixed tools don't cover: arbitrary date ranges,
-    cross-table joins, custom aggregates, trends. For routine checks prefer
-    get_weekly_fitness_summary / get_adherence_report / query_exercise_history.
-
-    Call with an EMPTY sql to get the LIVE schema (tables, columns, row counts)
-    — do this first if unsure of column names; the live schema is authoritative
-    (the canonical source can drift).
-
-    Rules:
-    - Read-only: a single SELECT or WITH...SELECT only. No writes, no PRAGMA,
-      no ATTACH, no multiple statements. The connection is physically read-only.
-    - Results cap at 200 rows; add your own LIMIT/aggregation if you hit it.
-    - workouts.scheduled_time is Israel-local 'YYYY-MM-DD HH:MM:00';
-      status in ('scheduled','completed','missed'); source in ('arbox','manual').
+    Pass empty sql to inspect the live schema (tables, columns, row counts).
+    Rules: single SELECT or WITH...SELECT only; capped at 200 rows.
+    workouts.scheduled_time is Israel-local 'YYYY-MM-DD HH:MM:00';
+    status in ('scheduled','completed','missed'); source in ('arbox','manual').
 
     Args:
-        sql: A single read-only SELECT/WITH. Empty string = describe schema.
+        sql: Single read-only SELECT/WITH, or '' to describe schema.
     """
     try:
         conn = sqlite3.connect(_FITNESS_RO_URI, uri=True)

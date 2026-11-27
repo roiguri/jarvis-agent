@@ -12,7 +12,10 @@ Always on: 10 tools, ≈2775 tokens — activate_skill, delete_memory, list_memo
 | collections | 15 | ≈4544 | +5 tools, ≈+1769 |
 | cookbook | 13 | ≈4231 | +3 tools, ≈+1456 |
 | files | 13 | ≈3263 | +3 tools, ≈+488 |
-| fitness | 24 | ≈6124 | +14 tools, ≈+3349 |
+| fitness | 10 | ≈2775 | +0 tools, ≈+0 |
+| fitness/logging | 15 | ≈3993 | +5 tools, ≈+1218 |
+| fitness/plans | 15 | ≈3665 | +5 tools, ≈+890 |
+| fitness/schedule | 14 | ≈3121 | +4 tools, ≈+346 |
 | github | 18 | ≈3492 | +8 tools, ≈+717 |
 | google_health | 13 | ≈3322 | +3 tools, ≈+547 |
 | media | 10 | ≈2775 | +0 tools, ≈+0 |
@@ -33,7 +36,10 @@ Always on: 11 tools, ≈3090 tokens — activate_skill, delete_memory, heartbeat
 | collections | 16 | ≈4859 | +5 tools, ≈+1769 |
 | cookbook | 14 | ≈4546 | +3 tools, ≈+1456 |
 | files | 14 | ≈3578 | +3 tools, ≈+488 |
-| fitness | 25 | ≈6439 | +14 tools, ≈+3349 |
+| fitness | 11 | ≈3090 | +0 tools, ≈+0 |
+| fitness/logging | 16 | ≈4308 | +5 tools, ≈+1218 |
+| fitness/plans | 16 | ≈3980 | +5 tools, ≈+890 |
+| fitness/schedule | 15 | ≈3436 | +4 tools, ≈+346 |
 | github | 19 | ≈3807 | +8 tools, ≈+717 |
 | google_health | 14 | ≈3637 | +3 tools, ≈+547 |
 | media | 11 | ≈3090 | +0 tools, ≈+0 |

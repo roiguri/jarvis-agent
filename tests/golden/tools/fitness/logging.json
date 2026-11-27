@@ -1,0 +1,238 @@
+[
+  {
+    "destructive": false,
+    "name": "get_today_workout_id",
+    "schema": {
+      "description": "Look up today's workout_id for use in log_exercise_stats.\n\n    Use this when logging exercise stats if the user hasn't specified a workout context,\n    to ensure the log is linked to the correct session.\n\n    Returns the workout_id, class time, and WOD description for today's session.",
+      "name": "get_today_workout_id",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_cardio_stats",
+    "schema": {
+      "description": "Log cardio stats (run/walk/row/hike) to the fitness DB — creating a running\n    session automatically if no cardio workout exists for that day.\n\n    Auto-links to the day's most recent cardio workout without stats (e.g. a synced\n    endurance class or log_workout row). For non-running sessions (hike, row), create\n    the workout first with log_workout and pass workout_id.\n\n    Args:\n        duration_min: Total duration in minutes (required).\n        distance_km: Distance in km; pace is derived.\n        avg_hr: Average heart rate (bpm).\n        pain_level: 0=none, 1=slight, 2=moderate, 3=stop-sign.\n        prehab_done: Whether post-session prehab was done.\n        prehab_notes: Prehab details (e.g. 'Tibialis 3x15, Calf raises 3x15').\n        notes: Optional session notes.\n        workout_id: Target workout; omit to auto-link or create.\n        description: Session description when creating a new running workout.\n        date: 'YYYY-MM-DD' (defaults to today, Israel time).",
+      "name": "log_cardio_stats",
+      "parameters": {
+        "properties": {
+          "avg_hr": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "description": {
+            "default": "",
+            "type": "string"
+          },
+          "distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "duration_min": {
+            "type": "number"
+          },
+          "notes": {
+            "default": "",
+            "type": "string"
+          },
+          "pain_level": {
+            "default": 0,
+            "type": "integer"
+          },
+          "prehab_done": {
+            "default": false,
+            "type": "boolean"
+          },
+          "prehab_notes": {
+            "default": "",
+            "type": "string"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "duration_min"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_exercise_stats",
+    "schema": {
+      "description": "Log a weightlifting performance to the fitness DB.\n\n    Args:\n        exercise_name: Exercise name (e.g. 'Back Squat', 'Deadlift', 'Hang Power Clean').\n        sets: Number of sets.\n        reps: Reps per set.\n        weight: Weight in kg.\n        notes: Optional qualitative notes (e.g. 'felt strong', 'touch and go').\n        workout_id: Optional; omit to auto-link to today's workout.",
+      "name": "log_exercise_stats",
+      "parameters": {
+        "properties": {
+          "exercise_name": {
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "type": "string"
+          },
+          "reps": {
+            "type": "integer"
+          },
+          "sets": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "exercise_name",
+          "sets",
+          "reps",
+          "weight"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_wod_result",
+    "schema": {
+      "description": "Log the CrossFit WOD result for today's session.\n\n    Call this after the user reports their WOD performance (time, rounds, score).\n    Use after log_exercise_stats — this completes the CrossFit session record.\n\n    Args:\n        result: WOD performance text (e.g. '12:43 RX', '9 rounds + 5 reps scaled', 'AMRAP: 8 rounds Rx')\n        workout_id: Optional. Links to today's CrossFit session. If omitted, auto-looks up today's workout.\n        notes: Optional free-text session note ('scaled to 16kg', 'shoulder felt off').\n            Provided -> set/overwrite; omitted -> any existing note is preserved.",
+      "name": "log_wod_result",
+      "parameters": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "result": {
+            "type": "string"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  },
+  {
+    "destructive": false,
+    "name": "log_workout",
+    "schema": {
+      "description": "Record an off-gym workout with no Arbox class behind it (hotel WOD, other gym,\n    travel, climbing, etc.).\n\n    NEVER use for an Arbox-synced class (enrich it with log_wod_result /\n    log_exercise_stats / log_cardio_stats). For a run, use log_cardio_stats directly.\n    Returns workout_id for attaching stats to non-today sessions.\n\n    Args:\n        description: What the session was (e.g. 'Hotel WOD: 5 rounds burpees/squats').\n        date: 'YYYY-MM-DD' (defaults to today, Israel time).\n        session_type: 'crossfit', 'running', 'walking', 'hiking', 'mobility', or any activity name.\n        plan: Plan id or name; omit to match by plan binding.\n        allow_duplicate: True only for a genuine second session of the same type on the same day.",
+      "name": "log_workout",
+      "parameters": {
+        "properties": {
+          "allow_duplicate": {
+            "default": false,
+            "type": "boolean"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "description": {
+            "type": "string"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_type": {
+            "default": "crossfit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    "scopes": null
+  }
+]
