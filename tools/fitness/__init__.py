@@ -11,7 +11,6 @@ from tools.fitness.classes import (  # noqa: F401
     fetch_upcoming_arbox_classes,
     fetch_weekly_gym_schedule,
     get_daily_programming,
-    sync_arbox_attendance,
 )
 from tools.fitness.logs import (  # noqa: F401
     get_today_workout_id,
@@ -42,5 +41,4 @@ __all__ = [
     "manage_fitness_plan",
     "query_exercise_history",
     "query_fitness_db",
-    "sync_arbox_attendance",
 ]

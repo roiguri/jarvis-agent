@@ -170,4 +170,4 @@ Returns a list of dates when the user actually attended the gym.
 |------|------------|
 | `fetch_upcoming_arbox_classes` | `betweenDates` + `logbook/workouts` |
 | `fetch_weekly_gym_schedule` | `betweenDates` + `logbook/workouts` for each date |
-| `sync_arbox_attendance` | `schedule/weekly` (attendance dates) |
+| `_sync_attendance` (gate, code-only) | `schedule/weekly` (attendance dates) |

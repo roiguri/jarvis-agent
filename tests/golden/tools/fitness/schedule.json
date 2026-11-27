@@ -54,18 +54,5 @@
       }
     },
     "scopes": null
-  },
-  {
-    "destructive": false,
-    "name": "sync_arbox_attendance",
-    "schema": {
-      "description": "Sync Arbox's attendance log to the fitness DB: marks attended classes 'completed'\n    and unattended past classes 'missed'. Returns counts.",
-      "name": "sync_arbox_attendance",
-      "parameters": {
-        "properties": {},
-        "type": "object"
-      }
-    },
-    "scopes": null
   }
 ]

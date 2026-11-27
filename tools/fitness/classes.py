@@ -1,5 +1,6 @@
 """Arbox classes — reading the gym schedule and reconciling it into `workouts`."""
 
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +14,8 @@ from tools.fitness._arbox import (
 )
 from tools.fitness._db import ISRAEL_TZ, _get_db, _valid_date
 from tools.registry import tool_register
+
+logger = logging.getLogger(__name__)
 
 
 def _fetch_schedule(from_dt: datetime, to_dt: datetime) -> list[dict]:
@@ -268,48 +271,82 @@ def get_daily_programming(date: str | None = None) -> str:
         return f"Error fetching programming: {e}"
 
 
-@tool_register(namespace="fitness/schedule")
-@tool
-def sync_arbox_attendance() -> str:
-    """Sync Arbox's attendance log to the fitness DB: marks attended classes 'completed'
-    and unattended past classes 'missed'. Returns counts.
+ATTENDANCE_CHECK_DELAY = timedelta(hours=2)
+ATTENDANCE_MISSED_GRACE = timedelta(hours=12)
+ATTENDANCE_LOOKBACK_DAYS = 60
+
+
+def _sync_attendance(now: datetime | None = None) -> tuple[int, int]:
+    """Deterministically resolve past scheduled Arbox classes to completed or missed.
+
+    DB-first: returns (0, 0) without hitting Arbox if no scheduled Arbox class is
+    past ATTENDANCE_CHECK_DELAY. Closes SQLite before the HTTP call and guards
+    updates with ``AND status = 'scheduled'`` so concurrent user logging is never
+    overwritten. Marks attended classes completed right away, waits
+    ATTENDANCE_MISSED_GRACE before marking an unattended class missed, and ignores
+    a suspicious empty ``[]`` response when recent completed Arbox workouts exist.
     """
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    check_cutoff = (now_utc - ATTENDANCE_CHECK_DELAY).astimezone(ISRAEL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    missed_cutoff = (now_utc - ATTENDANCE_MISSED_GRACE).astimezone(ISRAEL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    lower_bound = (now_utc - timedelta(days=ATTENDANCE_LOOKBACK_DAYS)).astimezone(ISRAEL_TZ).strftime("%Y-%m-%d 00:00:00")
+
+    conn = _get_db()
     try:
-        now = datetime.now(timezone.utc)
-        from_dt = (now - timedelta(days=60)).strftime("%Y-%m-%dT00:00:00.000Z")
-        to_dt = now.strftime("%Y-%m-%dT23:59:59.999Z")
-
-        body = {
-            "from": from_dt,
-            "to": to_dt,
-            "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
-        }
-        resp = _arbox_post("/api/v2/schedule/weekly", body)
-        attended_dates = set(resp) if isinstance(resp, list) else set()
-
-        conn = _get_db()
-        cutoff = (datetime.now(ISRAEL_TZ) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
         scheduled = conn.execute(
-            "SELECT workout_id, scheduled_time FROM workouts WHERE status='scheduled' AND scheduled_time < ?",
-            (cutoff,),
+            "SELECT workout_id, scheduled_time FROM workouts "
+            "WHERE status = 'scheduled' AND source = 'arbox' "
+            "AND scheduled_time >= ? AND scheduled_time < ?",
+            (lower_bound, check_cutoff),
         ).fetchall()
+        if not scheduled:
+            return 0, 0
+        has_recent_completed = conn.execute(
+            "SELECT 1 FROM workouts WHERE status = 'completed' AND source = 'arbox' "
+            "AND scheduled_time >= ? LIMIT 1",
+            (lower_bound,),
+        ).fetchone() is not None
+    finally:
+        conn.close()
 
+    from_dt = (now_utc - timedelta(days=ATTENDANCE_LOOKBACK_DAYS)).strftime("%Y-%m-%dT00:00:00.000Z")
+    to_dt = now_utc.strftime("%Y-%m-%dT23:59:59.999Z")
+    body = {
+        "from": from_dt,
+        "to": to_dt,
+        "locations_box_id": int(os.environ.get("ARBOX_LOCATIONS_BOX_ID", "0")),
+    }
+    resp = _arbox_post("/api/v2/schedule/weekly", body)
+    if not isinstance(resp, list):
+        logger.warning("arbox attendance sync: unexpected response type %s", type(resp).__name__)
+        return 0, 0
+    attended_dates = {d for d in resp if isinstance(d, str)}
+    if not attended_dates and has_recent_completed:
+        logger.warning("arbox attendance sync: empty attendance list despite recent completed classes; skipping")
+        return 0, 0
+
+    conn = _get_db()
+    try:
         completed_count = 0
         missed_count = 0
         for w in scheduled:
             workout_date = w["scheduled_time"][:10]
             if workout_date in attended_dates:
-                conn.execute("UPDATE workouts SET status='completed' WHERE workout_id=?", (w["workout_id"],))
-                completed_count += 1
-            else:
-                conn.execute("UPDATE workouts SET status='missed' WHERE workout_id=?", (w["workout_id"],))
-                missed_count += 1
+                cur = conn.execute(
+                    "UPDATE workouts SET status = 'completed' WHERE workout_id = ? AND status = 'scheduled'",
+                    (w["workout_id"],),
+                )
+                completed_count += cur.rowcount
+            elif w["scheduled_time"] < missed_cutoff:
+                cur = conn.execute(
+                    "UPDATE workouts SET status = 'missed' WHERE workout_id = ? AND status = 'scheduled'",
+                    (w["workout_id"],),
+                )
+                missed_count += cur.rowcount
 
-        conn.commit()
+        if completed_count or missed_count:
+            conn.commit()
+            logger.info("arbox attendance synced: %d completed, %d missed", completed_count, missed_count)
+        return completed_count, missed_count
+    finally:
         conn.close()
-        return f"Attendance synced: {completed_count} completed, {missed_count} missed."
-
-    except RuntimeError as e:
-        return f"Error: {e}"
-    except Exception as e:
-        return f"Error syncing attendance: {e}"

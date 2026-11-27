@@ -1,6 +1,6 @@
 ---
 name: schedule
-description: Arbox class bookings, weekly gym schedule, daily programming, attendance sync
+description: Arbox class bookings, weekly gym schedule, daily programming
 ---
 - **Arbox token expired:** If any Arbox tool returns `"Error: Arbox session expired"`, relay that exact message verbatim (Roi must update `ARBOX_ACCESS_TOKEN`). Do not retry.
 - **Dropped classes:** When `fetch_upcoming_arbox_classes` removes a class Roi is no longer booked for, tell him it was dropped; if it puts him under quota (`get_weekly_fitness_summary`), offer alternatives via `fetch_weekly_gym_schedule`.
