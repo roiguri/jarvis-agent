@@ -224,7 +224,7 @@ def _keep(url: str, platform: str, info: dict, raw: bytes, mime: str,
     written = None
     if record:
         content = record + (f"\n[{note}]" if note else "")
-        written = records.Record("description", content, config.MODEL, records.VIDEO_VERSION)
+        written = records.Record("description", content, config.BACKGROUND_MODEL, records.VIDEO_VERSION)
     ext = "webm" if mime == "video/webm" else "mp4"
     caption = (info.get("description") or "").strip()[:CAPTION_MAX_CHARS] or None
     return attachments.save_fetched(

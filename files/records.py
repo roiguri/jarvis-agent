@@ -164,7 +164,7 @@ def _by_model(prompt: str, *, max_output_tokens: int, timeout_s: float,
             raise RecordFailed(finish or "empty record")
         if finish not in NORMAL_FINISH:
             text += f"\n[The record stops early ({finish}); the rest of the file is missing.]"
-        return text, config.MODEL
+        return text, config.BACKGROUND_MODEL
     return read
 
 
