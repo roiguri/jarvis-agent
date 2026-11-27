@@ -54,7 +54,7 @@ def test_every_recorded_kind_has_one_recorder_and_other_files_have_none():
 def test_each_kind_gets_its_own_prompt_and_record_kind(model):
     image = records.make(store.add(JPEG, source="t"))
     document = records.make(store.add(PDF, source="t", filename="lease.pdf"))
-    assert (image.kind, image.version, image.producer) == ("description", "image-1", config.MODEL)
+    assert (image.kind, image.version, image.producer) == ("description", "image-1", config.BACKGROUND_MODEL)
     assert (document.kind, document.version) == ("text", "document-1")
     (_, image_prompt, _), (block, doc_prompt, kw) = model.calls
     assert image_prompt == records.IMAGE_PROMPT and block == "file"

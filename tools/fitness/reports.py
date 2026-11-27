@@ -10,7 +10,7 @@ from tools.fitness._db import ISRAEL_TZ, _fmt_pace, _get_db, _target_for_week
 from tools.registry import tool_register
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/plans")
 @tool
 def get_weekly_fitness_summary() -> str:
     """Get a summary of this week's fitness activity: quota progress and logged lifts.
@@ -94,7 +94,7 @@ def get_weekly_fitness_summary() -> str:
         return f"Error: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/plans")
 @tool
 def get_adherence_report(plan_id: int | None = None, weeks: int = 8) -> str:
     """Weekly adherence (completed vs target) over the last N weeks, per plan.

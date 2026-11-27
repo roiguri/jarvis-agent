@@ -9,7 +9,7 @@ from tools.fitness._db import ISRAEL_TZ, _get_db, _valid_date
 from tools.registry import tool_register
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/plans")
 @tool
 def manage_fitness_plan(
     action: str,
@@ -23,24 +23,17 @@ def manage_fitness_plan(
 ) -> str:
     """Create, update, or list fitness plans.
 
-    action='create': Create a new plan. Requires name, tracking_mode ('flexible_quota' or
-        'strict_sequential'), and weekly_target_count. start_date defaults to today.
-    action='update': Update an existing plan. Requires plan_id. Provide any fields to change:
-        name, weekly_target_count, status ('active', 'paused', 'completed'), start_date,
-        or binding.
-    action='list': List all plans with current status, start date, and this-week session counts.
-
     Args:
-        action: 'create', 'update', or 'list'
-        plan_id: Required for 'update'. The plan to modify.
-        name: Plan name (e.g. 'Weekly CrossFit')
-        tracking_mode: 'flexible_quota' (CrossFit — weekly count goal) or 'strict_sequential' (running — ordered sessions)
-        weekly_target_count: How many sessions per week to aim for
-        status: 'active', 'paused', or 'completed'
-        start_date: 'YYYY-MM-DD' the plan begins. Adherence reports ignore weeks before it. Create defaults to today.
-        binding: Which logging channel feeds this plan — 'arbox' (gym class sync),
-            'running' (running sessions), or 'manual' (manually logged sessions).
-            Create defaults to 'manual'. At most one active plan per binding.
+        action: 'create' (needs name, tracking_mode, weekly_target_count),
+            'update' (needs plan_id + any fields to change), or 'list'.
+        plan_id: Plan to modify (required for 'update').
+        name: Plan name (e.g. 'Weekly CrossFit').
+        tracking_mode: 'flexible_quota' (weekly count) or 'strict_sequential' (ordered sessions).
+        weekly_target_count: Target sessions per week.
+        status: 'active', 'paused', or 'completed'.
+        start_date: 'YYYY-MM-DD' (create defaults to today; adherence ignores earlier weeks).
+        binding: Feed channel — 'arbox', 'running', or 'manual' (create defaults to 'manual';
+            at most one active plan per binding).
     """
     _VALID_BINDINGS = ("arbox", "running", "manual")
     try:

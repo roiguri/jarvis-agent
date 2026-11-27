@@ -18,10 +18,10 @@ from timeutils import ISRAEL_TZ as _IL_TZ
 from observability import store
 
 
-GroupBy = Literal["day", "week", "scope", "day+scope"]
+GroupBy = Literal["day", "week", "scope", "day+scope", "model", "scope+model"]
 
 # USD per million tokens, read from https://ai.google.dev/gemini-api/docs/pricing
-# and verified 2026-07-29. Re-verify on the same page before trusting any dollar
+# and verified 2026-11-27. Re-verify on the same page before trusting any dollar
 # figure — these are transcribed constants, not a live feed, and a stale entry
 # silently corrupts every rollup rather than failing. The `cost-review` skill
 # exists to diff this table against the page on demand.
@@ -33,10 +33,14 @@ GroupBy = Literal["day", "week", "scope", "day+scope"]
 #
 # Known limitation: audio input bills at roughly 2x text on these models (e.g.
 # $1.00/M vs $0.50/M for gemini-3-flash-preview), and Telegram voice notes do
-# reach the model. One rate per model cannot express that, so audio-heavy days
-# under-report slightly. Deliberately not modelled — modality tiering is a lot
-# of machinery for a rounding error at current volumes.
+# reach the model. langchain-google-genai does not forward prompt_tokens_details
+# modality splits into usage_metadata, so audio-heavy days under-report slightly.
 MODEL_PRICES: dict[str, dict[str, float]] = {
+    "gemini-4-hydrogen": {
+        "input_per_m": 1.50,
+        "cache_read_per_m": 0.075,
+        "output_per_m": 7.50,
+    },
     "gemini-3-flash-preview": {
         "input_per_m": 0.50,
         "cache_read_per_m": 0.05,
@@ -80,22 +84,44 @@ _ZERO_PRICE = {"input_per_m": 0.0, "cache_read_per_m": 0.0, "output_per_m": 0.0}
 # ---------------------------------------------------------------------------
 
 
+def estimate_usd_parts(
+    input_tokens: int,
+    cache_read_tokens: int,
+    output_tokens: int,
+    model: str | None,
+    reasoning_tokens: int = 0,
+) -> dict[str, float]:
+    """Estimate USD cost broken down by token bucket.
+
+    ``cache_read_tokens`` are *part of* ``input_tokens`` (billed separately at
+    the cache rate), so they are subtracted from billable input.
+    ``reasoning_tokens`` are *part of* ``output_tokens`` (billed at the output
+    rate), so ``reasoning_usd`` is the thinking slice inside ``output_usd`` and
+    is NOT added on top of ``total_usd``.
+    """
+    p = MODEL_PRICES.get(model or "", _ZERO_PRICE)
+    billable_input = max(0, int(input_tokens) - int(cache_read_tokens))
+    input_usd = billable_input * p["input_per_m"] / 1_000_000
+    cache_usd = int(cache_read_tokens) * p["cache_read_per_m"] / 1_000_000
+    output_usd = int(output_tokens) * p["output_per_m"] / 1_000_000
+    reasoning_usd = min(int(reasoning_tokens), int(output_tokens)) * p["output_per_m"] / 1_000_000
+    return {
+        "input_usd": input_usd,
+        "cache_usd": cache_usd,
+        "output_usd": output_usd,
+        "reasoning_usd": reasoning_usd,
+        "total_usd": input_usd + cache_usd + output_usd,
+    }
+
+
 def estimate_usd(
     input_tokens: int,
     cache_read_tokens: int,
     output_tokens: int,
     model: str | None,
 ) -> float:
-    """Estimate USD cost of one turn. cache_read_tokens are *part of* the
-    reported input_tokens (Gemini bills them separately at a lower rate), so
-    we subtract them from the billable-input bucket before applying rates."""
-    p = MODEL_PRICES.get(model or "", _ZERO_PRICE)
-    billable_input = max(0, int(input_tokens) - int(cache_read_tokens))
-    return (
-        billable_input * p["input_per_m"] / 1_000_000
-        + int(cache_read_tokens) * p["cache_read_per_m"] / 1_000_000
-        + int(output_tokens) * p["output_per_m"] / 1_000_000
-    )
+    """Estimate total USD cost of one turn."""
+    return estimate_usd_parts(input_tokens, cache_read_tokens, output_tokens, model)["total_usd"]
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +197,7 @@ def _bucket_key(rec: dict, group_by: GroupBy) -> str:
     local = ts.astimezone(_IL_TZ)
     day = local.date().isoformat()
     scope = rec.get("scope", "?")
+    model = rec.get("model") or "(no-llm)"
     if group_by == "day":
         return day
     if group_by == "scope":
@@ -180,6 +207,10 @@ def _bucket_key(rec: dict, group_by: GroupBy) -> str:
     if group_by == "week":
         iso = local.isocalendar()
         return f"{iso.year}-W{iso.week:02d}"
+    if group_by == "model":
+        return model
+    if group_by == "scope+model":
+        return f"{scope} · {model}"
     raise ValueError(f"unknown group_by: {group_by!r}")
 
 
@@ -208,7 +239,13 @@ def _empty_bucket(key: str) -> dict:
         "budget_exhausted": 0,
         # limit name -> count, for budget_exhausted turns that recorded it.
         "exhausted_by": {},
+        "input_usd": 0.0,
+        "cache_usd": 0.0,
+        "output_usd": 0.0,
+        "reasoning_usd": 0.0,
         "usd_cost": 0.0,
+        # Distinct non-null models seen in this bucket (sorted list on return).
+        "models": set(),
         # Models seen in this bucket that MODEL_PRICES has no entry for, so their
         # tokens contributed $0.00 to usd_cost. A set while accumulating;
         # summarize_usage converts it to a sorted list before returning so rows
@@ -222,6 +259,7 @@ def summarize_usage(
     until: datetime | None = None,
     group_by: GroupBy = "day",
     scope_filter: str | None = None,
+    model_filter: str | None = None,
 ) -> list[dict]:
     """Group + roll up turns in [since, until). Returns rows sorted ascending
     by group key.
@@ -236,12 +274,14 @@ def summarize_usage(
     Reads 0 for turns recorded before the field existed.
 
     No I/O beyond load_turns; no global state. Suitable for REPL use:
-        >>> from tools.core.usage import summarize_usage
-        >>> rows = summarize_usage(group_by="day+scope")
+        >>> from observability import summarize_usage
+        >>> rows = summarize_usage(group_by="scope+model")
     """
     turns = load_turns(since, until)
     if scope_filter:
         turns = [t for t in turns if t.get("scope") == scope_filter]
+    if model_filter:
+        turns = [t for t in turns if t.get("model") == model_filter]
     buckets: dict[str, dict] = {}
     for t in turns:
         key = _bucket_key(t, group_by)
@@ -271,16 +311,25 @@ def summarize_usage(
         model = t.get("model")
         # A null model means the turn made no LLM call (nothing to price), which
         # is not a pricing gap — only a named model we cannot price is.
-        if model and model not in MODEL_PRICES:
-            b["unpriced_models"].add(model)
-        b["usd_cost"] += estimate_usd(
+        if model:
+            b["models"].add(model)
+            if model not in MODEL_PRICES:
+                b["unpriced_models"].add(model)
+        parts = estimate_usd_parts(
             int(t.get("input_tokens") or 0),
             int(t.get("cache_read_tokens") or 0),
             int(t.get("output_tokens") or 0),
             model,
+            int(t.get("reasoning_tokens") or 0),
         )
+        b["input_usd"] += parts["input_usd"]
+        b["cache_usd"] += parts["cache_usd"]
+        b["output_usd"] += parts["output_usd"]
+        b["reasoning_usd"] += parts["reasoning_usd"]
+        b["usd_cost"] += parts["total_usd"]
     rows = sorted(buckets.values(), key=lambda r: r["group"])
     for r in rows:
+        r["models"] = sorted(r["models"])
         r["unpriced_models"] = sorted(r["unpriced_models"])
     return rows
 
@@ -452,7 +501,23 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
     for r in rows:
         for k, n in (r.get("exhausted_by") or {}).items():
             totals_exhausted_by[k] = totals_exhausted_by.get(k, 0) + n
+    totals_input_usd = sum(r.get("input_usd", 0.0) for r in rows)
+    totals_cache_usd = sum(r.get("cache_usd", 0.0) for r in rows)
+    totals_output_usd = sum(r.get("output_usd", 0.0) for r in rows)
+    totals_reasoning_usd = sum(r.get("reasoning_usd", 0.0) for r in rows)
     totals_usd = sum(r["usd_cost"] for r in rows)
+
+    cost_parts: list[str] = []
+    if totals_input_usd > 0:
+        cost_parts.append(f"{_usd(totals_input_usd)} in")
+    if totals_cache_usd > 0:
+        cost_parts.append(f"{_usd(totals_cache_usd)} cache")
+    if totals_output_usd > 0:
+        out_part = f"{_usd(totals_output_usd)} out"
+        if totals_reasoning_usd > 0:
+            out_part += f", {_usd(totals_reasoning_usd)} thinking"
+        cost_parts.append(out_part)
+    cost_split = f" ({' · '.join(cost_parts)})" if cost_parts else ""
 
     totals_unpriced = sorted({m for r in rows for m in (r.get("unpriced_models") or [])})
     extras_parts = _extras(
@@ -478,7 +543,7 @@ def format_usage_table(rows: list[dict], title: str = "", telemetry_errors: int 
         f" → **{_human_tokens(totals_out)}** out"
         f"{_reasoning_pct(totals_out, totals_reasoning)}"
     )
-    out.append(f"- **{_usd(totals_usd)}** total")
+    out.append(f"- **{_usd(totals_usd)}** total{cost_split}")
     if extras_parts:
         out.append(f"- {' · '.join(extras_parts)}")
     if tele_line:

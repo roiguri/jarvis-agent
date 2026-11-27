@@ -121,7 +121,7 @@ def _cardio_parts(duration_min, distance_km, avg_pace_sec, avg_hr, pain_level, p
     return parts
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/logging")
 @tool
 def log_exercise_stats(
     exercise_name: str,
@@ -131,18 +131,15 @@ def log_exercise_stats(
     notes: str = "",
     workout_id: int | None = None,
 ) -> str:
-    """Log a weightlifting performance to the fitness database.
-
-    Use this immediately when the user reports what weights they lifted after a gym session.
-    Always call this tool — never just acknowledge without saving.
+    """Log a weightlifting performance to the fitness DB.
 
     Args:
-        exercise_name: Name of the exercise (e.g. 'Back Squat', 'Deadlift', 'Hang Power Clean')
-        sets: Number of sets performed
-        reps: Number of reps per set
-        weight: Weight used in kg
-        notes: Optional qualitative notes (e.g. 'felt strong', 'touch and go')
-        workout_id: Optional. Links this log to today's session. If omitted, auto-looks up today's workout.
+        exercise_name: Exercise name (e.g. 'Back Squat', 'Deadlift', 'Hang Power Clean').
+        sets: Number of sets.
+        reps: Reps per set.
+        weight: Weight in kg.
+        notes: Optional qualitative notes (e.g. 'felt strong', 'touch and go').
+        workout_id: Optional; omit to auto-link to today's workout.
     """
     try:
         conn = _get_db()
@@ -174,7 +171,7 @@ def log_exercise_stats(
         return f"Error logging exercise: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/plans")
 @tool
 def query_exercise_history(exercise_name: str) -> str:
     """Look up the personal best AND most recent session for a given exercise.
@@ -216,7 +213,7 @@ def query_exercise_history(exercise_name: str) -> str:
         return f"Error querying history: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/logging")
 @tool
 def log_workout(
     description: str,
@@ -225,28 +222,19 @@ def log_workout(
     plan: str | None = None,
     allow_duplicate: bool = False,
 ) -> str:
-    """Record that a workout happened — for sessions with no Arbox class behind them.
+    """Record an off-gym workout with no Arbox class behind it (hotel WOD, other gym,
+    travel, climbing, etc.).
 
-    Use for off-gym training: a hotel WOD, a session at another gym, travel
-    workouts, or a new activity type. NEVER for a class the Arbox sync already
-    tracks — that row exists; enrich it with log_wod_result / log_exercise_stats
-    / log_cardio_stats instead. For a run, prefer log_cardio_stats directly —
-    it records the session and the stats in one call.
-
-    Any session_type string is accepted (e.g. 'climbing'); an unlisted type
-    still counts toward its plan, it just gets no automatic stat routing.
-    The reply gives the workout_id — pass it to the stat tools when logging
-    stats for anything but today's session.
+    NEVER use for an Arbox-synced class (enrich it with log_wod_result /
+    log_exercise_stats / log_cardio_stats). For a run, use log_cardio_stats directly.
+    Returns workout_id for attaching stats to non-today sessions.
 
     Args:
-        description: What the session was (e.g. 'Hotel WOD: 5 rounds burpees/push-ups/squats')
-        date: Session date as YYYY-MM-DD (defaults to today in Israel time)
-        session_type: 'crossfit', 'running', 'walking', 'hiking', 'mobility', or any other activity name
-        plan: Plan to attach to, by id or name. Omit to attach by the plan's
-            binding (crossfit → the arbox-bound plan, running → the running-bound
-            plan, anything else → the manual-bound plan).
-        allow_duplicate: Pass true only if this really is a second session of the
-            same type on the same day.
+        description: What the session was (e.g. 'Hotel WOD: 5 rounds burpees/squats').
+        date: 'YYYY-MM-DD' (defaults to today, Israel time).
+        session_type: 'crossfit', 'running', 'walking', 'hiking', 'mobility', or any activity name.
+        plan: Plan id or name; omit to match by plan binding.
+        allow_duplicate: True only for a genuine second session of the same type on the same day.
     """
     try:
         if not description or not description.strip():
@@ -305,7 +293,7 @@ def log_workout(
         return f"Error logging workout: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/logging")
 @tool
 def log_cardio_stats(
     duration_min: float,
@@ -319,31 +307,24 @@ def log_cardio_stats(
     description: str = "",
     date: str | None = None,
 ) -> str:
-    """Attach cardio stats (run/walk/row/hike) to a workout — creating the session if needed.
+    """Log cardio stats (run/walk/row/hike) to the fitness DB — creating a running
+    session automatically if no cardio workout exists for that day.
 
-    Call this immediately when Roi reports a cardio session's numbers.
-    Always call this tool — never just acknowledge without saving.
-
-    Auto-links to the day's most recent cardio-shaped workout that has no
-    stats yet (e.g. a synced endurance class, or a log_workout row). If none
-    exists, it records the session itself as a running workout — check the
-    running program memory notes first and pass the program-matched
-    description (e.g. 'Phase 0 Session 1: 30-min brisk walk'). For cardio
-    stats on a non-running session (a hike, a row), create it first with
-    log_workout and pass its workout_id.
+    Auto-links to the day's most recent cardio workout without stats (e.g. a synced
+    endurance class or log_workout row). For non-running sessions (hike, row), create
+    the workout first with log_workout and pass workout_id.
 
     Args:
-        duration_min: Total duration in minutes (e.g. 32.0) — required.
-        distance_km: Distance in km (from watch GPS); pace is derived.
-        avg_hr: Average heart rate in bpm
-        pain_level: 0=none, 1=slight, 2=moderate, 3=stop-sign
-        prehab_done: Whether pre-hab exercises were completed after the session
-        prehab_notes: Description of pre-hab done (e.g. 'Tibialis 3×15, Calf raises 3×15')
-        notes: Any additional session notes
-        workout_id: Attach to this specific workout. Omit to auto-link (or create).
-        description: Session description, used only when creating a new running
-            workout (required then; must match the running program phase).
-        date: Session date as YYYY-MM-DD (defaults to today in Israel time)
+        duration_min: Total duration in minutes (required).
+        distance_km: Distance in km; pace is derived.
+        avg_hr: Average heart rate (bpm).
+        pain_level: 0=none, 1=slight, 2=moderate, 3=stop-sign.
+        prehab_done: Whether post-session prehab was done.
+        prehab_notes: Prehab details (e.g. 'Tibialis 3x15, Calf raises 3x15').
+        notes: Optional session notes.
+        workout_id: Target workout; omit to auto-link or create.
+        description: Session description when creating a new running workout.
+        date: 'YYYY-MM-DD' (defaults to today, Israel time).
     """
     try:
         if date is not None and not _valid_date(date):
@@ -432,7 +413,7 @@ def log_cardio_stats(
         return f"Error logging cardio stats: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/logging")
 @tool
 def log_wod_result(
     result: str,
@@ -478,7 +459,7 @@ def log_wod_result(
         return f"Error logging WOD result: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/logging")
 @tool
 def get_today_workout_id() -> str:
     """Look up today's workout_id for use in log_exercise_stats.

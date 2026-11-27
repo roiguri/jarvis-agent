@@ -396,22 +396,24 @@ async def _logs(inbound: InboundMessage, args: list[str]) -> str:
 _USAGE_USAGE = section(
     "Usage",
     [
-        "`/usage [today|yesterday|week|D[.M[.Y]]] [user|heartbeat]`",
-        "Examples: `/usage`, `/usage yesterday`, `/usage week`, "
-        "`/usage week user`, `/usage 21.5`",
+        "`/usage [today|yesterday|week|month|D[.M[.Y]]] [user|heartbeat|dream|job|models]`",
+        "Examples: `/usage`, `/usage yesterday`, `/usage week`, `/usage month`, "
+        "`/usage week models`, `/usage week user`, `/usage 21.5`",
     ],
 )
 
 
 @command(
     "usage",
-    "Show LLM token / cost rollup. Sub: /usage today|yesterday|week|D[.M[.Y]] [user|heartbeat]",
+    "Show LLM token / cost rollup. Sub: /usage today|yesterday|week|month|D[.M[.Y]] [user|heartbeat|dream|job|models]",
 )
 async def _usage(inbound: InboundMessage, args: list[str]) -> str:
-    """Rollup of recorded turns over a date range, optionally scope-filtered.
+    """Rollup of recorded turns over a date range, optionally scope-filtered or
+    grouped by scope + model.
 
-    Trailing 'user' or 'heartbeat' token narrows the rollup to that scope.
-    Range token: today (default), yesterday, week (last 7 days incl. today),
+    Trailing token: 'user', 'heartbeat', 'dream', or 'job' narrows to that scope;
+    'models' groups the breakdown by scope and model.
+    Range token: today (default), yesterday, week (last 7 days), month (last 30 days),
     or a /logs-style date (D, D.M, D.M.Y, '/'-or-'.' separator).
     """
     from observability import (
@@ -424,21 +426,30 @@ async def _usage(inbound: InboundMessage, args: list[str]) -> str:
 
     tokens = [a.lower() for a in args]
     scope_filter: str | None = None
-    if tokens and tokens[-1] in ("user", "heartbeat"):
+    by_models = False
+    if tokens and tokens[-1] == "models":
+        by_models = True
+        tokens.pop()
+    elif tokens and tokens[-1] in ("user", "heartbeat", "dream", "job"):
         scope_filter = tokens.pop()
     range_token = tokens[0] if tokens else "today"
 
+    suffix = " (by model)" if by_models else (f" ({scope_filter})" if scope_filter else "")
     if range_token == "week":
         since, until = israel_last_n_days(7)
-        group_by = "day" if scope_filter else "day+scope"
-        title = "**Usage — last 7 days**" + (f" ({scope_filter})" if scope_filter else "")
+        group_by = "scope+model" if by_models else ("day" if scope_filter else "day+scope")
+        title = "**Usage — last 7 days**" + suffix
+    elif range_token == "month":
+        since, until = israel_last_n_days(30)
+        group_by = "scope+model" if by_models else ("week" if scope_filter else "scope")
+        title = "**Usage — last 30 days**" + suffix
     else:
         iso = _parse_log_date(range_token)
         if iso is None:
             return join("Invalid date.", _USAGE_USAGE)
         since, until = israel_day_range(iso)
-        group_by = "day" if scope_filter else "scope"
-        title = f"**Usage — {iso}**" + (f" ({scope_filter})" if scope_filter else "")
+        group_by = "scope+model" if by_models else ("day" if scope_filter else "scope")
+        title = f"**Usage — {iso}**" + suffix
 
     rows = await asyncio.to_thread(
         summarize_usage,

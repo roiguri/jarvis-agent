@@ -1,0 +1,11 @@
+description: Temporary stop of a heartbeat task uses manage_heartbeat_task(action=pause), never delete or write_memory.
+kind: chat
+time: "14:00"
+message: "Pause the step challenge reminders for now, I'll tell you when to resume"
+expect:
+  called_with:
+    - {tool: manage_heartbeat_task, args: {action: "pause", name: "step-challenge-tracker"}}
+  not_called: [write_memory, manage_trigger]
+  not_called_with:
+    - {tool: manage_heartbeat_task, args: {action: "delete"}}
+  allowed_tools: [manage_heartbeat_task, read_memory]

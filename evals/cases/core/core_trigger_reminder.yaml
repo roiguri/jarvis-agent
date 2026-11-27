@@ -1,0 +1,9 @@
+description: Fixed one-shot reminder uses manage_trigger(action=create, message=...) and never manage_heartbeat_task.
+kind: chat
+time: "14:00"
+message: "Remind me tomorrow at 18:00 to take out the trash"
+expect:
+  called_with:
+    - {tool: manage_trigger, args: {action: "create", message: "trash"}}
+  not_called: [manage_heartbeat_task]
+  allowed_tools: [manage_trigger]

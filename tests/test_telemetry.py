@@ -68,16 +68,16 @@ def test_turn_writes_linked_rows(use_llm):
 
 def test_bound_tools_record_when_each_tool_joined(use_llm):
     use_llm(FakeLLM([
-        ai(calls=[tool_call("activate_skill", {"namespaces": ["fitness"]}, 1)]),
+        ai(calls=[tool_call("activate_skill", {"namespaces": ["fitness/plans"]}, 1)]),
         ai("ok"),
     ]))
-    agent.ask_jarvis("activate fitness", "t_bound")
+    agent.ask_jarvis("activate fitness plans", "t_bound")
     [turn] = turn_rows()
     bound = {r["tool"]: r for r in store.rows(
         "SELECT * FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
     assert bound["list_memory"]["first_call_index"] == 1, "core tools bound from the first call"
     assert bound["query_fitness_db"]["first_call_index"] == 2, "a skill's tools join when activated"
-    assert bound["query_fitness_db"]["namespace"] == "fitness"
+    assert bound["query_fitness_db"]["namespace"] == "fitness/plans"
     assert all(r["schema_chars"] > 0 for r in bound.values())
     calls = calls_of(turn["turn_id"])
     assert calls[1]["bound_tool_count"] > calls[0]["bound_tool_count"]
@@ -250,3 +250,105 @@ def test_ticks_that_sent_nothing_are_counted_against_ticks_not_turns():
     assert "**2026-10-17** — 5 turns" in table and "· 2 of 3 ticks sent nothing" in table, "the row"
     assert table.count("sent nothing") == 2, "a chat-only row says nothing about ticks"
     assert "NO_ACTION" not in table
+
+
+# --- Multi-model pricing, rollups, and /usage -----------------------------------
+
+def test_hydrogen_pricing_and_cost_parts():
+    parts = usage.estimate_usd_parts(
+        input_tokens=1_000_000,
+        cache_read_tokens=400_000,
+        output_tokens=200_000,
+        model="gemini-4-hydrogen",
+        reasoning_tokens=150_000,
+    )
+    # 600k uncached * $1.50/M = $0.90; 400k cache * $0.075/M = $0.03; 200k out * $7.50/M = $1.50
+    assert parts["input_usd"] == pytest.approx(0.90)
+    assert parts["cache_usd"] == pytest.approx(0.03)
+    assert parts["output_usd"] == pytest.approx(1.50)
+    assert parts["reasoning_usd"] == pytest.approx(1.125)
+    assert parts["total_usd"] == pytest.approx(2.43)
+    assert usage.estimate_usd(1_000_000, 400_000, 200_000, "gemini-4-hydrogen") == pytest.approx(2.43)
+
+
+def test_summarize_usage_by_model_and_scope_model():
+    now = datetime.now(timezone.utc).isoformat()
+    with store.write() as con:
+        con.execute(
+            "INSERT INTO turns (ts, turn_id, scope, ended_at, llm_calls, input_tokens, "
+            "cache_read_tokens, output_tokens, reasoning_tokens, total_tokens, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, "t1", "user", now, 2, 100_000, 50_000, 10_000, 6_000, 110_000, "gemini-4-hydrogen"),
+        )
+        con.execute(
+            "INSERT INTO turns (ts, turn_id, scope, ended_at, llm_calls, input_tokens, "
+            "cache_read_tokens, output_tokens, reasoning_tokens, total_tokens, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, "t2", "heartbeat", now, 3, 200_000, 100_000, 10_000, 4_000, 210_000, "gemini-3-flash-preview"),
+        )
+        con.execute(
+            "INSERT INTO turns (ts, turn_id, scope, ended_at, llm_calls, input_tokens, "
+            "cache_read_tokens, output_tokens, reasoning_tokens, total_tokens, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, "t3", "dream", now, 1, 50_000, 0, 2_000, 1_000, 52_000, "gemini-4-hydrogen"),
+        )
+
+    by_model = summarize_usage(group_by="model")
+    assert [r["group"] for r in by_model] == ["gemini-3-flash-preview", "gemini-4-hydrogen"]
+    flash, hydro = by_model
+    assert flash["turns"] == 1 and flash["models"] == ["gemini-3-flash-preview"]
+    assert hydro["turns"] == 2 and hydro["models"] == ["gemini-4-hydrogen"]
+    assert hydro["input_usd"] > 0 and hydro["output_usd"] > 0 and hydro["reasoning_usd"] > 0
+    assert hydro["usd_cost"] == pytest.approx(hydro["input_usd"] + hydro["cache_usd"] + hydro["output_usd"])
+
+    by_sm = summarize_usage(group_by="scope+model")
+    assert [r["group"] for r in by_sm] == [
+        "dream · gemini-4-hydrogen",
+        "heartbeat · gemini-3-flash-preview",
+        "user · gemini-4-hydrogen",
+    ]
+
+    only_hydro = summarize_usage(group_by="scope", model_filter="gemini-4-hydrogen")
+    assert [r["group"] for r in only_hydro] == ["dream", "user"]
+
+    table = usage.format_usage_table(by_sm, title="**Usage (by model)**")
+    assert "total (" in table and " in · " in table and " cache · " in table and " thinking)" in table
+    assert "**user · gemini-4-hydrogen**" in table
+    assert "**heartbeat · gemini-3-flash-preview**" in table
+
+
+def test_usage_command_supports_models_month_and_dream():
+    import asyncio
+    from gateway.base import InboundMessage
+    from gateway.commands import try_handle_command
+
+    now = datetime.now(timezone.utc).isoformat()
+    with store.write() as con:
+        con.execute(
+            "INSERT INTO turns (ts, turn_id, scope, ended_at, llm_calls, input_tokens, "
+            "cache_read_tokens, output_tokens, reasoning_tokens, total_tokens, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, "u1", "user", now, 1, 20_000, 10_000, 2_000, 1_000, 22_000, "gemini-4-hydrogen"),
+        )
+        con.execute(
+            "INSERT INTO turns (ts, turn_id, scope, ended_at, llm_calls, input_tokens, "
+            "cache_read_tokens, output_tokens, reasoning_tokens, total_tokens, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, "u2", "dream", now, 1, 10_000, 0, 500, 200, 10_500, "gemini-3-flash-preview"),
+        )
+
+    def run_cmd(text):
+        msg = InboundMessage(user_id=1, chat_id=1, thread_id="owner", user_text=text, channel="test")
+        return asyncio.run(try_handle_command(msg))
+
+    by_models = run_cmd("/usage models")
+    assert "**Usage —" in by_models and "(by model)" in by_models
+    assert "**user · gemini-4-hydrogen**" in by_models
+    assert "**dream · gemini-3-flash-preview**" in by_models
+
+    month = run_cmd("/usage month")
+    assert "**Usage — last 30 days**" in month
+    assert "**user**" in month and "**dream**" in month
+
+    dream_only = run_cmd("/usage dream")
+    assert "(dream)" in dream_only and "**1** turn" in dream_only

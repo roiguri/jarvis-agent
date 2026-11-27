@@ -1,0 +1,12 @@
+description: End-of-class check-in with known PR history sends a prefilled form via send_form.
+kind: wake
+time: "20:00"
+wake:
+  instruction: "End-of-class check-in for today's 19:00 CrossFit WOD (Back Squat 3RM + 10-min AMRAP). Check Roi's Back Squat history and send a prefilled form (send_form) to log his result."
+stubs:
+  query_exercise_history: "Back Squat history: 80kg x 3 (PR)."
+  get_today_workout_id: "Found today's scheduled workout: workout_id=42 (19:00 CrossFit WOD)."
+  send_form: "Sent form f456 (WOD check-in): fields back_squat_kg, wod_score. Its message_text has already reached the user."
+expect:
+  called: [query_exercise_history, send_form]
+  allowed_tools: [activate_skill, read_memory, get_today_workout_id, query_exercise_history, send_form, heartbeat_respond]

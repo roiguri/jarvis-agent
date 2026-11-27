@@ -1,0 +1,10 @@
+description: An open-ended check-in wake with no prefillable numbers asks in prose via heartbeat_respond and never calls send_form.
+kind: wake
+time: "18:00"
+wake:
+  instruction: "Evening check-in: ask Roi how his energy feels today and whether he wants a light evening."
+expect:
+  ack: {notify: true}
+  sends: 1
+  not_called: [send_form]
+  allowed_tools: [heartbeat_respond]

@@ -155,19 +155,13 @@ def _apply_registered(registered: list[dict]) -> str:
     return msg
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/schedule")
 @tool
 def fetch_upcoming_arbox_classes() -> str:
-    """Fetch the Arbox classes the user is registered for and upsert them into the fitness DB.
+    """Fetch Roi's registered Arbox classes (72h horizon) and their WODs, upsert to the
+    fitness DB, and remove locally cancelled bookings.
 
-    Covers Arbox's full 72h registration horizon (you cannot register further
-    ahead than that). Also fetches the WOD for each class date, and removes any
-    local class the user is no longer registered for (un-registered/cancelled
-    in Arbox) so it stops driving reminders, briefings, and attendance stats.
-    Use this each morning to get today's class and WOD before a briefing.
-
-    Returns a summary of registered classes (times + WODs), plus a notice for
-    any class removed because its registration was dropped.
+    Returns registered classes (times + WODs) plus any dropped-class notices.
     """
     try:
         return _sync_registered_classes()
@@ -177,19 +171,14 @@ def fetch_upcoming_arbox_classes() -> str:
         return f"Error fetching classes: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/schedule")
 @tool
 def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
-    """Fetch the full gym schedule for the coming days for WOD scouting.
-
-    Use this when the user asks 'what should I book this week?' or wants to plan
-    around specific workout types. Returns ALL classes (not just registered ones)
-    with their WOD descriptions so the LLM can reason about which to attend.
-
-    Does NOT write to the database — purely for decision-making.
+    """Read-only: fetch all upcoming gym classes (booked or not) with WODs for scouting
+    and booking decisions. Does not write to the DB.
 
     Args:
-        days_ahead: How many days ahead to fetch (default 7 = one week).
+        days_ahead: Days ahead to fetch (default 7).
     """
     try:
         # Whole days at both ends: from midnight today through the end of the
@@ -251,18 +240,16 @@ def fetch_weekly_gym_schedule(days_ahead: int = 7) -> str:
         return f"Error fetching schedule: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/schedule")
 @tool
 def get_daily_programming(date: str | None = None) -> str:
-    """Show ALL Arbox tracks for a date in full — WOD, Endurance, PUMP, W.LIFTING, etc.
+    """Show ALL Arbox tracks for a date in full (WOD, Endurance, PUMP, W.LIFTING, etc.).
 
-    Briefings/scouting already surface the track Roi follows (WOD, or Saturday
-    Endurance) via fetch_upcoming_arbox_classes / fetch_weekly_gym_schedule. Use
-    this only when he explicitly asks about another track (e.g. "what's the PUMP
-    today?") or wants to compare them.
+    Use only when Roi explicitly asks about another track or wants to compare tracks;
+    WOD and Saturday Endurance are already returned by the schedule tools.
 
     Args:
-        date: 'YYYY-MM-DD'. Defaults to today (Israel time).
+        date: 'YYYY-MM-DD' (defaults to today, Israel time).
     """
     try:
         date_str = date or datetime.now(ISRAEL_TZ).strftime("%Y-%m-%d")
@@ -281,18 +268,11 @@ def get_daily_programming(date: str | None = None) -> str:
         return f"Error fetching programming: {e}"
 
 
-@tool_register(namespace="fitness")
+@tool_register(namespace="fitness/schedule")
 @tool
 def sync_arbox_attendance() -> str:
-    """Sync Arbox attendance data to the fitness DB.
-
-    Fetches the list of dates the user actually attended the gym (from Arbox's attendance log)
-    and marks the corresponding workouts in the DB as 'completed'. Also marks past scheduled
-    workouts that were not attended as 'missed'.
-
-    Call this periodically (e.g. during Sunday heartbeat review) to keep attendance accurate.
-
-    Returns a summary of how many workouts were marked completed or missed.
+    """Sync Arbox's attendance log to the fitness DB: marks attended classes 'completed'
+    and unattended past classes 'missed'. Returns counts.
     """
     try:
         now = datetime.now(timezone.utc)

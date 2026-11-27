@@ -77,18 +77,18 @@ def test_needed_skill_comes_back_in_the_same_turn(use_llm):
     activate_fitness(use_llm, "t_back")
     set_state("t_back", last_user_turn_at=ago(5))
     use_llm(FakeLLM([
-        AIMessage(content="", tool_calls=[tool_call("activate_skill", {"namespaces": ["fitness"]}, 2)]),
+        AIMessage(content="", tool_calls=[tool_call("activate_skill", {"namespaces": ["fitness/plans"]}, 2)]),
         AIMessage(content="", tool_calls=[tool_call("query_fitness_db", {"sql": "select 1"}, 3)]),
         AIMessage(content="here are your lifts"),
     ]))
     out = agent.ask_jarvis("what did I lift last week?", "t_back")
     assert out.text == "here are your lifts"
-    assert state("t_back")["active_skills"] == {"fitness"}
+    assert state("t_back")["active_skills"] == {"fitness/plans"}
     turn = load_turns()[-1]
     bound = {r["tool"]: r["first_call_index"] for r in store.rows(
         "SELECT tool, first_call_index FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
-    assert bound["query_fitness_db"] == 2, "the first call ran without fitness; it rejoined after activation"
-    assert (turn["active_skills_start"], turn["active_skills_end"]) == ([], ["fitness"])
+    assert bound["query_fitness_db"] == 2, "the first call ran without fitness/plans; it rejoined after activation"
+    assert (turn["active_skills_start"], turn["active_skills_end"]) == ([], ["fitness/plans"])
 
 
 def test_calling_an_inactive_skills_tool_activates_it_without_running(use_llm):
@@ -106,4 +106,4 @@ def test_calling_an_inactive_skills_tool_activates_it_without_running(use_llm):
     bound = {r["tool"]: r["first_call_index"] for r in store.rows(
         "SELECT tool, first_call_index FROM bound_tools WHERE turn_id = ?", (turn["turn_id"],))}
     assert bound["query_fitness_db"] == 2
-    assert turn["active_skills_end"] == ["fitness"]
+    assert turn["active_skills_end"] == ["fitness/plans"]

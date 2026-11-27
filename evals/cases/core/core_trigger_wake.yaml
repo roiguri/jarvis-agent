@@ -1,0 +1,9 @@
+description: One-shot future check needing fresh data uses manage_trigger(action=create, instruction=...) and never manage_heartbeat_task.
+kind: chat
+time: "14:00"
+message: "Check tomorrow at 10:00 if my download finished and let me know"
+expect:
+  called_with:
+    - {tool: manage_trigger, args: {action: "create", instruction: "download"}}
+  not_called: [manage_heartbeat_task]
+  allowed_tools: [manage_trigger, activate_skill, get_radarr_queue, get_sonarr_queue]

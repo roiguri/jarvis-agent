@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import config
 from episodes import store as episode_store
-from observability import store
+from observability import store, summarize_usage
 from observability.usage import estimate_usd
 from timeutils import ISRAEL_TZ
 
@@ -135,7 +135,8 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=7)
     args = ap.parse_args()
 
-    since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+    since_dt = datetime.now(timezone.utc) - timedelta(days=args.days)
+    since = since_dt.isoformat()
     print(f"# context report — last {args.days} days, {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
     print("\n## turns")
     for s in turn_stats(since):
@@ -147,6 +148,14 @@ def main() -> None:
             f"llm calls/turn {(s['llm_calls'] or 0) / s['turns']:.2f} | "
             f"tool calls/turn {(s['tool_calls'] or 0) / s['turns']:.2f} | "
             f"input/day {input_tokens // args.days:,}"
+        )
+
+    print("\n## spend by scope & model")
+    for r in summarize_usage(since=since_dt, group_by="scope+model"):
+        print(
+            f"  {r['group']:36} | {r['turns']:4d} turns | "
+            f"${r['usd_cost']:6.2f} (in ${r['input_usd']:.2f} · cache ${r['cache_usd']:.2f} · "
+            f"out ${r['output_usd']:.2f}, thinking ${r['reasoning_usd']:.2f})"
         )
 
     print("\n## input per model call (avg chars; chars are shares, tokens are cost)")
