@@ -61,11 +61,10 @@ FILES_DIR = _paths["FILES_DIR"]
 ENV_FILE = _paths["ENV_FILE"]
 INSTANCE = _paths["INSTANCE"]
 
-# The model every Jarvis call uses — the agent and the side calls a tool makes
-# itself, so a model swap is one edit and tools never import agent.
-# TODO(#199): newer Gemini models reject sampling params — drop the explicit
-# temperature= args (and the library's own 1.0 default) before changing this.
-MODEL = "gemini-3-flash-preview"
+# Primary conversational model (user & dream profiles) and background model
+# (heartbeat, daily_log, compaction, media). Every LLM call goes through llm.py.
+MODEL = "gemini-4-hydrogen"
+BACKGROUND_MODEL = "gemini-3-flash-preview"
 
 
 # ---------------------------------------------------------------------------

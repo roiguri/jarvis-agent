@@ -34,9 +34,7 @@ class ModelProfile:
     name: str
     model: str = config.MODEL
     thinking_level: ThinkingLevel | None = None
-    # TODO(#199): newer Gemini models reject sampling params — set temperature
-    # to None here once ready to upgrade past gemini-3-flash-preview.
-    temperature: float | None = 0.0
+    temperature: float | None = None
     max_retries: int = 1
     timeout_s: float = DEFAULT_CALL_TIMEOUT_S
     max_output_tokens: int | None = None
@@ -65,46 +63,46 @@ class ModelProfile:
 PROFILES: dict[str, ModelProfile] = {
     "user": ModelProfile(
         name="user",
+        model=config.MODEL,
         thinking_level="medium",
-        temperature=0.2,  # Lower temperature for more deterministic tool usage
         max_retries=2,
         timeout_s=DEFAULT_CALL_TIMEOUT_S,
     ),
     "heartbeat": ModelProfile(
         name="heartbeat",
+        model=config.BACKGROUND_MODEL,
         thinking_level="low",
-        temperature=0.2,
         max_retries=2,
         timeout_s=DEFAULT_CALL_TIMEOUT_S,
     ),
     "dream": ModelProfile(
         name="dream",
+        model=config.MODEL,
         thinking_level="low",
-        temperature=0.2,
         max_retries=2,
         timeout_s=BACKGROUND_TIMEOUT_S,
         max_output_tokens=16384,
     ),
     "daily_log": ModelProfile(
         name="daily_log",
+        model=config.BACKGROUND_MODEL,
         thinking_level="low",
-        temperature=0.0,
         max_retries=1,
         timeout_s=BACKGROUND_TIMEOUT_S,
         max_output_tokens=16384,  # thinking tokens count against the output cap
     ),
     "compaction": ModelProfile(
         name="compaction",
+        model=config.BACKGROUND_MODEL,
         thinking_level="low",
-        temperature=0.0,
         max_retries=1,
         timeout_s=BACKGROUND_TIMEOUT_S,
         max_output_tokens=8192,
     ),
     "media": ModelProfile(
         name="media",
+        model=config.BACKGROUND_MODEL,
         thinking_level="low",
-        temperature=0.0,
         max_retries=1,
         timeout_s=DEFAULT_CALL_TIMEOUT_S,
         max_output_tokens=4096,

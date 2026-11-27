@@ -22,8 +22,12 @@ def test_every_expected_profile_exists():
     assert expected.issubset(llm.PROFILES.keys())
     for name in expected:
         assert llm.PROFILES[name].name == name
-        assert llm.PROFILES[name].model == config.MODEL
+        assert llm.PROFILES[name].temperature is None
         assert llm.PROFILES[name].thinking_level in ("minimal", "low", "medium", "high")
+    assert llm.PROFILES["user"].model == config.MODEL
+    assert llm.PROFILES["dream"].model == config.MODEL
+    for bg in ("heartbeat", "daily_log", "compaction", "media"):
+        assert llm.PROFILES[bg].model == config.BACKGROUND_MODEL
     assert llm.PROFILES["heartbeat"].thinking_level == "low"
 
 
