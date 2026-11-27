@@ -48,7 +48,10 @@ CASES: list[tuple[str, str]] = [
     ("/logs 1.1.2026", "raw"),     # a finished day: its daily log verbatim
     ("/logs 2.1.2026", "strict"),  # a finished day without a log
     ("/usage", "strict"),
+    ("/usage models", "strict"),
     ("/usage week", "strict"),
+    ("/usage week models", "strict"),
+    ("/usage month", "strict"),
     ("/usage today heartbeat", "strict"),
     ("/usage 32.13", "strict"),    # invalid date → usage help
     ("/tz", "strict"),
