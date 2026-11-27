@@ -78,40 +78,27 @@ def send_form(
     subtitle: str = "",
     submit_label: str = "",
 ) -> str:
-    """Send the user a small form — labelled boxes, prefilled with your best guess,
-    submitted in one tap.
+    """Send a small prefilled form card submitted in one tap.
 
-    ONLY use a form when you can prefill every box from real data (their logged
-    history, their stated plan) and expect the user to submit it unchanged or with
-    small corrections. A form is for CORRECTING guesses, not for collecting answers:
-    - asking open questions -> just ask in conversation, never a form
-    - one single value -> just ask in conversation
-    - anything you cannot prefill from evidence -> leave that box empty (no default);
-      NEVER invent a plausible-looking default, since unchanged submission records it
-      as fact
-    Do not announce the form separately; message_text accompanies the card.
+    Use ONLY to let the user confirm/correct prefilled guesses from real evidence
+    (logged history, stated plan):
+    - Open questions or a single value -> ask in prose, never a form.
+    - No evidence for a field -> leave `default` empty; never invent a value.
+    - Do not announce the form separately; `message_text` accompanies the card.
 
-    After the user submits, the values arrive in this conversation as a
-    "[Submitted form <id>]" message naming each field_id — handle it then (e.g. log
-    it with the right tool). A value of "(left empty)" means the user saw the box
-    and left it blank: respect that as an explicit "no value", don't substitute one.
+    Submissions arrive as `[Submitted form <id>]` naming each `field_id` — handle
+    them then (e.g. log with the right tool). `(left empty)` means explicit "no value".
 
     Args:
-        message_text: The sentence shown with the card (e.g. "Push day — fill in
-            what you hit."). Required; without it the form opens cold.
-        slug: Short kebab-case name for this form (e.g. 'push-day'). A unique id
-            is derived from it.
+        message_text: Sentence shown with the card (required).
+        slug: Short kebab-case name (e.g. 'push-day').
         title: Card heading (e.g. 'Push day').
-        summary: One-line stand-in shown where the card doesn't render
-            (notification preview).
-        rows: Up to 6 rows. Each: {"label": str, "fields": [{"field_id":
-            snake_case str, "type": "text"|"number", "unit": str (required when a
-            row has 2+ fields), "default": prefill matching the type}]}.
-            Example: [{"label": "Bench press", "fields": [
-                {"field_id": "bench_reps", "type": "number", "unit": "reps", "default": 8},
-                {"field_id": "bench_kg", "type": "number", "unit": "kg", "default": 60}]}]
-        subtitle: Optional line under the title (e.g. '4 exercises').
-        submit_label: Optional label for the submit button (default 'Submit').
+        summary: One-line fallback for notification previews.
+        rows: Up to 6 rows: `[{"label": str, "fields": [{"field_id": snake_case,
+            "type": "text"|"number", "unit": str (required if 2+ fields in row),
+            "default": typed prefill}]}]`.
+        subtitle: Optional subheading.
+        submit_label: Optional button label (default 'Submit').
     """
     from gateway.factory import origin_channel, origin_outbox
 

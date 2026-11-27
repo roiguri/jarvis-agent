@@ -135,38 +135,23 @@ def manage_heartbeat_task(
     due: str = "",
     instruction: str = "",
 ) -> str:
-    """Create, update, delete, pause, resume or list the recurring heartbeat
-    tasks in HEARTBEAT.md. Use this — never write_memory — to change the task
-    list.
+    """Create, update, delete, pause, resume, or list recurring tasks in HEARTBEAT.md.
+    Always use this — never write_memory — to change HEARTBEAT.md.
 
-    Use for RECURRING or CONDITIONAL proactive wishes ("check in after my
-    workouts", "every Sunday summarize my week"). For a one-shot ping at a
-    fixed moment ("remind me at 15:00 to call") use manage_trigger instead.
-
-    Prefer pause over delete when the owner wants a task to stop only for now
-    ("stop the gym reminders while I'm away"): a paused task keeps its
-    cadence, window, instruction and accumulated notes file, and is skipped
-    entirely until resumed. Delete is for tasks that should not come back.
-    Only pause or resume when the owner asks — never on your own initiative.
-
-    Changes land immediately. Invalid input (bad cadence, bad due window,
-    duplicate/unknown name) is rejected with the reason and the file stays
-    untouched. On success the resulting task block is returned — report back
-    what actually landed rather than restating what you asked for, since an
-    update keeps the fields you left empty.
+    Use for RECURRING or CONDITIONAL proactive tasks; for one-shot reminders/wakes
+    use manage_trigger.
+    Prefer `pause` over `delete` for temporary stops (keeps cadence/window/notes);
+    only pause or resume when the owner asks. Report back what landed from the
+    returned task block.
 
     Args:
-        action: "create" | "update" | "delete" | "pause" | "resume" | "list".
-            pause/resume take only `name`; every other field is kept as-is.
-        name: kebab-case task name, e.g. "post-class-checkin". Required for
-            create/update/delete.
-        cadence: how often the task should be considered, e.g. "1h", "24h",
-            "7d". Required for create; optional on update (empty = keep).
-        due: optional time window (Israel time) outside which the task never
-            runs, e.g. "06:00-22:00", "Tue,Sat 20:30±3h", "09:00±2h".
-            Empty on update keeps the current window; "none" removes it.
-        instruction: what to do when the task is due — free prose, may be
-            multi-line. Required for create; optional on update (empty = keep).
+        action: "create" | "update" | "delete" | "pause" | "resume" | "list"
+            (pause/resume take only `name`).
+        name: kebab-case task name (required for create/update/delete/pause/resume).
+        cadence: Interval, e.g. "1h", "24h", "7d" (required for create; empty keeps on update).
+        due: Optional Israel-time window, e.g. "06:00-22:00", "Tue,Sat 20:30±3h"
+            (empty keeps on update; "none" removes).
+        instruction: Task instructions (required for create; empty keeps on update).
     """
     action = action.strip().lower()
     if action == "list":
